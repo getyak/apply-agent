@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>求职Agent系统架构图</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 32px 24px;
+    min-height: 100vh;
+  }
+
+  .nav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 40px;
+    flex-wrap: wrap;
+  }
+  .nav-btn {
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background: #161b22;
+    color: #8b949e;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    transition: all 0.15s;
+  }
+  .nav-btn.active {
+    background: #1f6feb;
+    border-color: #1f6feb;
+    color: #fff;
+  }
+  .nav-btn:hover:not(.active) {
+    background: #21262d;
+    color: #e6edf3;
+  }
+
+  .diagram-section { display: none; }
+  .diagram-section.active { display: block; }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #8b949e;
+    margin-bottom: 24px;
+  }
+
+  /* ─── SVG wrapper ─── */
+  .svg-wrap {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 32px;
+    overflow-x: auto;
+  }
+
+  svg text { font-family: 'SF Mono', 'Fira Code', monospace; }
+
+  /* ─── Shared SVG node styles via CSS classes ─── */
+  .node-ui     { fill: #1c2c4a; stroke: #58a6ff; stroke-width: 1.5; }
+  .node-api    { fill: #1a2e24; stroke: #3fb950; stroke-width: 1.5; }
+  .node-agent  { fill: #2d1f3d; stroke: #d2a8ff; stroke-width: 1.5; }
+  .node-data   { fill: #2a1f1a; stroke: #f0883e; stroke-width: 1.5; }
+  .node-ext    { fill: #1e2433; stroke: #8b949e; stroke-width: 1; stroke-dasharray: 5 3; }
+  .node-queue  { fill: #1f2a1a; stroke: #56d364; stroke-width: 1.5; }
+  .node-cache  { fill: #2a2020; stroke: #f85149; stroke-width: 1.5; }
+  .node-llm    { fill: #271f3d; stroke: #a371f7; stroke-width: 2; }
+
+  .label-ui    { fill: #79c0ff; font-size: 11px; font-weight: 700; }
+  .label-api   { fill: #7ee787; font-size: 11px; font-weight: 700; }
+  .label-agent { fill: #d2a8ff; font-size: 11px; font-weight: 700; }
+  .label-data  { fill: #ffa657; font-size: 11px; font-weight: 700; }
+  .label-ext   { fill: #8b949e; font-size: 11px; }
+  .label-queue { fill: #56d364; font-size: 11px; font-weight: 700; }
+  .label-cache { fill: #ff7b72; font-size: 11px; font-weight: 700; }
+  .label-llm   { fill: #c9b1f7; font-size: 11px; font-weight: 700; }
+
+  .sub-label   { fill: #8b949e; font-size: 9px; }
+  .arrow       { stroke: #30363d; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .arrow-hi    { stroke: #58a6ff; stroke-width: 1.5; fill: none; marker-end: url(#arrow-hi); stroke-dasharray: 6 3; }
+  .arrow-ev    { stroke: #3fb950; stroke-width: 1.2; fill: none; marker-end: url(#arrow-ev); stroke-dasharray: 4 4; }
+
+  .section-label {
+    fill: none;
+    stroke: #21262d;
+    stroke-width: 1;
+    rx: 8;
+  }
+  .section-text {
+    fill: #484f58;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* legend */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+    padding: 12px 16px;
+    background: #161b22;
+    border-radius: 8px;
+    border: 1px solid #21262d;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    border: 1.5px solid;
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<div class="nav">
+  <button class="nav-btn active" onclick="show('system')">① 系统总架构</button>
+  <button class="nav-btn" onclick="show('agent')">② Agent架构</button>
+  <button class="nav-btn" onclick="show('harness')">③ Agent Harness</button>
+  <button class="nav-btn" onclick="show('data')">④ 数据流</button>
+  <button class="nav-btn" onclick="show('scale')">⑤ 扩展路径</button>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     DIAGRAM 1 — SYSTEM OVERVIEW
+════════════════════════════════════════════ -->
+<div id="system" class="diagram-section active">
+  <h2>系统总架构 — System Overview</h2>
+  <div class="svg-wrap">
+  <svg width="960" height="620" viewBox="0 0 960 620">
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#484f58"/>
+      </marker>
+      <marker id="arrow-hi" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#58a6ff"/>
+      </marker>
+      <marker id="arrow-ev" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#3fb950"/>
+      </marker>
+    </defs>
+
+    <!-- Section backgrounds -->
+    <rect x="10" y="10" width="940" height="80" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="22" y="26" class="section-text">USER INTERFACE LAYER</text>
+
+    <rect x="10" y="105" width="940" height="80" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="22" y="121" class="section-text">API + ORCHESTRATION LAYER</text>
+
+    <rect x="10" y="200" width="940" height="140" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="22" y="216" class="section-text">AGENT LAYER (5 CORE AGENTS)</text>
+
+    <rect x="10" y="355" width="940" height="100" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="22" y="371" class="section-text">SHARED SERVICES</text>
+
+    <rect x="10" y="470" width="940" height="140" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="22" y="486" class="section-text">DATA + EXTERNAL INTEGRATIONS</text>
+
+    <!-- ── UI Layer ── -->
+    <rect x="80"  y="28" width="160" height="48" rx="6" class="node-ui"/>
+    <text x="160" y="49" class="label-ui" text-anchor="middle">Next.js Frontend</text>
+    <text x="160" y="63" class="sub-label" text-anchor="middle">SSR · WebSocket · PWA</text>
+
+    <rect x="280" y="28" width="140" height="48" rx="6" class="node-ui"/>
+    <text x="350" y="49" class="label-ui" text-anchor="middle">Mobile App</text>
+    <text x="350" y="63" class="sub-label" text-anchor="middle">iOS (Swift / future)</text>
+
+    <rect x="460" y="28" width="140" height="48" rx="6" class="node-ext"/>
+    <text x="530" y="49" class="label-ext" text-anchor="middle">Browser Extension</text>
+    <text x="530" y="63" class="sub-label" text-anchor="middle">Autofill · Capture</text>
+
+    <rect x="640" y="28" width="130" height="48" rx="6" class="node-ext"/>
+    <text x="705" y="49" class="label-ext" text-anchor="middle">Email Client</text>
+    <text x="705" y="63" class="sub-label" text-anchor="middle">Draft · Notify</text>
+
+    <rect x="800" y="28" width="130" height="48" rx="6" class="node-ext"/>
+    <text x="865" y="49" class="label-ext" text-anchor="middle">CLI / API</text>
+    <text x="865" y="63" class="sub-label" text-anchor="middle">Headless · Integrations</text>
+
+    <!-- ── API Layer ── -->
+    <rect x="80"  y="122" width="200" height="48" rx="6" class="node-api"/>
+    <text x="180" y="143" class="label-api" text-anchor="middle">API Gateway</text>
+    <text x="180" y="157" class="sub-label" text-anchor="middle">Auth · Rate Limit · Routing</text>
+
+    <rect x="320" y="122" width="200" height="48" rx="6" class="node-api"/>
+    <text x="420" y="143" class="label-api" text-anchor="middle">Agent Coordinator</text>
+    <text x="420" y="157" class="sub-label" text-anchor="middle">Orchestration · Saga · Retry</text>
+
+    <rect x="560" y="122" width="160" height="48" rx="6" class="node-queue"/>
+    <text x="640" y="143" class="label-queue" text-anchor="middle">Event Bus</text>
+    <text x="640" y="157" class="sub-label" text-anchor="middle">Redis Streams · Bull</text>
+
+    <rect x="760" y="122" width="160" height="48" rx="6" class="node-cache"/>
+    <text x="840" y="143" class="label-cache" text-anchor="middle">Cache Layer</text>
+    <text x="840" y="157" class="sub-label" text-anchor="middle">Redis · 3-tier Strategy</text>
+
+    <!-- ── Agent Layer ── -->
+    <rect x="30"  y="218" width="158" height="108" rx="8" class="node-agent"/>
+    <text x="109" y="238" class="label-agent" text-anchor="middle">ResumeAgent</text>
+    <text x="109" y="254" class="sub-label" text-anchor="middle">Parse · Optimize</text>
+    <text x="109" y="268" class="sub-label" text-anchor="middle">Customize · Version</text>
+    <text x="109" y="282" class="sub-label" text-anchor="middle">Analyze · Diff</text>
+    <rect x="44" y="294" width="130" height="20" rx="4" fill="#1f1030"/>
+    <text x="109" y="308" class="sub-label" text-anchor="middle" fill="#a371f7">Sonnet + Haiku</text>
+
+    <rect x="210" y="218" width="158" height="108" rx="8" class="node-agent"/>
+    <text x="289" y="238" class="label-agent" text-anchor="middle">JobMatchAgent</text>
+    <text x="289" y="254" class="sub-label" text-anchor="middle">Fetch · Parse</text>
+    <text x="289" y="268" class="sub-label" text-anchor="middle">Score · Notify</text>
+    <text x="289" y="282" class="sub-label" text-anchor="middle">Embedding Match</text>
+    <rect x="224" y="294" width="130" height="20" rx="4" fill="#1f1030"/>
+    <text x="289" y="308" class="sub-label" text-anchor="middle" fill="#a371f7">Haiku + Embeddings</text>
+
+    <rect x="390" y="218" width="158" height="108" rx="8" class="node-agent"/>
+    <text x="469" y="238" class="label-agent" text-anchor="middle">InterviewAgent</text>
+    <text x="469" y="254" class="sub-label" text-anchor="middle">Generate Qs · Eval</text>
+    <text x="469" y="268" class="sub-label" text-anchor="middle">Feedback · Session</text>
+    <text x="469" y="282" class="sub-label" text-anchor="middle">Aggregate · Company</text>
+    <rect x="404" y="294" width="130" height="20" rx="4" fill="#1f1030"/>
+    <text x="469" y="308" class="sub-label" text-anchor="middle" fill="#a371f7">Opus + Sonnet</text>
+
+    <rect x="570" y="218" width="158" height="108" rx="8" class="node-agent"/>
+    <text x="649" y="238" class="label-agent" text-anchor="middle">AppPrepAgent</text>
+    <text x="649" y="254" class="sub-label" text-anchor="middle">Cover Letter · Forms</text>
+    <text x="649" y="268" class="sub-label" text-anchor="middle">Semi-auto Submit</text>
+    <text x="649" y="282" class="sub-label" text-anchor="middle">ATS Detect · Draft</text>
+    <rect x="584" y="294" width="130" height="20" rx="4" fill="#1f1030"/>
+    <text x="649" y="308" class="sub-label" text-anchor="middle" fill="#a371f7">Sonnet + Playwright</text>
+
+    <rect x="750" y="218" width="180" height="108" rx="8" class="node-agent"/>
+    <text x="840" y="238" class="label-agent" text-anchor="middle">TrendAgent</text>
+    <text x="840" y="254" class="sub-label" text-anchor="middle">ETL · Skill Extract</text>
+    <text x="840" y="268" class="sub-label" text-anchor="middle">Aggregate · Report</text>
+    <text x="840" y="282" class="sub-label" text-anchor="middle">Personalize · Email</text>
+    <rect x="764" y="294" width="152" height="20" rx="4" fill="#1f1030"/>
+    <text x="840" y="308" class="sub-label" text-anchor="middle" fill="#a371f7">Haiku · DuckDB</text>
+
+    <!-- ── Shared Services ── -->
+    <rect x="40"  y="375" width="130" height="64" rx="6" class="node-api"/>
+    <text x="105" y="397" class="label-api" text-anchor="middle">Auth Service</text>
+    <text x="105" y="411" class="sub-label" text-anchor="middle">Supabase Auth</text>
+    <text x="105" y="425" class="sub-label" text-anchor="middle">JWT · Sessions</text>
+
+    <rect x="195" y="375" width="130" height="64" rx="6" class="node-api"/>
+    <text x="260" y="397" class="label-api" text-anchor="middle">Notification Svc</text>
+    <text x="260" y="411" class="sub-label" text-anchor="middle">Email · Push</text>
+    <text x="260" y="425" class="sub-label" text-anchor="middle">Resend · FCM</text>
+
+    <rect x="350" y="375" width="130" height="64" rx="6" class="node-cache"/>
+    <text x="415" y="397" class="label-cache" text-anchor="middle">Audit Logger</text>
+    <text x="415" y="411" class="sub-label" text-anchor="middle">Every agent call</text>
+    <text x="415" y="425" class="sub-label" text-anchor="middle">Cost · Latency</text>
+
+    <rect x="505" y="375" width="130" height="64" rx="6" class="node-llm"/>
+    <text x="570" y="397" class="label-llm" text-anchor="middle">LLM Router</text>
+    <text x="570" y="411" class="sub-label" text-anchor="middle">Model selection</text>
+    <text x="570" y="425" class="sub-label" text-anchor="middle">Fallback · Cost gate</text>
+
+    <rect x="660" y="375" width="130" height="64" rx="6" class="node-queue"/>
+    <text x="725" y="397" class="label-queue" text-anchor="middle">Worker Pool</text>
+    <text x="725" y="411" class="sub-label" text-anchor="middle">Cron · Batch</text>
+    <text x="725" y="425" class="sub-label" text-anchor="middle">Bull · Retry</text>
+
+    <rect x="815" y="375" width="115" height="64" rx="6" class="node-ext"/>
+    <text x="872" y="397" class="label-ext" text-anchor="middle">Observability</text>
+    <text x="872" y="411" class="sub-label" text-anchor="middle">Traces · Metrics</text>
+    <text x="872" y="425" class="sub-label" text-anchor="middle">DataDog · Sentry</text>
+
+    <!-- ── Data Layer ── -->
+    <rect x="40"  y="490" width="140" height="100" rx="6" class="node-data"/>
+    <text x="110" y="514" class="label-data" text-anchor="middle">PostgreSQL</text>
+    <text x="110" y="530" class="sub-label" text-anchor="middle">Supabase</text>
+    <text x="110" y="544" class="sub-label" text-anchor="middle">Users · Resumes</text>
+    <text x="110" y="558" class="sub-label" text-anchor="middle">Applications</text>
+    <text x="110" y="572" class="sub-label" text-anchor="middle">Interview sessions</text>
+
+    <rect x="205" y="490" width="130" height="100" rx="6" class="node-cache"/>
+    <text x="270" y="514" class="label-cache" text-anchor="middle">Redis</text>
+    <text x="270" y="530" class="sub-label" text-anchor="middle">Cache L1</text>
+    <text x="270" y="544" class="sub-label" text-anchor="middle">Session store</text>
+    <text x="270" y="558" class="sub-label" text-anchor="middle">Job queue</text>
+    <text x="270" y="572" class="sub-label" text-anchor="middle">Rate limits</text>
+
+    <rect x="360" y="490" width="130" height="100" rx="6" class="node-data"/>
+    <text x="425" y="514" class="label-data" text-anchor="middle">DuckDB</text>
+    <text x="425" y="530" class="sub-label" text-anchor="middle">Analytics OLAP</text>
+    <text x="425" y="544" class="sub-label" text-anchor="middle">Trends · Skills</text>
+    <text x="425" y="558" class="sub-label" text-anchor="middle">Time-series</text>
+    <text x="425" y="572" class="sub-label" text-anchor="middle">Snapshots</text>
+
+    <rect x="515" y="490" width="130" height="100" rx="6" class="node-llm"/>
+    <text x="580" y="514" class="label-llm" text-anchor="middle">Claude API</text>
+    <text x="580" y="530" class="sub-label" text-anchor="middle">Anthropic</text>
+    <text x="580" y="544" class="sub-label" text-anchor="middle">Opus · Sonnet</text>
+    <text x="580" y="558" class="sub-label" text-anchor="middle">Haiku</text>
+    <text x="580" y="572" class="sub-label" text-anchor="middle">Function calling</text>
+
+    <rect x="670" y="490" width="130" height="100" rx="6" class="node-ext"/>
+    <text x="735" y="514" class="label-ext" text-anchor="middle">Job Boards</text>
+    <text x="735" y="530" class="sub-label" text-anchor="middle">Greenhouse API</text>
+    <text x="735" y="544" class="sub-label" text-anchor="middle">Lever API</text>
+    <text x="735" y="558" class="sub-label" text-anchor="middle">Ashby API</text>
+    <text x="735" y="572" class="sub-label" text-anchor="middle">Public feeds</text>
+
+    <rect x="825" y="490" width="110" height="100" rx="6" class="node-ext"/>
+    <text x="880" y="514" class="label-ext" text-anchor="middle">External</text>
+    <text x="880" y="530" class="sub-label" text-anchor="middle">Whisper API</text>
+    <text x="880" y="544" class="sub-label" text-anchor="middle">Resend</text>
+    <text x="880" y="558" class="sub-label" text-anchor="middle">Crunchbase</text>
+    <text x="880" y="572" class="sub-label" text-anchor="middle">Playwright</text>
+
+    <!-- Arrows UI → API -->
+    <line x1="160" y1="76" x2="180" y2="122" class="arrow"/>
+    <line x1="350" y1="76" x2="280" y2="122" class="arrow"/>
+    <line x1="530" y1="76" x2="420" y2="122" class="arrow"/>
+
+    <!-- API Gateway → Coordinator -->
+    <line x1="280" y1="146" x2="320" y2="146" class="arrow"/>
+    <!-- Coordinator → Event Bus -->
+    <line x1="520" y1="146" x2="560" y2="146" class="arrow"/>
+    <!-- Coordinator → Agents (5 arrows going down) -->
+    <line x1="420" y1="170" x2="109" y2="218" class="arrow-hi"/>
+    <line x1="420" y1="170" x2="289" y2="218" class="arrow-hi"/>
+    <line x1="420" y1="170" x2="469" y2="218" class="arrow-hi"/>
+    <line x1="420" y1="170" x2="649" y2="218" class="arrow-hi"/>
+    <line x1="420" y1="170" x2="840" y2="218" class="arrow-hi"/>
+
+    <!-- Event Bus → Agents -->
+    <line x1="640" y1="170" x2="640" y2="218" class="arrow-ev"/>
+
+    <!-- Agents → Shared Services -->
+    <line x1="109" y1="326" x2="105" y2="375" class="arrow"/>
+    <line x1="289" y1="326" x2="260" y2="375" class="arrow"/>
+    <line x1="469" y1="326" x2="415" y2="375" class="arrow"/>
+    <line x1="649" y1="326" x2="570" y2="375" class="arrow"/>
+    <line x1="840" y1="326" x2="840" y2="375" class="arrow"/>
+
+    <!-- Shared → Data -->
+    <line x1="105" y1="439" x2="110" y2="490" class="arrow"/>
+    <line x1="260" y1="439" x2="270" y2="490" class="arrow"/>
+    <line x1="415" y1="439" x2="425" y2="490" class="arrow"/>
+    <line x1="570" y1="439" x2="580" y2="490" class="arrow"/>
+    <line x1="725" y1="439" x2="735" y2="490" class="arrow"/>
+  </svg>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#1c2c4a;border-color:#58a6ff"></div>UI Layer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1a2e24;border-color:#3fb950"></div>API / Service</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2d1f3d;border-color:#d2a8ff"></div>Agent</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2a1f1a;border-color:#f0883e"></div>Database</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2a2020;border-color:#f85149"></div>Cache / Queue</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#271f3d;border-color:#a371f7"></div>LLM</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1e2433;border-color:#8b949e"></div>External</div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     DIAGRAM 2 — AGENT ARCHITECTURE
+════════════════════════════════════════════ -->
+<div id="agent" class="diagram-section">
+  <h2>Agent架构详图 — 5 Core Agents + Orchestration</h2>
+  <div class="svg-wrap">
+  <svg width="960" height="700" viewBox="0 0 960 700">
+    <defs>
+      <marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#484f58"/></marker>
+      <marker id="a2-hi" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#d2a8ff"/></marker>
+      <marker id="a2-db" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ffa657"/></marker>
+      <marker id="a2-ev" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#3fb950"/></marker>
+    </defs>
+
+    <!-- Coordinator box top-center -->
+    <rect x="340" y="12" width="280" height="64" rx="10" fill="#0f2d1a" stroke="#3fb950" stroke-width="2"/>
+    <text x="480" y="36" fill="#7ee787" font-size="13" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Agent Coordinator</text>
+    <text x="480" y="54" fill="#8b949e" font-size="10" text-anchor="middle" font-family="'SF Mono',monospace">Orchestration · Saga · Retry · Audit Log</text>
+
+    <!-- 5 Agent boxes in a row -->
+    <!-- Agent 1: Resume -->
+    <rect x="20" y="130" width="160" height="230" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="100" y="153" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">ResumeAgent</text>
+    <line x1="30" y1="162" x2="170" y2="162" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="100" y="177" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📥 parse(pdf/text)</text>
+    <text x="100" y="192" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">✨ optimize(jd?)</text>
+    <text x="100" y="207" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🎯 customize(jd)</text>
+    <text x="100" y="222" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🔍 analyze()</text>
+    <text x="100" y="237" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📋 diff(v1, v2)</text>
+    <line x1="30" y1="248" x2="170" y2="248" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="100" y="264" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Models Used</text>
+    <rect x="35" y="270" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="100" y="282" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Sonnet: optimize/custom</text>
+    <rect x="35" y="292" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="100" y="304" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Haiku: analyze/parse</text>
+    <line x1="30" y1="316" x2="170" y2="316" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="100" y="332" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Cache: resume:v{n}:job:{id}</text>
+    <text x="100" y="347" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">TTL: 7 days</text>
+
+    <!-- Agent 2: JobMatch -->
+    <rect x="200" y="130" width="160" height="230" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="280" y="153" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">JobMatchAgent</text>
+    <line x1="210" y1="162" x2="350" y2="162" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="280" y="177" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🌐 fetchJobs(source)</text>
+    <text x="280" y="192" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🧩 parseJD(raw)</text>
+    <text x="280" y="207" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📊 matchScore(user)</text>
+    <text x="280" y="222" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📬 notify(user_id)</text>
+    <text x="280" y="237" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🔁 recompute(pref)</text>
+    <line x1="210" y1="248" x2="350" y2="248" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="280" y="264" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Models Used</text>
+    <rect x="215" y="270" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="280" y="282" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Haiku: JD skill extract</text>
+    <rect x="215" y="292" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="280" y="304" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Embeddings: semantic</text>
+    <line x1="210" y1="316" x2="350" y2="316" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="280" y="332" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Sources: Greenhouse</text>
+    <text x="280" y="347" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Lever · Ashby</text>
+
+    <!-- Agent 3: Interview -->
+    <rect x="380" y="130" width="160" height="230" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="460" y="153" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">InterviewAgent</text>
+    <line x1="390" y1="162" x2="530" y2="162" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="460" y="177" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">❓ genQuestions(jd)</text>
+    <text x="460" y="192" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">💬 evalAnswer(q, a)</text>
+    <text x="460" y="207" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📝 feedback(session)</text>
+    <text x="460" y="222" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🏢 companyIntel(co)</text>
+    <text x="460" y="237" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📚 aggregateQ(co,role)</text>
+    <line x1="390" y1="248" x2="530" y2="248" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="460" y="264" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Models Used</text>
+    <rect x="395" y="270" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="460" y="282" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Opus: deep eval</text>
+    <rect x="395" y="292" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="460" y="304" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Sonnet: gen questions</text>
+    <line x1="390" y1="316" x2="530" y2="316" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="460" y="332" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Network: flywheel via</text>
+    <text x="460" y="347" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">aggregated Q&A db</text>
+
+    <!-- Agent 4: AppPrep -->
+    <rect x="560" y="130" width="160" height="230" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="640" y="153" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">AppPrepAgent</text>
+    <line x1="570" y1="162" x2="710" y2="162" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="640" y="177" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📄 coverLetter(res,jd)</text>
+    <text x="640" y="192" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📝 formAnswers(jd)</text>
+    <text x="640" y="207" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🤖 detectATS(url)</text>
+    <text x="640" y="222" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📦 package(draft)</text>
+    <text x="640" y="237" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🚀 submit(method)</text>
+    <line x1="570" y1="248" x2="710" y2="248" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="640" y="264" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Models Used</text>
+    <rect x="575" y="270" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="640" y="282" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Sonnet: cover letter</text>
+    <rect x="575" y="292" width="130" height="18" rx="3" fill="#271f3d"/>
+    <text x="640" y="304" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Haiku: form answers</text>
+    <line x1="570" y1="316" x2="710" y2="316" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="640" y="332" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Submit: API → manual</text>
+    <text x="640" y="347" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">→ checklist fallback</text>
+
+    <!-- Agent 5: Trends -->
+    <rect x="740" y="130" width="180" height="230" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="830" y="153" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">TrendAgent</text>
+    <line x1="750" y1="162" x2="910" y2="162" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="830" y="177" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📡 fetchJobs(cron)</text>
+    <text x="830" y="192" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">🧠 extractSkills(jd)</text>
+    <text x="830" y="207" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">📈 aggregate(daily)</text>
+    <text x="830" y="222" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">💡 genInsights(snap)</text>
+    <text x="830" y="237" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">👤 personalize(user)</text>
+    <line x1="750" y1="248" x2="910" y2="248" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="830" y="264" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Models Used</text>
+    <rect x="755" y="270" width="150" height="18" rx="3" fill="#271f3d"/>
+    <text x="830" y="282" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Haiku: skill extraction</text>
+    <rect x="755" y="292" width="150" height="18" rx="3" fill="#271f3d"/>
+    <text x="830" y="304" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">DuckDB: aggregation</text>
+    <line x1="750" y1="316" x2="910" y2="316" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="830" y="332" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Cron: 02:00 UTC daily</text>
+    <text x="830" y="347" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Email digest @ 08:00</text>
+
+    <!-- Coordinator → Agents (arrows from bottom of coordinator) -->
+    <path d="M400,76 L100,130" stroke="#3fb950" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-ev)"/>
+    <path d="M430,76 L280,130" stroke="#3fb950" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-ev)"/>
+    <path d="M480,76 L460,130" stroke="#3fb950" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-ev)"/>
+    <path d="M530,76 L640,130" stroke="#3fb950" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-ev)"/>
+    <path d="M560,76 L830,130" stroke="#3fb950" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-ev)"/>
+
+    <!-- ResumeAgent → AppPrepAgent (composition arrow) -->
+    <path d="M180,250 C240,250 320,270 380,250" stroke="#d2a8ff" stroke-width="1" fill="none" stroke-dasharray="5 3" marker-end="url(#a2-hi)"/>
+    <text x="270" y="243" fill="#8b949e" font-size="8" text-anchor="middle" font-family="'SF Mono',monospace">customize()</text>
+
+    <!-- Shared DB row -->
+    <rect x="20" y="400" width="920" height="50" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="480" y="418" fill="#484f58" font-size="8" font-weight="600" letter-spacing="1" text-anchor="middle" font-family="'SF Mono',monospace">SHARED DATA LAYER (PostgreSQL · Redis · DuckDB)</text>
+    <text x="140" y="438" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Resume · Versions</text>
+    <text x="310" y="438" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Jobs · Matches</text>
+    <text x="480" y="438" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Sessions · Q&amp;A</text>
+    <text x="640" y="438" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Drafts · Applications</text>
+    <text x="820" y="438" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Trends · Snapshots</text>
+
+    <!-- Agents → DB -->
+    <line x1="100" y1="360" x2="100" y2="400" stroke="#484f58" stroke-width="1" marker-end="url(#a2)"/>
+    <line x1="280" y1="360" x2="280" y2="400" stroke="#484f58" stroke-width="1" marker-end="url(#a2)"/>
+    <line x1="460" y1="360" x2="460" y2="400" stroke="#484f58" stroke-width="1" marker-end="url(#a2)"/>
+    <line x1="640" y1="360" x2="640" y2="400" stroke="#484f58" stroke-width="1" marker-end="url(#a2)"/>
+    <line x1="830" y1="360" x2="830" y2="400" stroke="#484f58" stroke-width="1" marker-end="url(#a2)"/>
+
+    <!-- Event Bus row -->
+    <rect x="20" y="480" width="920" height="50" rx="8" fill="#0f1e0f" stroke="#3fb950" stroke-width="1"/>
+    <text x="480" y="498" fill="#3fb950" font-size="8" font-weight="600" letter-spacing="1" text-anchor="middle" font-family="'SF Mono',monospace">EVENT BUS (Redis Streams · Bull Queue)</text>
+    <text x="160" y="518" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">resume:updated</text>
+    <text x="320" y="518" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">job:created</text>
+    <text x="480" y="518" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">interview:answered</text>
+    <text x="640" y="518" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">app:submitted</text>
+    <text x="820" y="518" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">trend:ready</text>
+
+    <!-- Event arrows -->
+    <line x1="100" y1="450" x2="100" y2="480" stroke="#3fb950" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a2-ev)"/>
+    <line x1="280" y1="450" x2="280" y2="480" stroke="#3fb950" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a2-ev)"/>
+    <line x1="460" y1="450" x2="460" y2="480" stroke="#3fb950" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a2-ev)"/>
+    <line x1="640" y1="450" x2="640" y2="480" stroke="#3fb950" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a2-ev)"/>
+    <line x1="830" y1="450" x2="830" y2="480" stroke="#3fb950" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a2-ev)"/>
+
+    <!-- LLM Router bottom -->
+    <rect x="340" y="560" width="280" height="50" rx="8" fill="#1a1130" stroke="#a371f7" stroke-width="2"/>
+    <text x="480" y="581" fill="#c9b1f7" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">LLM Router</text>
+    <text x="480" y="597" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Opus | Sonnet | Haiku  —  model selection · cost gate · fallback</text>
+
+    <!-- Agents → LLM Router -->
+    <path d="M100,360 C100,620 340,610 340,585" stroke="#a371f7" stroke-width="1" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-hi)"/>
+    <path d="M280,360 C280,620 420,610 420,610" stroke="#a371f7" stroke-width="1" fill="none" stroke-dasharray="4 3"/>
+    <path d="M460,360 L460,620 L480,610" stroke="#a371f7" stroke-width="1" fill="none" stroke-dasharray="4 3"/>
+    <path d="M640,360 C640,620 560,610 560,610" stroke="#a371f7" stroke-width="1" fill="none" stroke-dasharray="4 3"/>
+    <path d="M830,360 C830,620 620,610 620,585" stroke="#a371f7" stroke-width="1" fill="none" stroke-dasharray="4 3" marker-end="url(#a2-hi)"/>
+
+    <!-- LLM Router → Claude API -->
+    <rect x="780" y="560" width="140" height="50" rx="6" fill="#1e1628" stroke="#7c3aed" stroke-width="1"/>
+    <text x="850" y="581" fill="#c084fc" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Claude API</text>
+    <text x="850" y="597" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Anthropic · 3 models</text>
+    <line x1="620" y1="585" x2="780" y2="585" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#a2-hi)"/>
+  </svg>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     DIAGRAM 3 — AGENT HARNESS
+════════════════════════════════════════════ -->
+<div id="harness" class="diagram-section">
+  <h2>Agent Harness — 单Agent执行框架</h2>
+  <div class="svg-wrap">
+  <svg width="960" height="680" viewBox="0 0 960 680">
+    <defs>
+      <marker id="a3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#484f58"/></marker>
+      <marker id="a3-ok" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#3fb950"/></marker>
+      <marker id="a3-err" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#f85149"/></marker>
+      <marker id="a3-llm" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#a371f7"/></marker>
+    </defs>
+
+    <!-- Left: Invoke path -->
+    <!-- Caller -->
+    <rect x="20" y="20" width="180" height="50" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="110" y="42" fill="#7ee787" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Coordinator / Cron</text>
+    <text x="110" y="58" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">agent.execute(input)</text>
+
+    <!-- Auth/Budget Gate -->
+    <rect x="20" y="110" width="180" height="50" rx="8" fill="#21262d" stroke="#8b949e" stroke-width="1"/>
+    <text x="110" y="132" fill="#e6edf3" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Auth &amp; Budget Gate</text>
+    <text x="110" y="148" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">user_id · cost_limit check</text>
+
+    <!-- Cache Check -->
+    <rect x="20" y="200" width="180" height="50" rx="8" fill="#2a2020" stroke="#f85149" stroke-width="1"/>
+    <text x="110" y="222" fill="#ff7b72" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Cache Check (Redis)</text>
+    <text x="110" y="238" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">hash(input) → hit?</text>
+
+    <!-- Cache HIT branch -->
+    <rect x="240" y="200" width="130" height="50" rx="6" fill="#1a2e24" stroke="#3fb950" stroke-width="1"/>
+    <text x="305" y="218" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">✓ Cache HIT</text>
+    <text x="305" y="234" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">return cached result</text>
+
+    <!-- Prompt Builder -->
+    <rect x="20" y="295" width="180" height="60" rx="8" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="110" y="317" fill="#c9b1f7" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Prompt Builder</text>
+    <text x="110" y="333" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">system_prompt + context</text>
+    <text x="110" y="347" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">+ tool_schemas</text>
+
+    <!-- Model Selector -->
+    <rect x="20" y="400" width="180" height="60" rx="8" fill="#271f3d" stroke="#a371f7" stroke-width="1.5"/>
+    <text x="110" y="422" fill="#c9b1f7" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">LLM Router</text>
+    <text x="110" y="438" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">select: Opus/Sonnet/Haiku</text>
+    <text x="110" y="452" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">based on task.complexity</text>
+
+    <!-- LLM Execution -->
+    <rect x="20" y="510" width="180" height="80" rx="8" fill="#271f3d" stroke="#a371f7" stroke-width="2"/>
+    <text x="110" y="534" fill="#c9b1f7" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Claude API Call</text>
+    <text x="110" y="550" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">stream: true (UX)</text>
+    <text x="110" y="564" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">timeout: 10s (gate)</text>
+    <text x="110" y="578" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">tools: function calling</text>
+
+    <!-- Right side: Tool Executor -->
+    <rect x="600" y="490" width="180" height="100" rx="8" fill="#1f2a1a" stroke="#56d364" stroke-width="1.5"/>
+    <text x="690" y="514" fill="#56d364" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Tool Executor</text>
+    <text x="690" y="530" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">db.read() · db.write()</text>
+    <text x="690" y="546" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">api.fetch() (job boards)</text>
+    <text x="690" y="562" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">playwright.fill()</text>
+    <text x="690" y="578" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">email.send()</text>
+
+    <!-- Post processor -->
+    <rect x="380" y="380" width="180" height="80" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="470" y="404" fill="#79c0ff" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Post Processor</text>
+    <text x="470" y="420" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">validate JSON schema</text>
+    <text x="470" y="436" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">truthfulness check</text>
+    <text x="470" y="452" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">sanitize · type-cast</text>
+
+    <!-- Error Handler -->
+    <rect x="380" y="500" width="180" height="90" rx="8" fill="#2a0f0f" stroke="#f85149" stroke-width="1.5"/>
+    <text x="470" y="524" fill="#ff7b72" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Error Handler</text>
+    <text x="470" y="540" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">LLMError → retry(3)</text>
+    <text x="470" y="556" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">RateLimitError → backoff</text>
+    <text x="470" y="572" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">TimeoutError → fallback</text>
+    <text x="470" y="588" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">ParseError → degrade</text>
+
+    <!-- Audit Logger -->
+    <rect x="600" y="380" width="180" height="80" rx="8" fill="#21262d" stroke="#8b949e" stroke-width="1"/>
+    <text x="690" y="404" fill="#e6edf3" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Audit Logger</text>
+    <text x="690" y="420" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">latency_ms · tokens</text>
+    <text x="690" y="436" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">cost_cents · model</text>
+    <text x="690" y="452" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">agent · version · trace</text>
+
+    <!-- Result → Cache Store -->
+    <rect x="600" y="280" width="180" height="70" rx="8" fill="#2a2020" stroke="#f85149" stroke-width="1"/>
+    <text x="690" y="302" fill="#ff7b72" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Cache Store</text>
+    <text x="690" y="318" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">key: hash(input)</text>
+    <text x="690" y="334" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">TTL: task-dependent</text>
+
+    <!-- Return to caller -->
+    <rect x="600" y="160" width="180" height="80" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="690" y="184" fill="#7ee787" font-size="11" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Result</text>
+    <text x="690" y="200" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">{data, cost, latency}</text>
+    <text x="690" y="216" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">{cache_hit, model_used}</text>
+    <text x="690" y="232" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">{trace_id}</text>
+
+    <!-- Prompt Registry (right top) -->
+    <rect x="800" y="280" width="140" height="120" rx="8" fill="#1a1130" stroke="#a371f7" stroke-width="1"/>
+    <text x="870" y="302" fill="#c084fc" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Prompt Registry</text>
+    <line x1="810" y1="312" x2="930" y2="312" stroke="#2d1f3d" stroke-width="1"/>
+    <text x="870" y="328" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">prompts.resume.v2</text>
+    <text x="870" y="343" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">prompts.interview.v1</text>
+    <text x="870" y="358" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">prompts.trends.v1</text>
+    <text x="870" y="374" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">→ versioned / A/B</text>
+    <text x="870" y="389" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">→ editable no-code</text>
+
+    <!-- ARROWS -->
+    <!-- Caller → Auth -->
+    <line x1="110" y1="70" x2="110" y2="110" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3-ok)"/>
+    <!-- Auth → Cache -->
+    <line x1="110" y1="160" x2="110" y2="200" stroke="#484f58" stroke-width="1.5" marker-end="url(#a3)"/>
+    <!-- Cache → MISS: Prompt -->
+    <line x1="110" y1="250" x2="110" y2="295" stroke="#484f58" stroke-width="1.5" marker-end="url(#a3)"/>
+    <text x="120" y="276" fill="#8b949e" font-size="8" font-family="'SF Mono',monospace">MISS</text>
+    <!-- Cache → HIT: branch right -->
+    <line x1="200" y1="225" x2="240" y2="225" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3-ok)"/>
+    <text x="212" y="218" fill="#56d364" font-size="8" font-family="'SF Mono',monospace">HIT</text>
+    <!-- HIT → Result (right side) -->
+    <path d="M370,225 C500,225 600,200 600,200" stroke="#3fb950" stroke-width="1" fill="none" stroke-dasharray="4 3" marker-end="url(#a3-ok)"/>
+    <!-- Prompt → Model Selector -->
+    <line x1="110" y1="355" x2="110" y2="400" stroke="#c9b1f7" stroke-width="1.5" marker-end="url(#a3-llm)"/>
+    <!-- Model → LLM -->
+    <line x1="110" y1="460" x2="110" y2="510" stroke="#a371f7" stroke-width="1.5" marker-end="url(#a3-llm)"/>
+    <!-- LLM → tool_use? → Tool Executor -->
+    <path d="M200,550 C380,550 500,540 600,540" stroke="#56d364" stroke-width="1.5" fill="none" marker-end="url(#a3-ok)"/>
+    <text x="380" y="538" fill="#56d364" font-size="8" font-family="'SF Mono',monospace">tool_use →</text>
+    <!-- Tool Executor → LLM (tool result) -->
+    <path d="M600,520 C380,500 200,580 200,590" stroke="#56d364" stroke-width="1" fill="none" stroke-dasharray="4 3" marker-end="url(#a3-ok)"/>
+    <text x="380" y="575" fill="#56d364" font-size="8" font-family="'SF Mono',monospace">← tool_result</text>
+    <!-- LLM → Post Processor -->
+    <path d="M200,555 C320,555 380,430 380,430" stroke="#58a6ff" stroke-width="1.5" fill="none" marker-end="url(#a3-ok)"/>
+    <text x="310" y="500" fill="#79c0ff" font-size="8" font-family="'SF Mono',monospace">final text</text>
+    <!-- LLM → Error (on error) -->
+    <path d="M200,570 C280,570 380,570 380,570" stroke="#f85149" stroke-width="1" fill="none" stroke-dasharray="3 3" marker-end="url(#a3-err)"/>
+    <!-- Post → Audit -->
+    <line x1="560" y1="420" x2="600" y2="420" stroke="#484f58" stroke-width="1.5" marker-end="url(#a3)"/>
+    <!-- Post → Cache Store -->
+    <line x1="560" y1="400" x2="690" y2="350" stroke="#f85149" stroke-width="1" fill="none" stroke-dasharray="3 3" marker-end="url(#a3-err)"/>
+    <!-- Audit → Cache Store -->
+    <line x1="690" y1="380" x2="690" y2="350" stroke="#484f58" stroke-width="1.5" marker-end="url(#a3)"/>
+    <!-- Cache Store → Result -->
+    <line x1="690" y1="280" x2="690" y2="240" stroke="#484f58" stroke-width="1.5" marker-end="url(#a3)"/>
+    <!-- Prompt Builder → Prompt Registry -->
+    <path d="M200,325 C500,325 800,325 800,340" stroke="#a371f7" stroke-width="1" fill="none" stroke-dasharray="4 3" marker-end="url(#a3-llm)"/>
+    <text x="500" y="318" fill="#8b949e" font-size="8" font-family="'SF Mono',monospace">fetch versioned prompt</text>
+    <!-- Error → Retry back to Model (dotted) -->
+    <path d="M380,530 C300,530 50,530 50,460" stroke="#f85149" stroke-width="1" fill="none" stroke-dasharray="4 3" marker-end="url(#a3-err)"/>
+    <text x="55" y="500" fill="#ff7b72" font-size="8" font-family="'SF Mono',monospace">retry(n≤3)</text>
+  </svg>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     DIAGRAM 4 — DATA FLOW
+════════════════════════════════════════════ -->
+<div id="data" class="diagram-section">
+  <h2>数据流图 — End-to-End User Journey</h2>
+  <div class="svg-wrap">
+  <svg width="960" height="640" viewBox="0 0 960 640">
+    <defs>
+      <marker id="a4" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#484f58"/></marker>
+      <marker id="a4-b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#58a6ff"/></marker>
+      <marker id="a4-g" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#3fb950"/></marker>
+      <marker id="a4-p" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#d2a8ff"/></marker>
+      <marker id="a4-o" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ffa657"/></marker>
+    </defs>
+
+    <!-- Flow: 5 lanes -->
+    <!-- Lane labels -->
+    <text x="90"  y="18" fill="#3fb950" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">ONBOARD</text>
+    <text x="250" y="18" fill="#58a6ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">OPTIMIZE</text>
+    <text x="430" y="18" fill="#d2a8ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">DISCOVER</text>
+    <text x="620" y="18" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">APPLY</text>
+    <text x="820" y="18" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">INTERVIEW</text>
+
+    <!-- Lane dividers -->
+    <line x1="165" y1="10" x2="165" y2="630" stroke="#21262d" stroke-width="1"/>
+    <line x1="335" y1="10" x2="335" y2="630" stroke="#21262d" stroke-width="1"/>
+    <line x1="525" y1="10" x2="525" y2="630" stroke="#21262d" stroke-width="1"/>
+    <line x1="720" y1="10" x2="720" y2="630" stroke="#21262d" stroke-width="1"/>
+
+    <!-- ONBOARD flow -->
+    <rect x="20" y="35" width="140" height="44" rx="6" fill="#1a2e24" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="90" y="54" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">User Signup</text>
+    <text x="90" y="70" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Supabase Auth</text>
+
+    <rect x="20" y="115" width="140" height="44" rx="6" fill="#1a2e24" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="90" y="134" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Upload Resume</text>
+    <text x="90" y="150" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">PDF / paste text</text>
+
+    <rect x="20" y="195" width="140" height="44" rx="6" fill="#1a2e24" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="90" y="214" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">ResumeAgent.parse</text>
+    <text x="90" y="230" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">→ JSON Resume v1</text>
+
+    <rect x="20" y="275" width="140" height="44" rx="6" fill="#1a2e24" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="90" y="294" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Set Preferences</text>
+    <text x="90" y="310" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">roles / skills / salary</text>
+
+    <rect x="20" y="355" width="140" height="44" rx="6" fill="#0f1e0f" stroke="#56d364" stroke-width="1"/>
+    <text x="90" y="374" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">DB: users + resumes</text>
+    <text x="90" y="390" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">PostgreSQL upsert</text>
+
+    <!-- ONBOARD arrows -->
+    <line x1="90" y1="79" x2="90" y2="115" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a4-g)"/>
+    <line x1="90" y1="159" x2="90" y2="195" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a4-g)"/>
+    <line x1="90" y1="239" x2="90" y2="275" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a4-g)"/>
+    <line x1="90" y1="319" x2="90" y2="355" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a4-g)"/>
+
+    <!-- OPTIMIZE flow -->
+    <rect x="180" y="35" width="140" height="44" rx="6" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="250" y="54" fill="#79c0ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">User: Optimize</text>
+    <text x="250" y="70" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">click + optional JD</text>
+
+    <rect x="180" y="115" width="140" height="44" rx="6" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="250" y="134" fill="#79c0ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Claude Sonnet</text>
+    <text x="250" y="150" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">optimize prompt → output</text>
+
+    <rect x="180" y="195" width="140" height="44" rx="6" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="250" y="214" fill="#79c0ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Show Diff UI</text>
+    <text x="250" y="230" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">accept / reject / edit</text>
+
+    <rect x="180" y="275" width="140" height="44" rx="6" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="250" y="294" fill="#79c0ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Save Version N+1</text>
+    <text x="250" y="310" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">optimistic lock</text>
+
+    <rect x="180" y="355" width="140" height="44" rx="6" fill="#0f1e0f" stroke="#56d364" stroke-width="1"/>
+    <text x="250" y="374" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">DB: resume_versions</text>
+    <text x="250" y="390" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">+ audit_log entry</text>
+
+    <line x1="250" y1="79" x2="250" y2="115" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a4-b)"/>
+    <line x1="250" y1="159" x2="250" y2="195" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a4-b)"/>
+    <line x1="250" y1="239" x2="250" y2="275" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a4-b)"/>
+    <line x1="250" y1="319" x2="250" y2="355" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a4-b)"/>
+
+    <!-- DISCOVER flow -->
+    <rect x="360" y="35" width="150" height="44" rx="6" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="435" y="54" fill="#d2a8ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Cron (hourly)</text>
+    <text x="435" y="70" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">fetch new jobs</text>
+
+    <rect x="360" y="115" width="150" height="44" rx="6" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="435" y="134" fill="#d2a8ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">JobMatchAgent</text>
+    <text x="435" y="150" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Greenhouse/Lever/Ashby</text>
+
+    <rect x="360" y="195" width="150" height="44" rx="6" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="435" y="214" fill="#d2a8ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Parse + Score</text>
+    <text x="435" y="230" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">skills · salary · embed</text>
+
+    <rect x="360" y="275" width="150" height="44" rx="6" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+    <text x="435" y="294" fill="#d2a8ff" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Notify User</text>
+    <text x="435" y="310" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">email + push + in-app</text>
+
+    <rect x="360" y="355" width="150" height="44" rx="6" fill="#0f1e0f" stroke="#56d364" stroke-width="1"/>
+    <text x="435" y="374" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">DB: jobs + matches</text>
+    <text x="435" y="390" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Redis: notify queue</text>
+
+    <line x1="435" y1="79" x2="435" y2="115" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a4-p)"/>
+    <line x1="435" y1="159" x2="435" y2="195" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a4-p)"/>
+    <line x1="435" y1="239" x2="435" y2="275" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a4-p)"/>
+    <line x1="435" y1="319" x2="435" y2="355" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a4-p)"/>
+
+    <!-- APPLY flow -->
+    <rect x="548" y="35" width="158" height="44" rx="6" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+    <text x="627" y="54" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">User selects job</text>
+    <text x="627" y="70" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">clicks "prepare"</text>
+
+    <rect x="548" y="115" width="158" height="44" rx="6" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+    <text x="627" y="134" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">AppPrepAgent</text>
+    <text x="627" y="150" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">tailored CV + letter</text>
+
+    <rect x="548" y="195" width="158" height="44" rx="6" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+    <text x="627" y="214" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">User Review UI</text>
+    <text x="627" y="230" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">approve / edit / reject</text>
+
+    <rect x="548" y="275" width="158" height="44" rx="6" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+    <text x="627" y="294" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Submit</text>
+    <text x="627" y="310" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">API / manual / email</text>
+
+    <rect x="548" y="355" width="158" height="44" rx="6" fill="#0f1e0f" stroke="#56d364" stroke-width="1"/>
+    <text x="627" y="374" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">DB: application_drafts</text>
+    <text x="627" y="390" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">audit log · cost track</text>
+
+    <line x1="627" y1="79" x2="627" y2="115" stroke="#ffa657" stroke-width="1.5" marker-end="url(#a4-o)"/>
+    <line x1="627" y1="159" x2="627" y2="195" stroke="#ffa657" stroke-width="1.5" marker-end="url(#a4-o)"/>
+    <line x1="627" y1="239" x2="627" y2="275" stroke="#ffa657" stroke-width="1.5" marker-end="url(#a4-o)"/>
+    <line x1="627" y1="319" x2="627" y2="355" stroke="#ffa657" stroke-width="1.5" marker-end="url(#a4-o)"/>
+
+    <!-- INTERVIEW flow -->
+    <rect x="740" y="35" width="185" height="44" rx="6" fill="#1f2a1a" stroke="#56d364" stroke-width="1.5"/>
+    <text x="832" y="54" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">User: prep interview</text>
+    <text x="832" y="70" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">select job · start session</text>
+
+    <rect x="740" y="115" width="185" height="44" rx="6" fill="#1f2a1a" stroke="#56d364" stroke-width="1.5"/>
+    <text x="832" y="134" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">InterviewAgent</text>
+    <text x="832" y="150" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">gen 10 questions (Opus)</text>
+
+    <rect x="740" y="195" width="185" height="44" rx="6" fill="#1f2a1a" stroke="#56d364" stroke-width="1.5"/>
+    <text x="832" y="214" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">User Answers</text>
+    <text x="832" y="230" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">text / voice (Whisper)</text>
+
+    <rect x="740" y="275" width="185" height="44" rx="6" fill="#1f2a1a" stroke="#56d364" stroke-width="1.5"/>
+    <text x="832" y="294" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">AI Feedback</text>
+    <text x="832" y="310" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">rating · tips · example</text>
+
+    <rect x="740" y="355" width="185" height="44" rx="6" fill="#0f1e0f" stroke="#56d364" stroke-width="1"/>
+    <text x="832" y="374" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">DB: sessions + Q&amp;A</text>
+    <text x="832" y="390" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">→ flywheel: aggregate</text>
+
+    <line x1="832" y1="79" x2="832" y2="115" stroke="#56d364" stroke-width="1.5" marker-end="url(#a4-g)"/>
+    <line x1="832" y1="159" x2="832" y2="195" stroke="#56d364" stroke-width="1.5" marker-end="url(#a4-g)"/>
+    <line x1="832" y1="239" x2="832" y2="275" stroke="#56d364" stroke-width="1.5" marker-end="url(#a4-g)"/>
+    <line x1="832" y1="319" x2="832" y2="355" stroke="#56d364" stroke-width="1.5" marker-end="url(#a4-g)"/>
+
+    <!-- Cross-lane flows -->
+    <!-- Onboard parse → Optimize -->
+    <line x1="160" y1="218" x2="180" y2="137" stroke="#484f58" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+    <text x="168" y="178" fill="#484f58" font-size="7" text-anchor="middle" font-family="'SF Mono',monospace">base resume</text>
+
+    <!-- Optimize → Discover (matching) -->
+    <line x1="320" y1="300" x2="360" y2="218" stroke="#484f58" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+
+    <!-- Discover → Apply -->
+    <line x1="510" y1="137" x2="548" y2="57" stroke="#484f58" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+    <text x="528" y="98" fill="#484f58" font-size="7" text-anchor="middle" font-family="'SF Mono',monospace">job selected</text>
+
+    <!-- Apply → Interview -->
+    <line x1="706" y1="137" x2="740" y2="57" stroke="#484f58" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+    <text x="728" y="98" fill="#484f58" font-size="7" text-anchor="middle" font-family="'SF Mono',monospace">got interview</text>
+
+    <!-- Trend row at bottom -->
+    <rect x="10" y="435" width="940" height="80" rx="8" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+    <text x="480" y="453" fill="#484f58" font-size="8" font-weight="600" letter-spacing="1" text-anchor="middle" font-family="'SF Mono',monospace">DAILY BACKGROUND: TrendAgent (cron 02:00 UTC)</text>
+
+    <rect x="30" y="465" width="160" height="34" rx="4" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1"/>
+    <text x="110" y="480" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">1. Fetch job boards</text>
+    <text x="110" y="494" fill="#8b949e" font-size="8" text-anchor="middle" font-family="'SF Mono',monospace">Greenhouse/Lever/Ashby</text>
+
+    <text x="200" y="484" fill="#484f58" font-size="16" text-anchor="middle">→</text>
+
+    <rect x="210" y="465" width="150" height="34" rx="4" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1"/>
+    <text x="285" y="480" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">2. Extract skills</text>
+    <text x="285" y="494" fill="#8b949e" font-size="8" text-anchor="middle" font-family="'SF Mono',monospace">NER + Haiku + NLP</text>
+
+    <text x="370" y="484" fill="#484f58" font-size="16" text-anchor="middle">→</text>
+
+    <rect x="380" y="465" width="150" height="34" rx="4" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1"/>
+    <text x="455" y="480" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">3. Aggregate → DuckDB</text>
+    <text x="455" y="494" fill="#8b949e" font-size="8" text-anchor="middle" font-family="'SF Mono',monospace">TrendSnapshot daily</text>
+
+    <text x="540" y="484" fill="#484f58" font-size="16" text-anchor="middle">→</text>
+
+    <rect x="555" y="465" width="165" height="34" rx="4" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1"/>
+    <text x="637" y="480" fill="#c9b1f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">4. Personalize per user</text>
+    <text x="637" y="494" fill="#8b949e" font-size="8" text-anchor="middle" font-family="'SF Mono',monospace">skill gap + opportunity</text>
+
+    <text x="730" y="484" fill="#484f58" font-size="16" text-anchor="middle">→</text>
+
+    <rect x="740" y="465" width="185" height="34" rx="4" fill="#1f2a1a" stroke="#56d364" stroke-width="1"/>
+    <text x="832" y="480" fill="#56d364" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">5. Email digest @ 08:00</text>
+    <text x="832" y="494" fill="#8b949e" font-size="8" text-anchor="middle" font-family="'SF Mono',monospace">daily market intelligence</text>
+
+    <!-- Flywheel label -->
+    <rect x="10" y="540" width="940" height="80" rx="8" fill="#0f0f1a" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="6 3"/>
+    <text x="480" y="562" fill="#7c3aed" font-size="10" font-weight="700" letter-spacing="2" text-anchor="middle" font-family="'SF Mono',monospace">DATA FLYWHEEL</text>
+    <text x="175" y="582" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Resume Versions</text>
+    <text x="350" y="582" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Application History</text>
+    <text x="480" y="582" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">→ accumulate → lock-in →</text>
+    <text x="660" y="582" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Interview Q&amp;A (agg.)</text>
+    <text x="830" y="582" fill="#8b949e" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">Trend Intelligence</text>
+    <text x="480" y="608" fill="#a371f7" font-size="9" text-anchor="middle" font-family="'SF Mono',monospace">more use → richer context → better outcomes → more use (moat)</text>
+  </svg>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     DIAGRAM 5 — SCALE PATH
+════════════════════════════════════════════ -->
+<div id="scale" class="diagram-section">
+  <h2>扩展路径 — 1k → 10k → 100k Users</h2>
+  <div class="svg-wrap">
+  <svg width="960" height="560" viewBox="0 0 960 560">
+    <defs>
+      <marker id="a5" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#484f58"/></marker>
+    </defs>
+
+    <!-- Phase columns -->
+    <rect x="10"  y="10" width="290" height="520" rx="10" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+    <rect x="335" y="10" width="290" height="520" rx="10" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+    <rect x="660" y="10" width="290" height="520" rx="10" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+
+    <!-- Phase headers -->
+    <rect x="10"  y="10" width="290" height="44" rx="10" fill="#1a2e24" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="155" y="30" fill="#7ee787" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Phase 1 · MVP</text>
+    <text x="155" y="46" fill="#56d364" font-size="10" text-anchor="middle" font-family="'SF Mono',monospace">1k → 10k users  |  months 0-6</text>
+
+    <rect x="335" y="10" width="290" height="44" rx="10" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="480" y="30" fill="#79c0ff" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Phase 2 · Growth</text>
+    <text x="480" y="46" fill="#58a6ff" font-size="10" text-anchor="middle" font-family="'SF Mono',monospace">10k → 50k users  |  months 6-12</text>
+
+    <rect x="660" y="10" width="290" height="44" rx="10" fill="#1a1130" stroke="#a371f7" stroke-width="1.5"/>
+    <text x="805" y="30" fill="#c9b1f7" font-size="12" font-weight="700" text-anchor="middle" font-family="'SF Mono',monospace">Phase 3 · Scale</text>
+    <text x="805" y="46" fill="#a371f7" font-size="10" text-anchor="middle" font-family="'SF Mono',monospace">50k → 200k users  |  months 12-18</text>
+
+    <!-- Divider arrows between phases -->
+    <path d="M300,270 L335,270" stroke="#484f58" stroke-width="2" marker-end="url(#a5)"/>
+    <path d="M625,270 L660,270" stroke="#484f58" stroke-width="2" marker-end="url(#a5)"/>
+
+    <!-- Helper macro: sections within each phase -->
+    <!-- Phase 1 sections -->
+    <text x="22" y="78" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">COMPUTE</text>
+    <rect x="22" y="84" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="34" y="101" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Frontend: Vercel (auto-scale)</text>
+    <text x="34" y="117" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Backend: 1x Node.js on Railway</text>
+    <text x="34" y="133" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Workers: Bull + Redis (single)</text>
+
+    <text x="22" y="158" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">DATABASE</text>
+    <rect x="22" y="164" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="34" y="181" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Supabase PostgreSQL (managed)</text>
+    <text x="34" y="197" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Redis hobby instance (~$15/mo)</text>
+    <text x="34" y="213" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">DuckDB local file (trends)</text>
+
+    <text x="22" y="238" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">LLM STRATEGY</text>
+    <rect x="22" y="244" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="34" y="261" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Claude Sonnet (default all)</text>
+    <text x="34" y="277" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Haiku for cheap tasks</text>
+    <text x="34" y="293" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Basic Redis caching</text>
+
+    <text x="22" y="318" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">COST ESTIMATE</text>
+    <rect x="22" y="324" width="265" height="54" rx="5" fill="#0f1e0f" stroke="#3fb950" stroke-width="1"/>
+    <text x="34" y="341" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">LLM: ~$60/mo @ 1k users</text>
+    <text x="34" y="357" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">Infra: ~$150/mo</text>
+    <text x="34" y="373" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">Total opex: ~$210/mo</text>
+
+    <text x="22" y="398" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">BOTTLENECK SIGNALS</text>
+    <rect x="22" y="404" width="265" height="108" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="34" y="421" fill="#ff7b72" font-size="9" font-family="'SF Mono',monospace">⚠ API P95 &gt; 1s</text>
+    <text x="34" y="437" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">  → add worker instances</text>
+    <text x="34" y="455" fill="#ff7b72" font-size="9" font-family="'SF Mono',monospace">⚠ LLM cost &gt; 20% revenue</text>
+    <text x="34" y="471" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">  → cache hit rate &lt; 50%? fix it</text>
+    <text x="34" y="489" fill="#ff7b72" font-size="9" font-family="'SF Mono',monospace">⚠ DB connections saturate</text>
+    <text x="34" y="505" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">  → add PgBouncer</text>
+
+    <!-- Phase 2 sections -->
+    <text x="347" y="78" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">COMPUTE</text>
+    <rect x="347" y="84" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="359" y="101" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Frontend: Vercel (same)</text>
+    <text x="359" y="117" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Backend: 3-5x instances, LB</text>
+    <text x="359" y="133" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Workers: 4-6 dedicated</text>
+
+    <text x="347" y="158" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">DATABASE</text>
+    <rect x="347" y="164" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="359" y="181" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">PG + read replica (analytics)</text>
+    <text x="359" y="197" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">PgBouncer for pooling</text>
+    <text x="359" y="213" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Redis cluster (if needed)</text>
+
+    <text x="347" y="238" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">LLM STRATEGY</text>
+    <rect x="347" y="244" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="359" y="261" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">70% cache hit rate target</text>
+    <text x="359" y="277" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Multi-model routing by task</text>
+    <text x="359" y="293" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Semantic caching (embeddings)</text>
+
+    <text x="347" y="318" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">COST ESTIMATE</text>
+    <rect x="347" y="324" width="265" height="54" rx="5" fill="#0f1e0f" stroke="#3fb950" stroke-width="1"/>
+    <text x="359" y="341" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">LLM: ~$844/mo @ 50k users</text>
+    <text x="359" y="357" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">Infra: ~$700/mo</text>
+    <text x="359" y="373" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">Revenue: ~$75k/mo (10% conv)</text>
+
+    <text x="347" y="398" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">NEW IN PHASE 2</text>
+    <rect x="347" y="404" width="265" height="108" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="359" y="421" fill="#58a6ff" font-size="9" font-family="'SF Mono',monospace">✦ Full-auto apply (opt-in)</text>
+    <text x="359" y="437" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">  with guardrails + waiver</text>
+    <text x="359" y="455" fill="#58a6ff" font-size="9" font-family="'SF Mono',monospace">✦ B2B2C (bootcamp API)</text>
+    <text x="359" y="471" fill="#58a6ff" font-size="9" font-family="'SF Mono',monospace">✦ Interview Q aggregation</text>
+    <text x="359" y="487" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">  (network effect kicks in)</text>
+    <text x="359" y="505" fill="#58a6ff" font-size="9" font-family="'SF Mono',monospace">✦ Premium tier ($39/mo)</text>
+
+    <!-- Phase 3 sections -->
+    <text x="672" y="78" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">COMPUTE</text>
+    <rect x="672" y="84" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="684" y="101" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Frontend: Vercel + Edge</text>
+    <text x="684" y="117" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Backend: Kubernetes (Docker)</text>
+    <text x="684" y="133" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Workers: autoscale by queue</text>
+
+    <text x="672" y="158" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">DATABASE (POLYGLOT)</text>
+    <rect x="672" y="164" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="684" y="181" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">PG (OLTP) · ClickHouse (OLAP)</text>
+    <text x="684" y="197" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">ElasticSearch (full-text search)</text>
+    <text x="684" y="213" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">pgvector (embeddings)</text>
+
+    <text x="672" y="238" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">LLM STRATEGY</text>
+    <rect x="672" y="244" width="265" height="54" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="684" y="261" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Claude 70% + Gemini 20%</text>
+    <text x="684" y="277" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Local Llama for trivial ops</text>
+    <text x="684" y="293" fill="#8b949e" font-size="9" font-family="'SF Mono',monospace">Semantic cache + request batch</text>
+
+    <text x="672" y="318" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">COST ESTIMATE</text>
+    <rect x="672" y="324" width="265" height="54" rx="5" fill="#0f1e0f" stroke="#3fb950" stroke-width="1"/>
+    <text x="684" y="341" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">LLM: ~$1.8k/mo @ 100k users</text>
+    <text x="684" y="357" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">Infra: ~$3-5k/mo</text>
+    <text x="684" y="373" fill="#56d364" font-size="9" font-family="'SF Mono',monospace">Revenue: ~$300k-1.5M/mo</text>
+
+    <text x="672" y="398" fill="#484f58" font-size="8" letter-spacing="1" font-family="'SF Mono',monospace">NEW IN PHASE 3</text>
+    <rect x="672" y="404" width="265" height="108" rx="5" fill="#161b22" stroke="#21262d"/>
+    <text x="684" y="421" fill="#c9b1f7" font-size="9" font-family="'SF Mono',monospace">✦ Microservices if needed</text>
+    <text x="684" y="437" fill="#c9b1f7" font-size="9" font-family="'SF Mono',monospace">✦ CQRS + Event Sourcing</text>
+    <text x="684" y="455" fill="#c9b1f7" font-size="9" font-family="'SF Mono',monospace">✦ ML: perf predictor model</text>
+    <text x="684" y="471" fill="#c9b1f7" font-size="9" font-family="'SF Mono',monospace">✦ Data product (anon trends)</text>
+    <text x="684" y="487" fill="#c9b1f7" font-size="9" font-family="'SF Mono',monospace">✦ Salary negotiation agent</text>
+    <text x="684" y="505" fill="#c9b1f7" font-size="9" font-family="'SF Mono',monospace">✦ Human coaching layer</text>
+  </svg>
+  </div>
+</div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.diagram-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

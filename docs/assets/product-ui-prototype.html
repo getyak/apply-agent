@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>求职副驾 · 产品原型</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#171826;
+  --ink-soft:#3a3c52;
+  --mist:#6b6e85;
+  --line:#e7e7ee;
+  --line-soft:#f0f0f5;
+  --paper:#f7f7fb;
+  --card:#ffffff;
+  --signal:#3a3fd6;
+  --signal-soft:#ececfb;
+  --ai:#ff5c39;
+  --ai-soft:#fff0ec;
+  --mint:#0b9d7e;
+  --mint-soft:#e4f6f1;
+  --amber:#e8a317;
+  --radius:18px;
+  --radius-sm:12px;
+  --shadow:0 1px 2px rgba(23,24,38,.04), 0 8px 24px rgba(23,24,38,.06);
+  --shadow-lg:0 4px 12px rgba(23,24,38,.08), 0 24px 48px rgba(23,24,38,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--paper);color:var(--ink);line-height:1.5;-webkit-font-smoothing:antialiased;padding:24px;min-height:100vh}
+h1,h2,h3,.display{font-family:'Space Grotesk',sans-serif;letter-spacing:-.02em}
+.switch{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:24px}
+.sbtn{padding:9px 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--mist);cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:500;transition:.18s}
+.sbtn.active{background:var(--ink);border-color:var(--ink);color:#fff}
+.sbtn:hover:not(.active){border-color:var(--ink-soft);color:var(--ink)}
+.stage{max-width:1080px;margin:0 auto}
+.screen{display:none;animation:fade .4s ease}
+.screen.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow-lg);overflow:hidden}
+.chrome{display:flex;align-items:center;gap:8px;padding:14px 20px;border-bottom:1px solid var(--line-soft);background:#fcfcfe}
+.dot{width:11px;height:11px;border-radius:50%}
+.chrome .url{margin-left:14px;font-size:12px;color:var(--mist);font-family:'Space Grotesk',sans-serif}
+.ob{padding:72px 64px 80px;text-align:center}
+.ob .kicker{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--signal);margin-bottom:20px}
+.ob h1{font-size:46px;font-weight:600;line-height:1.08;margin-bottom:14px}
+.ob h1 em{font-style:normal;color:var(--signal)}
+.ob .sub{font-size:17px;color:var(--mist);max-width:440px;margin:0 auto 44px}
+.drop{max-width:520px;margin:0 auto;border:2px dashed var(--line);border-radius:var(--radius);background:var(--paper);padding:48px 32px;cursor:pointer;transition:.2s}
+.drop:hover{border-color:var(--signal);background:var(--signal-soft)}
+.drop .ic{width:56px;height:56px;border-radius:16px;background:var(--signal);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;color:#fff;font-size:24px}
+.drop .big{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;margin-bottom:6px}
+.drop .small{font-size:13px;color:var(--mist)}
+.ob .or{margin:24px auto;font-size:13px;color:var(--mist);display:flex;align-items:center;gap:12px;max-width:520px}
+.ob .or::before,.ob .or::after{content:"";flex:1;height:1px;background:var(--line)}
+.alt{display:flex;gap:10px;max-width:520px;margin:0 auto;justify-content:center}
+.alt button{flex:1;padding:13px;border:1px solid var(--line);background:var(--card);border-radius:var(--radius-sm);font-family:'Inter';font-size:14px;font-weight:500;color:var(--ink-soft);cursor:pointer;transition:.15s}
+.alt button:hover{border-color:var(--ink-soft)}
+.ob .note{margin-top:36px;font-size:12.5px;color:var(--mist)}
+.ob .note b{color:var(--mint);font-weight:600}
+.parsing{padding:90px 64px;text-align:center;display:none}
+.parsing.show{display:block}
+.spinner{width:48px;height:48px;border:3px solid var(--signal-soft);border-top-color:var(--signal);border-radius:50%;margin:0 auto 28px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.parsing h2{font-size:24px;font-weight:600;margin-bottom:10px}
+.parsing p{color:var(--mist);font-size:15px}
+.parse-steps{max-width:340px;margin:32px auto 0;text-align:left}
+.pstep{display:flex;align-items:center;gap:12px;padding:9px 0;font-size:14px;color:var(--mist)}
+.pstep .check{width:20px;height:20px;border-radius:50%;background:var(--mint-soft);color:var(--mint);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.app{display:flex;min-height:660px}
+.side{width:212px;border-right:1px solid var(--line-soft);padding:22px 14px;background:#fcfcfe;flex-shrink:0}
+.brand{display:flex;align-items:center;gap:9px;padding:0 8px 22px}
+.brand .mark{width:30px;height:30px;border-radius:9px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk';font-weight:700;font-size:15px}
+.brand .name{font-family:'Space Grotesk';font-weight:600;font-size:15px}
+.nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;font-size:14px;font-weight:500;color:var(--mist);cursor:pointer;margin-bottom:2px;transition:.12s}
+.nav-item .i{width:18px;text-align:center;font-size:15px}
+.nav-item:hover{background:var(--line-soft);color:var(--ink)}
+.nav-item.on{background:var(--signal-soft);color:var(--signal)}
+.nav-item .badge{margin-left:auto;background:var(--ai);color:#fff;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;font-family:'Space Grotesk'}
+.side .div{height:1px;background:var(--line-soft);margin:16px 8px}
+.main{flex:1;padding:30px 36px;overflow-y:auto;max-height:660px}
+.ribbon{display:flex;align-items:center;gap:14px;background:linear-gradient(100deg,#1b1c2e,#2a2c45);color:#fff;border-radius:var(--radius);padding:15px 20px;margin-bottom:30px}
+.ribbon .pulse{width:8px;height:8px;border-radius:50%;background:var(--ai);flex-shrink:0;box-shadow:0 0 0 0 rgba(255,92,57,.6);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,92,57,.5)}70%{box-shadow:0 0 0 9px rgba(255,92,57,0)}100%{box-shadow:0 0 0 0 rgba(255,92,57,0)}}
+.ribbon .txt{font-size:13.5px;flex:1}
+.ribbon .txt b{font-family:'Space Grotesk';font-weight:600}
+.ribbon .txt .up{color:#5ee0b8;font-weight:600}
+.ribbon .more{font-size:12.5px;color:rgba(255,255,255,.6);font-weight:500;white-space:nowrap;cursor:pointer}
+.ribbon .more:hover{color:#fff}
+.head-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+.head-row h1{font-size:26px;font-weight:600}
+.head-row .meta{font-size:13px;color:var(--mist)}
+.sub-line{font-size:14.5px;color:var(--mist);margin-bottom:24px}
+.sub-line b{color:var(--ink);font-weight:600}
+.jobs{display:flex;flex-direction:column;gap:12px}
+.job{display:flex;align-items:center;gap:16px;padding:18px 20px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card);transition:.18s}
+.job:hover{border-color:var(--ink-soft);box-shadow:var(--shadow);transform:translateY(-1px)}
+.job .logo{width:46px;height:46px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk';font-weight:700;font-size:17px;color:#fff}
+.job .info{flex:1;min-width:0}
+.job .title{font-family:'Space Grotesk';font-weight:600;font-size:15.5px;margin-bottom:3px}
+.job .co{font-size:13px;color:var(--mist)}
+.job .co .tag{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:6px;background:var(--line-soft);font-size:11.5px;color:var(--ink-soft);font-weight:500}
+.job .match{text-align:center;flex-shrink:0;width:62px}
+.job .match .pct{font-family:'Space Grotesk';font-weight:700;font-size:19px;line-height:1}
+.job .match .lbl{font-size:10.5px;color:var(--mist);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.m-hi{color:var(--mint)}.m-mid{color:var(--amber)}
+.job .apply-btn{flex-shrink:0;padding:10px 18px;background:var(--ink);color:#fff;border:none;border-radius:10px;font-family:'Space Grotesk';font-weight:600;font-size:13.5px;cursor:pointer;transition:.15s;white-space:nowrap}
+.job .apply-btn:hover{background:var(--signal)}
+.job .apply-btn.ready{background:var(--ai)}
+.job .apply-btn.ready:hover{background:#e84a28}
+.apply-screen{padding:0}
+.apply-top{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:1px solid var(--line-soft)}
+.back{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--mist);font-size:16px}
+.back:hover{border-color:var(--ink-soft);color:var(--ink)}
+.apply-top .logo{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk';font-weight:700;font-size:15px}
+.apply-top .t{flex:1}
+.apply-top .t .tt{font-family:'Space Grotesk';font-weight:600;font-size:16px}
+.apply-top .t .cc{font-size:13px;color:var(--mist)}
+.apply-top .status{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--mint);font-weight:500;background:var(--mint-soft);padding:7px 13px;border-radius:999px}
+.apply-top .status .d{width:7px;height:7px;border-radius:50%;background:var(--mint)}
+.apply-body{display:grid;grid-template-columns:1fr 1fr;gap:0;min-height:520px}
+.col{padding:26px 28px;overflow-y:auto;max-height:520px}
+.col.left{border-right:1px solid var(--line-soft);background:#fcfcfe}
+.col h3{font-size:12px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--mist);margin-bottom:16px}
+.insight{background:var(--mint-soft);border:1px solid #c6ebe0;border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:22px}
+.insight .ih{display:flex;align-items:center;gap:8px;font-family:'Space Grotesk';font-weight:600;font-size:14px;color:var(--mint);margin-bottom:7px}
+.insight ul{list-style:none;font-size:13px;color:var(--ink-soft)}
+.insight li{padding:3px 0;padding-left:18px;position:relative}
+.insight li::before{content:"✓";position:absolute;left:0;color:var(--mint);font-weight:700}
+.jd-block{font-size:13.5px;color:var(--ink-soft);line-height:1.65}
+.jd-block .jh{font-family:'Space Grotesk';font-weight:600;font-size:14px;color:var(--ink);margin:16px 0 7px}
+.jd-block .kw{background:var(--signal-soft);color:var(--signal);padding:0 4px;border-radius:4px;font-weight:500}
+.field{margin-bottom:16px}
+.field .fl{font-size:12.5px;font-weight:500;color:var(--mist);margin-bottom:6px;display:flex;align-items:center;gap:7px}
+.field .fv{border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:14px;color:var(--ink);background:var(--card)}
+.field.ai .fv{border-color:#ffcdbf;background:var(--ai-soft);position:relative}
+.field.ai .fl .chip{background:var(--ai);color:#fff;font-size:10px;font-weight:600;padding:1px 7px;border-radius:999px;font-family:'Space Grotesk';letter-spacing:.02em}
+.field.ai .fv .edit{position:absolute;right:10px;top:10px;font-size:11.5px;color:var(--ai);font-weight:600;cursor:pointer}
+.field .fv.tall{min-height:72px;line-height:1.55;color:var(--ink-soft)}
+.submit-bar{display:flex;align-items:center;gap:16px;padding:16px 28px;border-top:1px solid var(--line-soft);background:var(--card)}
+.submit-bar .summary{flex:1;font-size:13px;color:var(--mist)}
+.submit-bar .summary b{color:var(--ink);font-weight:600}
+.submit-bar .ghost{padding:12px 18px;border:1px solid var(--line);background:var(--card);border-radius:11px;font-family:'Space Grotesk';font-weight:500;font-size:14px;color:var(--ink-soft);cursor:pointer}
+.submit-bar .ghost:hover{border-color:var(--ink-soft)}
+.submit-bar .primary{padding:12px 26px;background:var(--ink);color:#fff;border:none;border-radius:11px;font-family:'Space Grotesk';font-weight:600;font-size:14.5px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:8px}
+.submit-bar .primary:hover{background:var(--signal)}
+.ext-demo{position:relative;background:#eceef2;min-height:660px;padding:0;overflow:hidden}
+.fake-site{padding:40px 56px}
+.fake-site .fs-co{display:flex;align-items:center;gap:12px;margin-bottom:28px}
+.fake-site .fs-logo{width:38px;height:38px;border-radius:9px;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk';font-weight:700}
+.fake-site .fs-name{font-family:'Space Grotesk';font-weight:600;font-size:16px;color:#202124}
+.fake-site h2{font-size:22px;color:#202124;margin-bottom:6px;font-weight:600}
+.fake-site .fs-sub{color:#5f6368;font-size:14px;margin-bottom:28px}
+.fake-form{max-width:480px}
+.fake-field{margin-bottom:18px}
+.fake-field label{display:block;font-size:13px;color:#5f6368;margin-bottom:6px;font-weight:500}
+.fake-field .inp{border:1px solid #dadce0;border-radius:8px;padding:11px 13px;font-size:14px;color:#202124;background:#fff;transition:.3s}
+.fake-field .inp.filled{border-color:var(--ai);background:var(--ai-soft);color:var(--ink)}
+.fake-field .inp.tall{min-height:64px;line-height:1.5}
+.ext-card{position:absolute;right:32px;top:32px;width:320px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-lg);border:1px solid var(--line);overflow:hidden}
+.ext-head{display:flex;align-items:center;gap:10px;padding:15px 18px;background:var(--ink);color:#fff}
+.ext-head .mark{width:26px;height:26px;border-radius:8px;background:#fff;color:var(--ink);display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk';font-weight:700;font-size:13px}
+.ext-head .htxt{font-family:'Space Grotesk';font-weight:600;font-size:14px;flex:1}
+.ext-head .x{color:rgba(255,255,255,.5);cursor:pointer;font-size:16px}
+.ext-body{padding:18px}
+.ext-status{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--mint);font-weight:500;margin-bottom:16px}
+.ext-status .ring{width:18px;height:18px;border-radius:50%;border:2px solid var(--mint);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--mint)}
+.ext-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;font-size:13px;border-bottom:1px solid var(--line-soft)}
+.ext-row:last-of-type{border:none}
+.ext-row .k{color:var(--mist)}
+.ext-row .v{font-weight:500;color:var(--ink);display:flex;align-items:center;gap:6px}
+.ext-row .v .ai-dot{width:6px;height:6px;border-radius:50%;background:var(--ai)}
+.ext-cta{margin-top:16px;width:100%;padding:13px;background:var(--ai);color:#fff;border:none;border-radius:11px;font-family:'Space Grotesk';font-weight:600;font-size:14px;cursor:pointer;transition:.15s}
+.ext-cta:hover{background:#e84a28}
+.ext-foot{font-size:11.5px;color:var(--mist);text-align:center;margin-top:11px;line-height:1.4}
+.ext-foot b{color:var(--mint)}
+.track-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tcol{background:var(--paper);border-radius:var(--radius);padding:14px}
+.tcol .th{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:0 4px}
+.tcol .th .tn{font-family:'Space Grotesk';font-weight:600;font-size:14px}
+.tcol .th .ct{font-size:12px;color:var(--mist);background:var(--card);padding:2px 9px;border-radius:999px;font-weight:600}
+.tcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px;margin-bottom:9px}
+.tcard .tlogo{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Space Grotesk';font-weight:700;font-size:12px;margin-bottom:9px}
+.tcard .ttt{font-family:'Space Grotesk';font-weight:600;font-size:13.5px;margin-bottom:2px}
+.tcard .tcc{font-size:12px;color:var(--mist);margin-bottom:10px}
+.tcard .tdate{font-size:11.5px;color:var(--mist)}
+.tcard .prep{margin-top:10px;width:100%;padding:9px;background:var(--signal-soft);color:var(--signal);border:none;border-radius:9px;font-family:'Space Grotesk';font-weight:600;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:.15s}
+.tcard .prep:hover{background:var(--signal);color:#fff}
+.principle{margin-top:22px;display:flex;gap:10px;flex-wrap:wrap}
+.pchip{font-size:12px;color:var(--mist);background:var(--card);border:1px solid var(--line);padding:7px 13px;border-radius:999px}
+.pchip b{color:var(--ink);font-weight:600;font-family:'Space Grotesk'}
+@media(max-width:880px){
+  .apply-body{grid-template-columns:1fr}
+  .col.left{border-right:none;border-bottom:1px solid var(--line-soft);max-height:none}
+  .track-cols{grid-template-columns:1fr}
+  .side{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="switch">
+  <button class="sbtn active" onclick="show('ob',this)">① 启动 · 一步</button>
+  <button class="sbtn" onclick="show('home',this)">② 主页 · 每日简报</button>
+  <button class="sbtn" onclick="show('apply',this)">③ 一键投递 · 核心</button>
+  <button class="sbtn" onclick="show('ext',this)">④ 扩展浮层 · 任意网站</button>
+  <button class="sbtn" onclick="show('track',this)">⑤ 追踪 · 自然衔接</button>
+</div>
+
+<div class="stage">
+
+<!-- 1. ONBOARDING -->
+<div class="screen active" id="ob">
+  <div class="frame">
+    <div class="chrome">
+      <span class="dot" style="background:#ff5f57"></span>
+      <span class="dot" style="background:#febc2e"></span>
+      <span class="dot" style="background:#28c840"></span>
+      <span class="url">app.jobcopilot.me</span>
+    </div>
+    <div class="ob" id="ob-form">
+      <div class="kicker">一步开始</div>
+      <h1>把简历放进来,<br>剩下的<em>交给我</em>。</h1>
+      <p class="sub">不用填表,不用配置。我会读懂你的经历、技能和方向,然后开始为你找活、定制、投递。</p>
+      <div class="drop" onclick="startParse()">
+        <div class="ic">↑</div>
+        <div class="big">拖入简历,或点击选择</div>
+        <div class="small">PDF · Word · 最大 10MB</div>
+      </div>
+      <div class="or">或者</div>
+      <div class="alt">
+        <button onclick="startParse()">用 LinkedIn 导入</button>
+        <button onclick="startParse()">粘贴简历文字</button>
+      </div>
+      <p class="note">你的简历只在需要时才用,密码<b>永不存储</b> · 数据可全程留在本地</p>
+    </div>
+    <div class="parsing" id="ob-parse">
+      <div class="spinner"></div>
+      <h2>正在读懂你⋯</h2>
+      <p>大约 5 秒,然后我们就能开始了</p>
+      <div class="parse-steps">
+        <div class="pstep"><span class="check">✓</span> 解析了 3 段工作经历 · 14 项技能</div>
+        <div class="pstep"><span class="check">✓</span> 识别方向:后端 / 全栈工程师</div>
+        <div class="pstep"><span class="check">✓</span> 已匹配 28 个在招职位</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 2. HOME -->
+<div class="screen" id="home">
+  <div class="frame">
+    <div class="app">
+      <aside class="side">
+        <div class="brand"><div class="mark">J</div><div class="name">求职副驾</div></div>
+        <div class="nav-item on"><span class="i">◆</span> 今日</div>
+        <div class="nav-item"><span class="i">▤</span> 我的投递 <span class="badge">3</span></div>
+        <div class="nav-item"><span class="i">✎</span> 简历</div>
+        <div class="nav-item"><span class="i">◷</span> 面试准备</div>
+        <div class="div"></div>
+        <div class="nav-item"><span class="i">↗</span> 市场趋势</div>
+        <div class="nav-item"><span class="i">⚙</span> 设置</div>
+      </aside>
+      <main class="main">
+        <div class="ribbon">
+          <span class="pulse"></span>
+          <div class="txt">本周 <b>Rust</b> 需求 <span class="up">↑12%</span>,你的简历里还没有它 — 加上预计多匹配 <b>47 个岗位</b></div>
+          <span class="more">看完整趋势 →</span>
+        </div>
+        <div class="head-row">
+          <h1>今天为你找到 8 个</h1>
+          <span class="meta">周二 · 6 月 16 日</span>
+        </div>
+        <p class="sub-line">已按匹配度排好序。橙色按钮表示 <b>简历和表单都备好了</b>,点一下就能审核投递。</p>
+        <div class="jobs">
+          <div class="job">
+            <div class="logo" style="background:#4285f4">G</div>
+            <div class="info">
+              <div class="title">Senior Backend Engineer</div>
+              <div class="co">Google · 远程<span class="tag">$180k–230k</span><span class="tag">Greenhouse</span></div>
+            </div>
+            <div class="match"><div class="pct m-hi">94%</div><div class="lbl">匹配</div></div>
+            <button class="apply-btn ready" onclick="show('apply',document.querySelectorAll('.sbtn')[2])">一键投递 →</button>
+          </div>
+          <div class="job">
+            <div class="logo" style="background:#16182d">S</div>
+            <div class="info">
+              <div class="title">Full-Stack Engineer (AI)</div>
+              <div class="co">Stripe · 远程<span class="tag">$170k–210k</span><span class="tag">Ashby</span></div>
+            </div>
+            <div class="match"><div class="pct m-hi">91%</div><div class="lbl">匹配</div></div>
+            <button class="apply-btn ready" onclick="show('apply',document.querySelectorAll('.sbtn')[2])">一键投递 →</button>
+          </div>
+          <div class="job">
+            <div class="logo" style="background:#0b9d7e">L</div>
+            <div class="info">
+              <div class="title">Backend Engineer, Platform</div>
+              <div class="co">Linear · 远程<span class="tag">$160k–200k</span><span class="tag">Lever</span></div>
+            </div>
+            <div class="match"><div class="pct m-hi">88%</div><div class="lbl">匹配</div></div>
+            <button class="apply-btn ready" onclick="show('apply',document.querySelectorAll('.sbtn')[2])">一键投递 →</button>
+          </div>
+          <div class="job">
+            <div class="logo" style="background:#e8a317">N</div>
+            <div class="info">
+              <div class="title">Senior Software Engineer</div>
+              <div class="co">Notion · 旧金山<span class="tag">$175k–215k</span><span class="tag">Workday</span></div>
+            </div>
+            <div class="match"><div class="pct m-mid">79%</div><div class="lbl">匹配</div></div>
+            <button class="apply-btn" onclick="show('apply',document.querySelectorAll('.sbtn')[2])">准备投递</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<!-- 3. ONE-TAP APPLY -->
+<div class="screen" id="apply">
+  <div class="frame">
+    <div class="apply-screen">
+      <div class="apply-top">
+        <div class="back" onclick="show('home',document.querySelectorAll('.sbtn')[1])">←</div>
+        <div class="logo" style="background:#4285f4">G</div>
+        <div class="t">
+          <div class="tt">Senior Backend Engineer</div>
+          <div class="cc">Google · 远程 · $180k–230k</div>
+        </div>
+        <div class="status"><span class="d"></span> 全部备好,待你审核</div>
+      </div>
+      <div class="apply-body">
+        <div class="col left">
+          <div class="insight">
+            <div class="ih">◆ 为什么你匹配 94%</div>
+            <ul>
+              <li>5 年后端经验,正好命中 senior 要求</li>
+              <li>Go、Kubernetes、分布式系统全部覆盖</li>
+              <li>开源基础设施贡献是加分项</li>
+            </ul>
+          </div>
+          <h3>职位要求</h3>
+          <div class="jd-block">
+            <div class="jh">我们在找</div>
+            一位资深后端工程师,负责设计和扩展支撑数百万用户的分布式系统。你会主导关键服务的架构,与产品和基础设施团队紧密协作。
+            <div class="jh">必备技能</div>
+            5+ 年生产级后端经验,精通 <span class="kw">Go</span> 或类似语言,深入理解 <span class="kw">分布式系统</span>、<span class="kw">Kubernetes</span> 与<span class="kw">微服务</span>架构。
+            <div class="jh">加分项</div>
+            开源贡献、<span class="kw">CI/CD</span> 基础设施经验、大规模系统调优。
+          </div>
+        </div>
+        <div class="col right">
+          <h3>已为这个职位定制好</h3>
+          <div class="field">
+            <div class="fl">姓名</div>
+            <div class="fv">Xinwei Xiong</div>
+          </div>
+          <div class="field">
+            <div class="fl">邮箱</div>
+            <div class="fv">xinwei@getyak.io</div>
+          </div>
+          <div class="field ai">
+            <div class="fl">简历摘要 <span class="chip">AI 已为此职位调整</span></div>
+            <div class="fv tall">资深后端工程师,5+ 年构建高并发分布式系统经验。主导过 CNCF 生态(OpenIM)核心基础设施,358+ 次提交。精通 Go、Kubernetes、微服务,擅长 CI/CD 自动化与大规模系统调优。<span class="edit">编辑</span></div>
+          </div>
+          <div class="field ai">
+            <div class="fl">为什么想加入 Google? <span class="chip">AI 生成 · 草稿</span></div>
+            <div class="fv tall">我长期专注于支撑大规模系统的基础设施工程,Google 在分布式系统领域的深度正是我希望持续精进的方向。我在 OpenIM 的工作让我理解了百万级用户系统的复杂度,也让我渴望在更大的舞台上解决这类问题。<span class="edit">编辑</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="submit-bar">
+        <div class="summary">已填 <b>9 个字段</b> · 其中 <b style="color:var(--ai)">2 项由 AI 生成</b>,建议先看一眼</div>
+        <button class="ghost">只保存草稿</button>
+        <button class="primary">审核无误,投递 →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 4. EXTENSION OVERLAY -->
+<div class="screen" id="ext">
+  <div class="frame">
+    <div class="chrome">
+      <span class="dot" style="background:#ff5f57"></span>
+      <span class="dot" style="background:#febc2e"></span>
+      <span class="dot" style="background:#28c840"></span>
+      <span class="url">boards.greenhouse.io/stripe/jobs/4891 · 你已登录</span>
+    </div>
+    <div class="ext-demo">
+      <div class="fake-site">
+        <div class="fs-co">
+          <div class="fs-logo">S</div>
+          <div class="fs-name">Stripe</div>
+        </div>
+        <h2>Full-Stack Engineer (AI)</h2>
+        <div class="fs-sub">Remote · 提交你的申请</div>
+        <div class="fake-form">
+          <div class="fake-field"><label>Full name</label><div class="inp filled">Xinwei Xiong</div></div>
+          <div class="fake-field"><label>Email</label><div class="inp filled">xinwei@getyak.io</div></div>
+          <div class="fake-field"><label>LinkedIn / Portfolio</label><div class="inp filled">github.com/cubxxw</div></div>
+          <div class="fake-field"><label>What excites you about building with AI at Stripe?</label><div class="inp filled tall">我一直在做 consumer AI 产品,从 agent 系统到个人上下文层。Stripe 把 AI 用在真实的金融基础设施上,这种"高可靠 + 前沿"的结合正是我想投入的方向⋯</div></div>
+        </div>
+      </div>
+      <div class="ext-card">
+        <div class="ext-head">
+          <div class="mark">J</div>
+          <div class="htxt">求职副驾</div>
+          <div class="x">×</div>
+        </div>
+        <div class="ext-body">
+          <div class="ext-status"><span class="ring">✓</span> 已识别 Stripe 申请表 · 填好 4 个字段</div>
+          <div class="ext-row"><span class="k">基础信息</span><span class="v">3 项 · 来自你的资料</span></div>
+          <div class="ext-row"><span class="k">开放问题</span><span class="v"><span class="ai-dot"></span> 1 项 · AI 草稿</span></div>
+          <div class="ext-row"><span class="k">简历</span><span class="v">已为此职位定制</span></div>
+          <button class="ext-cta">检查后投递 →</button>
+          <div class="ext-foot">填充在你自己的浏览器里完成 · <b>你亲自提交,零封号风险</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 5. TRACKER -->
+<div class="screen" id="track">
+  <div class="frame">
+    <div class="app">
+      <aside class="side">
+        <div class="brand"><div class="mark">J</div><div class="name">求职副驾</div></div>
+        <div class="nav-item"><span class="i">◆</span> 今日</div>
+        <div class="nav-item on"><span class="i">▤</span> 我的投递</div>
+        <div class="nav-item"><span class="i">✎</span> 简历</div>
+        <div class="nav-item"><span class="i">◷</span> 面试准备</div>
+        <div class="div"></div>
+        <div class="nav-item"><span class="i">↗</span> 市场趋势</div>
+        <div class="nav-item"><span class="i">⚙</span> 设置</div>
+      </aside>
+      <main class="main">
+        <div class="head-row"><h1>我的投递</h1><span class="meta">本月 12 份 · 3 场面试</span></div>
+        <p class="sub-line">投出去就自动进来了。有面试的职位,卡片上会浮出 <b>准备面试</b>。</p>
+        <div class="track-cols">
+          <div class="tcol">
+            <div class="th"><span class="tn">已投递</span><span class="ct">6</span></div>
+            <div class="tcard">
+              <div class="tlogo" style="background:#4285f4">G</div>
+              <div class="ttt">Senior Backend Engineer</div>
+              <div class="tcc">Google · 远程</div>
+              <div class="tdate">2 天前投递 · 等待回复</div>
+            </div>
+            <div class="tcard">
+              <div class="tlogo" style="background:#0b9d7e">L</div>
+              <div class="ttt">Backend Engineer, Platform</div>
+              <div class="tcc">Linear · 远程</div>
+              <div class="tdate">4 天前投递 · 等待回复</div>
+            </div>
+          </div>
+          <div class="tcol">
+            <div class="th"><span class="tn">面试中</span><span class="ct">3</span></div>
+            <div class="tcard">
+              <div class="tlogo" style="background:#16182d">S</div>
+              <div class="ttt">Full-Stack Engineer (AI)</div>
+              <div class="tcc">Stripe · 远程</div>
+              <div class="tdate">技术面 · 本周五 14:00</div>
+              <button class="prep">◷ 准备这场面试</button>
+            </div>
+            <div class="tcard">
+              <div class="tlogo" style="background:#e8a317">N</div>
+              <div class="ttt">Senior Software Engineer</div>
+              <div class="tcc">Notion · 旧金山</div>
+              <div class="tdate">初筛通过 · 待约下一轮</div>
+              <button class="prep">◷ 准备这场面试</button>
+            </div>
+          </div>
+          <div class="tcol">
+            <div class="th"><span class="tn">有结果</span><span class="ct">1</span></div>
+            <div class="tcard">
+              <div class="tlogo" style="background:#3a3fd6">V</div>
+              <div class="ttt">Backend Engineer</div>
+              <div class="tcc">Vercel · 远程</div>
+              <div class="tdate" style="color:var(--mint);font-weight:600">✓ 进入终面</div>
+            </div>
+          </div>
+        </div>
+        <div class="principle">
+          <span class="pchip"><b>0 配置</b> 上传简历即用</span>
+          <span class="pchip"><b>3 次点击</b> 从看到职位到投递</span>
+          <span class="pchip"><b>AI 先做</b> 你只审核和微调</span>
+          <span class="pchip"><b>零封号</b> 本地执行,你亲自提交</span>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+function show(id,btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.sbtn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function startParse(){
+  document.getElementById('ob-form').style.display='none';
+  document.getElementById('ob-parse').classList.add('show');
+  setTimeout(()=>{ show('home', document.querySelectorAll('.sbtn')[1]);
+    setTimeout(()=>{document.getElementById('ob-form').style.display='block';
+      document.getElementById('ob-parse').classList.remove('show');},500);
+  },2600);
+}
+</script>
+</body>
+</html>

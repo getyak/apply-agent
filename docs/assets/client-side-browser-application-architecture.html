@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>客户端浏览器投递架构</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'SF Mono','Fira Code',Consolas,monospace;background:#0d1117;color:#e6edf3;padding:28px 20px;min-height:100vh}
+.nav{display:flex;gap:8px;margin-bottom:32px;flex-wrap:wrap}
+.nb{padding:8px 16px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;cursor:pointer;font-family:inherit;font-size:11px;letter-spacing:.5px;transition:all .15s}
+.nb.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.nb:hover:not(.active){background:#21262d;color:#e6edf3}
+.sec{display:none}.sec.active{display:block}
+h2{font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#8b949e;margin-bottom:18px}
+.wrap{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:26px;overflow-x:auto}
+svg text{font-family:'SF Mono','Fira Code',monospace}
+.leg{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px;padding:10px 14px;background:#161b22;border-radius:6px;border:1px solid #21262d}
+.li{display:flex;align-items:center;gap:5px;font-size:10px;color:#8b949e}
+.ld{width:10px;height:10px;border-radius:2px;border:1.5px solid}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <button class="nb active" onclick="show('compare')">① 三方案对比</button>
+  <button class="nb" onclick="show('ext')">② 浏览器扩展架构</button>
+  <button class="nb" onclick="show('hybrid')">③ 扩展+云LLM混合</button>
+  <button class="nb" onclick="show('native')">④ 桌面App+CDP</button>
+  <button class="nb" onclick="show('flow')">⑤ 投递数据流</button>
+</div>
+
+
+<!-- ═══════════════════ 1. COMPARE ═══════════════════ -->
+<div id="compare" class="sec active">
+<h2>① 三种客户端方案对比</h2>
+<div class="wrap">
+<svg width="1000" height="640" viewBox="0 0 1000 640">
+<defs>
+  <marker id="c1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#484f58"/></marker>
+</defs>
+
+<!-- 3 columns -->
+<rect x="10" y="10" width="320" height="620" rx="10" fill="#0d1117" stroke="#1c2c4a" stroke-width="1.5"/>
+<rect x="340" y="10" width="320" height="620" rx="10" fill="#0d1117" stroke="#1a3a26" stroke-width="1.5"/>
+<rect x="670" y="10" width="320" height="620" rx="10" fill="#0d1117" stroke="#2d1f3d" stroke-width="1.5"/>
+
+<!-- Headers -->
+<rect x="10" y="10" width="320" height="64" rx="10" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+<text x="170" y="34" fill="#79c0ff" font-size="13" font-weight="700" text-anchor="middle">方案 A · 浏览器扩展</text>
+<text x="170" y="52" fill="#8b949e" font-size="9" text-anchor="middle">Browser Extension (Manifest V3)</text>
+<text x="170" y="66" fill="#56d364" font-size="9" text-anchor="middle">★ 推荐起点 · Simplify/Jobright 同款</text>
+
+<rect x="340" y="10" width="320" height="64" rx="10" fill="#0f2d1a" stroke="#3fb950" stroke-width="1.5"/>
+<text x="500" y="34" fill="#7ee787" font-size="13" font-weight="700" text-anchor="middle">方案 B · 扩展+云LLM</text>
+<text x="500" y="52" fill="#8b949e" font-size="9" text-anchor="middle">Extension + Cloud LLM Hybrid</text>
+<text x="500" y="66" fill="#56d364" font-size="9" text-anchor="middle">★★ 智能增强 · 你的差异化</text>
+
+<rect x="670" y="10" width="320" height="64" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="1.5"/>
+<text x="830" y="34" fill="#d2a8ff" font-size="13" font-weight="700" text-anchor="middle">方案 C · 桌面App+CDP</text>
+<text x="830" y="52" fill="#8b949e" font-size="9" text-anchor="middle">Native App + Chrome DevTools Protocol</text>
+<text x="830" y="66" fill="#ffa657" font-size="9" text-anchor="middle">★★★ 最强但最重</text>
+
+<!-- Row: How it works -->
+<text x="20" y="98" fill="#484f58" font-size="9" font-weight="600" letter-spacing="1">工作原理</text>
+<rect x="20" y="104" width="300" height="84" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="30" y="122" fill="#8b949e" font-size="9">content script 注入职位页面</text>
+<text x="30" y="137" fill="#8b949e" font-size="9">读取 DOM 表单字段</text>
+<text x="30" y="152" fill="#8b949e" font-size="9">用本地 profile 填充</text>
+<text x="30" y="167" fill="#8b949e" font-size="9">service worker 协调逻辑</text>
+<text x="30" y="182" fill="#56d364" font-size="9">用户点击 submit ← 关键</text>
+
+<rect x="350" y="104" width="300" height="84" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="360" y="122" fill="#8b949e" font-size="9">扩展抓取表单 + 截图</text>
+<text x="360" y="137" fill="#8b949e" font-size="9">复杂字段 → 云端 LLM 映射</text>
+<text x="360" y="152" fill="#8b949e" font-size="9">LLM 生成开放题答案</text>
+<text x="360" y="167" fill="#8b949e" font-size="9">填回页面 + 高亮待确认</text>
+<text x="360" y="182" fill="#56d364" font-size="9">用户审核后点 submit</text>
+
+<rect x="680" y="104" width="300" height="84" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="690" y="122" fill="#8b949e" font-size="9">桌面 app 通过 CDP 连</text>
+<text x="690" y="137" fill="#8b949e" font-size="9">用户已登录的 Chrome</text>
+<text x="690" y="152" fill="#8b949e" font-size="9">browser-use / Playwright</text>
+<text x="690" y="167" fill="#8b949e" font-size="9">多步自主导航 + 填表</text>
+<text x="690" y="182" fill="#ffa657" font-size="9">可半自主, submit 需确认</text>
+
+<!-- Row: Anti-ban -->
+<text x="20" y="212" fill="#484f58" font-size="9" font-weight="600" letter-spacing="1">封号风险</text>
+<rect x="20" y="218" width="300" height="56" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="170" y="240" fill="#7ee787" font-size="11" font-weight="700" text-anchor="middle">极低 ✓</text>
+<text x="170" y="258" fill="#8b949e" font-size="9" text-anchor="middle">用户真实指纹+IP+登录态</text>
+<text x="170" y="270" fill="#8b949e" font-size="9" text-anchor="middle">平台看到的就是"人在操作"</text>
+
+<rect x="350" y="218" width="300" height="56" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="500" y="240" fill="#7ee787" font-size="11" font-weight="700" text-anchor="middle">极低 ✓</text>
+<text x="500" y="258" fill="#8b949e" font-size="9" text-anchor="middle">同 A,LLM 只做字段映射</text>
+<text x="500" y="270" fill="#8b949e" font-size="9" text-anchor="middle">不改变本地执行的真实性</text>
+
+<rect x="680" y="218" width="300" height="56" rx="6" fill="#1a1500" stroke="#ffa657"/>
+<text x="830" y="240" fill="#ffa657" font-size="11" font-weight="700" text-anchor="middle">低-中 ⚠</text>
+<text x="830" y="258" fill="#8b949e" font-size="9" text-anchor="middle">真实浏览器,但多步自动化</text>
+<text x="830" y="270" fill="#8b949e" font-size="9" text-anchor="middle">速度过快仍可能触发检测</text>
+
+<!-- Row: Capability -->
+<text x="20" y="298" fill="#484f58" font-size="9" font-weight="600" letter-spacing="1">能力边界</text>
+<rect x="20" y="304" width="300" height="72" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="30" y="322" fill="#56d364" font-size="9">✓ 标准 ATS 表单填充</text>
+<text x="30" y="337" fill="#56d364" font-size="9">✓ 单页应用</text>
+<text x="30" y="352" fill="#f85149" font-size="9">✗ 复杂开放题(纯规则)</text>
+<text x="30" y="367" fill="#f85149" font-size="9">✗ 跨页多步自主决策</text>
+
+<rect x="350" y="304" width="300" height="72" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="360" y="322" fill="#56d364" font-size="9">✓ A 的全部能力</text>
+<text x="360" y="337" fill="#56d364" font-size="9">✓ 智能字段映射(陌生表单)</text>
+<text x="360" y="352" fill="#56d364" font-size="9">✓ 开放题 AI 生成答案</text>
+<text x="360" y="367" fill="#56d364" font-size="9">✓ JD 匹配 + 简历定制</text>
+
+<rect x="680" y="304" width="300" height="72" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="690" y="322" fill="#56d364" font-size="9">✓ B 的全部能力</text>
+<text x="690" y="337" fill="#56d364" font-size="9">✓ 跨页多步自主导航</text>
+<text x="690" y="352" fill="#56d364" font-size="9">✓ 批量定时投递</text>
+<text x="690" y="367" fill="#56d364" font-size="9">✓ bash/文件/截图全能力</text>
+
+<!-- Row: Difficulty -->
+<text x="20" y="400" fill="#484f58" font-size="9" font-weight="600" letter-spacing="1">实现难度 / 成本</text>
+<rect x="20" y="406" width="300" height="64" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="170" y="426" fill="#56d364" font-size="11" font-weight="700" text-anchor="middle">★★☆☆☆ 低</text>
+<text x="30" y="444" fill="#8b949e" font-size="9">纯前端,MV3 标准 API</text>
+<text x="30" y="459" fill="#8b949e" font-size="9">~2-3 周可出 MVP</text>
+
+<rect x="350" y="406" width="300" height="64" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="500" y="426" fill="#ffa657" font-size="11" font-weight="700" text-anchor="middle">★★★☆☆ 中</text>
+<text x="360" y="444" fill="#8b949e" font-size="9">扩展 + 后端 LLM API</text>
+<text x="360" y="459" fill="#8b949e" font-size="9">~4-6 周,需 LLM 成本管理</text>
+
+<rect x="680" y="406" width="300" height="64" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="830" y="426" fill="#f85149" font-size="11" font-weight="700" text-anchor="middle">★★★★★ 高</text>
+<text x="690" y="444" fill="#8b949e" font-size="9">桌面 app 分发 + CDP 维护</text>
+<text x="690" y="459" fill="#8b949e" font-size="9">~8-12 周,跨平台打包</text>
+
+<!-- Row: Distribution -->
+<text x="20" y="494" fill="#484f58" font-size="9" font-weight="600" letter-spacing="1">分发方式</text>
+<rect x="20" y="500" width="300" height="52" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="30" y="520" fill="#8b949e" font-size="9">Chrome Web Store 上架</text>
+<text x="30" y="536" fill="#8b949e" font-size="9">一键安装 · 审核 ~1-3 天</text>
+
+<rect x="350" y="500" width="300" height="52" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="360" y="520" fill="#8b949e" font-size="9">同 A,扩展 + Web 账户</text>
+<text x="360" y="536" fill="#8b949e" font-size="9">Web 端管理简历/趋势</text>
+
+<rect x="680" y="500" width="300" height="52" rx="6" fill="#161b22" stroke="#21262d"/>
+<text x="690" y="520" fill="#8b949e" font-size="9">需下载安装 (dmg/exe)</text>
+<text x="690" y="536" fill="#8b949e" font-size="9">签名 + 自动更新 + 信任成本高</text>
+
+<!-- Row: Recommendation -->
+<text x="20" y="576" fill="#484f58" font-size="9" font-weight="600" letter-spacing="1">建议</text>
+<rect x="20" y="582" width="300" height="42" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="170" y="600" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">Phase 1 起点</text>
+<text x="170" y="615" fill="#8b949e" font-size="9" text-anchor="middle">先验证 autofill 价值</text>
+
+<rect x="350" y="582" width="300" height="42" rx="6" fill="#1c2c4a" stroke="#58a6ff"/>
+<text x="500" y="600" fill="#79c0ff" font-size="9" font-weight="700" text-anchor="middle">Phase 2 主战场</text>
+<text x="500" y="615" fill="#8b949e" font-size="9" text-anchor="middle">这是你的护城河层</text>
+
+<rect x="680" y="582" width="300" height="42" rx="6" fill="#1a0f2e" stroke="#d2a8ff"/>
+<text x="830" y="600" fill="#d2a8ff" font-size="9" font-weight="700" text-anchor="middle">Phase 3 可选</text>
+<text x="830" y="615" fill="#8b949e" font-size="9" text-anchor="middle">power users / 批量定时</text>
+
+<!-- arrows between phases -->
+<path d="M330,300 L340,300" stroke="#484f58" stroke-width="2" marker-end="url(#c1)"/>
+<path d="M660,300 L670,300" stroke="#484f58" stroke-width="2" marker-end="url(#c1)"/>
+</svg>
+</div>
+<div class="leg">
+  <div class="li"><div class="ld" style="background:#0f2d1a;border-color:#3fb950"></div>低风险 / 推荐</div>
+  <div class="li"><div class="ld" style="background:#1a1500;border-color:#ffa657"></div>中等 / 注意</div>
+  <div class="li"><div class="ld" style="background:#2a0000;border-color:#f85149"></div>高风险 / 限制</div>
+</div>
+</div>
+
+
+<!-- ═══════════════════ 2. EXTENSION ═══════════════════ -->
+<div id="ext" class="sec">
+<h2>② 浏览器扩展架构 (Manifest V3) — 方案 A</h2>
+<div class="wrap">
+<svg width="1000" height="660" viewBox="0 0 1000 660">
+<defs>
+  <marker id="e1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#484f58"/></marker>
+  <marker id="e1b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#58a6ff"/></marker>
+  <marker id="e1g" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#3fb950"/></marker>
+  <marker id="e1o" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#ffa657"/></marker>
+</defs>
+
+<!-- User's Browser big box -->
+<rect x="10" y="10" width="640" height="640" rx="12" fill="#0a0e14" stroke="#58a6ff" stroke-width="2"/>
+<text x="26" y="32" fill="#58a6ff" font-size="10" font-weight="700" letter-spacing="2">用户的浏览器 (Chrome / Edge)</text>
+
+<!-- The Job Page -->
+<rect x="30" y="50" width="600" height="180" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1.5"/>
+<text x="330" y="72" fill="#e6edf3" font-size="11" font-weight="700" text-anchor="middle">职位申请页面 (Greenhouse / Workday / Lever ...)</text>
+<text x="330" y="88" fill="#8b949e" font-size="9" text-anchor="middle">用户已登录 · 真实 session · 真实 IP</text>
+
+<!-- form fields visual -->
+<rect x="50" y="104" width="260" height="26" rx="4" fill="#161b22" stroke="#21262d"/>
+<text x="60" y="121" fill="#8b949e" font-size="9">First Name: [____________]</text>
+<rect x="50" y="138" width="260" height="26" rx="4" fill="#161b22" stroke="#21262d"/>
+<text x="60" y="155" fill="#8b949e" font-size="9">Email: [____________]</text>
+<rect x="50" y="172" width="260" height="26" rx="4" fill="#161b22" stroke="#21262d"/>
+<text x="60" y="189" fill="#8b949e" font-size="9">Resume: [ Upload ]</text>
+<rect x="330" y="104" width="280" height="60" rx="4" fill="#161b22" stroke="#21262d"/>
+<text x="340" y="121" fill="#8b949e" font-size="9">Why do you want to work here?</text>
+<text x="340" y="137" fill="#8b949e" font-size="9">[___________________________]</text>
+<text x="340" y="151" fill="#8b949e" font-size="9">[___________________________]</text>
+<rect x="330" y="172" width="120" height="30" rx="4" fill="#1a2e24" stroke="#3fb950"/>
+<text x="390" y="191" fill="#56d364" font-size="10" font-weight="700" text-anchor="middle">Submit ←用户点</text>
+
+<!-- Content Script -->
+<rect x="30" y="250" width="290" height="160" rx="8" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+<text x="175" y="272" fill="#79c0ff" font-size="11" font-weight="700" text-anchor="middle">Content Script (content.js)</text>
+<text x="175" y="286" fill="#8b949e" font-size="8" text-anchor="middle">注入到页面,可读写 DOM</text>
+<line x1="40" y1="294" x2="310" y2="294" stroke="#1c3060"/>
+<text x="175" y="312" fill="#8b949e" font-size="9" text-anchor="middle">① detectFormFields()</text>
+<text x="175" y="327" fill="#8b949e" font-size="9" text-anchor="middle">扫描 input/select/textarea</text>
+<text x="175" y="345" fill="#8b949e" font-size="9" text-anchor="middle">② mapFieldsToProfile()</text>
+<text x="175" y="360" fill="#8b949e" font-size="9" text-anchor="middle">label → profile key 匹配</text>
+<text x="175" y="378" fill="#8b949e" font-size="9" text-anchor="middle">③ fillFields() 人性化时序</text>
+<text x="175" y="393" fill="#8b949e" font-size="9" text-anchor="middle">dispatchEvent(input/change)</text>
+
+<!-- Popup UI -->
+<rect x="340" y="250" width="290" height="160" rx="8" fill="#161b22" stroke="#8b949e" stroke-width="1.5"/>
+<text x="485" y="272" fill="#e6edf3" font-size="11" font-weight="700" text-anchor="middle">Popup UI (popup.html)</text>
+<text x="485" y="286" fill="#8b949e" font-size="8" text-anchor="middle">点击扩展图标弹出</text>
+<line x1="350" y1="294" x2="620" y2="294" stroke="#21262d"/>
+<text x="485" y="312" fill="#8b949e" font-size="9" text-anchor="middle">显示检测到的字段</text>
+<text x="485" y="327" fill="#8b949e" font-size="9" text-anchor="middle">"Autofill" 按钮</text>
+<text x="485" y="345" fill="#8b949e" font-size="9" text-anchor="middle">展示填充预览 + diff</text>
+<text x="485" y="360" fill="#8b949e" font-size="9" text-anchor="middle">用户确认 / 修改</text>
+<text x="485" y="378" fill="#56d364" font-size="9" text-anchor="middle">"已填好,请审核后提交"</text>
+<text x="485" y="393" fill="#ffa657" font-size="9" text-anchor="middle">不自动点 submit</text>
+
+<!-- Service Worker -->
+<rect x="30" y="430" width="600" height="120" rx="8" fill="#271f3d" stroke="#a371f7" stroke-width="1.5"/>
+<text x="330" y="452" fill="#c9b1f7" font-size="11" font-weight="700" text-anchor="middle">Service Worker (background.js)</text>
+<text x="330" y="466" fill="#8b949e" font-size="8" text-anchor="middle">扩展的后台协调中心 · 事件驱动</text>
+<line x1="40" y1="474" x2="620" y2="474" stroke="#2d1f3d"/>
+<text x="160" y="492" fill="#8b949e" font-size="9" text-anchor="middle">管理用户 profile</text>
+<text x="160" y="507" fill="#8b949e" font-size="9" text-anchor="middle">chrome.storage.local</text>
+<text x="330" y="492" fill="#8b949e" font-size="9" text-anchor="middle">消息路由</text>
+<text x="330" y="507" fill="#8b949e" font-size="9" text-anchor="middle">content↔popup↔backend</text>
+<text x="500" y="492" fill="#8b949e" font-size="9" text-anchor="middle">追踪已投递职位</text>
+<text x="500" y="507" fill="#8b949e" font-size="9" text-anchor="middle">同步到云端账户</text>
+<text x="330" y="528" fill="#56d364" font-size="9" text-anchor="middle">复杂表单/开放题 → 调云端 LLM API (方案 B)</text>
+
+<!-- Local Storage -->
+<rect x="30" y="570" width="600" height="60" rx="8" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+<text x="330" y="592" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle">chrome.storage.local — 用户 Profile</text>
+<text x="150" y="612" fill="#8b949e" font-size="9" text-anchor="middle">姓名/邮箱/电话</text>
+<text x="330" y="612" fill="#8b949e" font-size="9" text-anchor="middle">工作经历/教育/技能</text>
+<text x="520" y="612" fill="#8b949e" font-size="9" text-anchor="middle">简历文件 (base64)</text>
+<text x="330" y="626" fill="#56d364" font-size="8" text-anchor="middle">数据留在本地,隐私优先;密码绝不存储</text>
+
+<!-- RIGHT: Cloud Backend (optional) -->
+<rect x="670" y="10" width="320" height="640" rx="12" fill="#0a0e14" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="686" y="32" fill="#3fb950" font-size="10" font-weight="700" letter-spacing="1">你的云端后端 (可选,方案 B 才需要)</text>
+
+<rect x="690" y="50" width="280" height="90" rx="8" fill="#1a2e24" stroke="#3fb950" stroke-width="1"/>
+<text x="830" y="72" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle">Web 账户系统</text>
+<text x="830" y="90" fill="#8b949e" font-size="9" text-anchor="middle">简历管理 / 版本控制</text>
+<text x="830" y="105" fill="#8b949e" font-size="9" text-anchor="middle">投递历史 / 趋势分析</text>
+<text x="830" y="122" fill="#8b949e" font-size="9" text-anchor="middle">面试准备 / 数据飞轮</text>
+
+<rect x="690" y="155" width="280" height="90" rx="8" fill="#271f3d" stroke="#a371f7" stroke-width="1"/>
+<text x="830" y="177" fill="#c9b1f7" font-size="10" font-weight="700" text-anchor="middle">LLM API 端点</text>
+<text x="830" y="195" fill="#8b949e" font-size="9" text-anchor="middle">/api/map-fields</text>
+<text x="830" y="210" fill="#8b949e" font-size="9" text-anchor="middle">/api/answer-question</text>
+<text x="830" y="225" fill="#8b949e" font-size="9" text-anchor="middle">/api/tailor-resume</text>
+<text x="830" y="240" fill="#8b949e" font-size="8" text-anchor="middle">Claude API · BYO key 可选</text>
+
+<rect x="690" y="260" width="280" height="80" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+<text x="830" y="282" fill="#e6edf3" font-size="10" font-weight="700" text-anchor="middle">数据库</text>
+<text x="830" y="300" fill="#8b949e" font-size="9" text-anchor="middle">PostgreSQL (Supabase)</text>
+<text x="830" y="315" fill="#8b949e" font-size="9" text-anchor="middle">简历/投递/面试/趋势</text>
+<text x="830" y="332" fill="#56d364" font-size="8" text-anchor="middle">profile 可云端备份或纯本地</text>
+
+<!-- Privacy note -->
+<rect x="690" y="360" width="280" height="120" rx="8" fill="#0f2d1a" stroke="#3fb950" stroke-width="1"/>
+<text x="830" y="382" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle">隐私模型</text>
+<line x1="700" y1="390" x2="960" y2="390" stroke="#1a3a26"/>
+<text x="830" y="408" fill="#8b949e" font-size="9" text-anchor="middle">敏感数据可全留本地</text>
+<text x="830" y="424" fill="#8b949e" font-size="9" text-anchor="middle">只有需要 LLM 时才上传</text>
+<text x="830" y="440" fill="#8b949e" font-size="9" text-anchor="middle">JD + 字段 (不含密码)</text>
+<text x="830" y="456" fill="#56d364" font-size="9" text-anchor="middle">符合 GDPR/PIPL 最小化原则</text>
+<text x="830" y="472" fill="#8b949e" font-size="8" text-anchor="middle">"data stays on device" 是卖点</text>
+
+<!-- Key advantage box -->
+<rect x="690" y="500" width="280" height="130" rx="8" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+<text x="830" y="522" fill="#79c0ff" font-size="10" font-weight="700" text-anchor="middle">为什么零封号</text>
+<line x1="700" y1="530" x2="960" y2="530" stroke="#1c3060"/>
+<text x="830" y="548" fill="#56d364" font-size="9" text-anchor="middle">✓ 用户真实浏览器指纹</text>
+<text x="830" y="564" fill="#56d364" font-size="9" text-anchor="middle">✓ 用户真实登录 session</text>
+<text x="830" y="580" fill="#56d364" font-size="9" text-anchor="middle">✓ 用户真实 IP 地址</text>
+<text x="830" y="596" fill="#56d364" font-size="9" text-anchor="middle">✓ 用户亲自点 submit</text>
+<text x="830" y="614" fill="#8b949e" font-size="8" text-anchor="middle">平台无法区分人工 vs 辅助</text>
+
+<!-- Arrows -->
+<line x1="175" y1="250" x2="175" y2="230" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#e1b)"/>
+<text x="185" y="244" fill="#58a6ff" font-size="8">读写DOM</text>
+<line x1="175" y1="410" x2="175" y2="430" stroke="#a371f7" stroke-width="1.5" marker-end="url(#e1)"/>
+<line x1="485" y1="410" x2="450" y2="430" stroke="#a371f7" stroke-width="1.5" marker-end="url(#e1)"/>
+<line x1="330" y1="550" x2="330" y2="570" stroke="#ffa657" stroke-width="1.5" marker-end="url(#e1o)"/>
+<line x1="630" y1="490" x2="690" y2="200" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#e1g)"/>
+<text x="650" y="350" fill="#3fb950" font-size="8" transform="rotate(-55,650,350)">LLM 请求</text>
+</svg>
+</div>
+</div>
+
+
+<!-- ═══════════════════ 3. HYBRID ═══════════════════ -->
+<div id="hybrid" class="sec">
+<h2>③ 扩展 + 云端 LLM 混合 — 方案 B (你的差异化护城河)</h2>
+<div class="wrap">
+<svg width="1000" height="600" viewBox="0 0 1000 600">
+<defs>
+  <marker id="h1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#484f58"/></marker>
+  <marker id="h1b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#58a6ff"/></marker>
+  <marker id="h1p" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#a371f7"/></marker>
+  <marker id="h1g" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#3fb950"/></marker>
+</defs>
+
+<!-- Step flow horizontally -->
+<!-- 1 detect -->
+<rect x="20" y="30" width="170" height="110" rx="8" fill="#1c2c4a" stroke="#58a6ff" stroke-width="1.5"/>
+<text x="105" y="52" fill="#79c0ff" font-size="10" font-weight="700" text-anchor="middle">① 扩展检测</text>
+<text x="105" y="70" fill="#8b949e" font-size="9" text-anchor="middle">content script 扫描</text>
+<text x="105" y="84" fill="#8b949e" font-size="9" text-anchor="middle">页面所有表单字段</text>
+<text x="105" y="100" fill="#8b949e" font-size="9" text-anchor="middle">提取 label + type</text>
+<text x="105" y="114" fill="#8b949e" font-size="9" text-anchor="middle">+ accessibility tree</text>
+<text x="105" y="130" fill="#56d364" font-size="8" text-anchor="middle">本地, 无需 LLM</text>
+
+<!-- 2 simple fields -->
+<rect x="210" y="30" width="170" height="110" rx="8" fill="#0f2d1a" stroke="#3fb950" stroke-width="1.5"/>
+<text x="295" y="52" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle">② 简单字段</text>
+<text x="295" y="70" fill="#8b949e" font-size="9" text-anchor="middle">name/email/phone</text>
+<text x="295" y="84" fill="#8b949e" font-size="9" text-anchor="middle">规则直接匹配</text>
+<text x="295" y="100" fill="#8b949e" font-size="9" text-anchor="middle">本地 profile 填充</text>
+<text x="295" y="116" fill="#56d364" font-size="9" text-anchor="middle">✓ 零成本零延迟</text>
+<text x="295" y="132" fill="#8b949e" font-size="8" text-anchor="middle">~70% 字段走这条</text>
+
+<!-- 3 complex fields → LLM -->
+<rect x="400" y="30" width="180" height="110" rx="8" fill="#271f3d" stroke="#a371f7" stroke-width="1.5"/>
+<text x="490" y="52" fill="#c9b1f7" font-size="10" font-weight="700" text-anchor="middle">③ 复杂/陌生字段</text>
+<text x="490" y="70" fill="#8b949e" font-size="9" text-anchor="middle">无法规则匹配的字段</text>
+<text x="490" y="84" fill="#8b949e" font-size="9" text-anchor="middle">→ 发到云端 LLM</text>
+<text x="490" y="100" fill="#8b949e" font-size="9" text-anchor="middle">{fields, profile}</text>
+<text x="490" y="116" fill="#8b949e" font-size="9" text-anchor="middle">→ 返回 {sel: value}</text>
+<text x="490" y="132" fill="#ffa657" font-size="8" text-anchor="middle">~25% 字段, 智能映射</text>
+
+<!-- 4 open questions -->
+<rect x="600" y="30" width="180" height="110" rx="8" fill="#271f3d" stroke="#a371f7" stroke-width="1.5"/>
+<text x="690" y="52" fill="#c9b1f7" font-size="10" font-weight="700" text-anchor="middle">④ 开放题</text>
+<text x="690" y="70" fill="#8b949e" font-size="9" text-anchor="middle">"Why this company?"</text>
+<text x="690" y="84" fill="#8b949e" font-size="9" text-anchor="middle">→ LLM 生成答案</text>
+<text x="690" y="100" fill="#8b949e" font-size="9" text-anchor="middle">基于 JD + 简历 + 公司</text>
+<text x="690" y="116" fill="#8b949e" font-size="9" text-anchor="middle">个性化草稿</text>
+<text x="690" y="132" fill="#ffa657" font-size="8" text-anchor="middle">~5% 字段, 高价值</text>
+
+<!-- 5 review -->
+<rect x="800" y="30" width="180" height="110" rx="8" fill="#1a2e24" stroke="#3fb950" stroke-width="2"/>
+<text x="890" y="52" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle">⑤ 用户审核</text>
+<text x="890" y="70" fill="#8b949e" font-size="9" text-anchor="middle">所有填充高亮显示</text>
+<text x="890" y="84" fill="#8b949e" font-size="9" text-anchor="middle">LLM 生成的标记 ✦</text>
+<text x="890" y="100" fill="#8b949e" font-size="9" text-anchor="middle">用户修改 / 确认</text>
+<text x="890" y="116" fill="#56d364" font-size="9" text-anchor="middle">用户亲自 submit</text>
+<text x="890" y="132" fill="#56d364" font-size="8" text-anchor="middle">✓ 零封号 + 可控</text>
+
+<!-- flow arrows -->
+<line x1="190" y1="85" x2="210" y2="85" stroke="#484f58" stroke-width="1.5" marker-end="url(#h1)"/>
+<line x1="380" y1="85" x2="400" y2="85" stroke="#a371f7" stroke-width="1.5" marker-end="url(#h1p)"/>
+<line x1="580" y1="85" x2="600" y2="85" stroke="#a371f7" stroke-width="1.5" marker-end="url(#h1p)"/>
+<line x1="780" y1="85" x2="800" y2="85" stroke="#3fb950" stroke-width="1.5" marker-end="url(#h1g)"/>
+
+<!-- Cloud LLM service detail -->
+<rect x="300" y="190" width="400" height="180" rx="10" fill="#1a0f2e" stroke="#a371f7" stroke-width="2"/>
+<text x="500" y="214" fill="#c9b1f7" font-size="12" font-weight="700" text-anchor="middle">云端 LLM 服务 (你的后端)</text>
+<line x1="315" y1="222" x2="685" y2="222" stroke="#2d1f3d"/>
+
+<rect x="320" y="234" width="170" height="60" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="405" y="254" fill="#e6edf3" font-size="9" font-weight="700" text-anchor="middle">POST /api/map-fields</text>
+<text x="405" y="270" fill="#8b949e" font-size="8" text-anchor="middle">in: 未知字段 + profile</text>
+<text x="405" y="284" fill="#8b949e" font-size="8" text-anchor="middle">out: 字段→值 映射</text>
+
+<rect x="510" y="234" width="170" height="60" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="595" y="254" fill="#e6edf3" font-size="9" font-weight="700" text-anchor="middle">POST /api/answer-q</text>
+<text x="595" y="270" fill="#8b949e" font-size="8" text-anchor="middle">in: 开放题 + JD + 简历</text>
+<text x="595" y="284" fill="#8b949e" font-size="8" text-anchor="middle">out: 个性化答案草稿</text>
+
+<rect x="320" y="304" width="360" height="54" rx="6" fill="#1a2e24" stroke="#3fb950"/>
+<text x="500" y="324" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">数据飞轮:每次投递 → 沉淀职业上下文</text>
+<text x="500" y="340" fill="#8b949e" font-size="8" text-anchor="middle">投递历史 + 字段映射 + 答案 → 越用越精准</text>
+<text x="500" y="352" fill="#8b949e" font-size="8" text-anchor="middle">这是 vs 纯 autofill 工具 (Simplify) 的护城河</text>
+
+<!-- Why this is the moat -->
+<rect x="20" y="400" width="460" height="180" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+<text x="250" y="424" fill="#79c0ff" font-size="11" font-weight="700" text-anchor="middle">为什么方案 B 是你的差异化</text>
+<line x1="30" y1="432" x2="470" y2="432" stroke="#21262d"/>
+<text x="35" y="452" fill="#8b949e" font-size="9">• Simplify/SpeedyApply = 纯规则 autofill</text>
+<text x="50" y="467" fill="#8b949e" font-size="9">陌生表单/开放题就失效</text>
+<text x="35" y="487" fill="#56d364" font-size="9">• 你 = LLM 智能映射 + 答案生成</text>
+<text x="50" y="502" fill="#8b949e" font-size="9">任何表单都能处理,质量更高</text>
+<text x="35" y="522" fill="#56d364" font-size="9">• 加上面试准备 + 趋势 + 数据飞轮</text>
+<text x="50" y="537" fill="#8b949e" font-size="9">= 完整 journey, 不是单点工具</text>
+<text x="35" y="557" fill="#ffa657" font-size="9">• 客户端执行 = 零封号 (vs 服务器 sandbox)</text>
+<text x="50" y="572" fill="#8b949e" font-size="9">= 既智能又安全, 两全其美</text>
+
+<!-- Cost model -->
+<rect x="500" y="400" width="480" height="180" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+<text x="740" y="424" fill="#7ee787" font-size="11" font-weight="700" text-anchor="middle">成本模型 (混合方案的优势)</text>
+<line x1="510" y1="432" x2="970" y2="432" stroke="#21262d"/>
+<text x="520" y="452" fill="#8b949e" font-size="9">70% 字段本地规则填充 → $0</text>
+<text x="520" y="472" fill="#8b949e" font-size="9">25% 字段 LLM 映射 → Haiku, ~$0.001/job</text>
+<text x="520" y="492" fill="#8b949e" font-size="9">5% 开放题 LLM 生成 → Sonnet, ~$0.002/job</text>
+<text x="520" y="512" fill="#56d364" font-size="9">每次投递总 LLM 成本: ~$0.003</text>
+<text x="520" y="532" fill="#56d364" font-size="9">100 投递/用户/月 = $0.30/用户/月</text>
+<text x="520" y="552" fill="#8b949e" font-size="9">订阅 $15/月 → 毛利 98%</text>
+<text x="520" y="572" fill="#ffa657" font-size="9">可选 BYO key → 成本归零, 你只收订阅</text>
+</svg>
+</div>
+</div>
+
+
+<!-- ═══════════════════ 4. NATIVE ═══════════════════ -->
+<div id="native" class="sec">
+<h2>④ 桌面 App + Chrome DevTools Protocol — 方案 C (最强但最重)</h2>
+<div class="wrap">
+<svg width="1000" height="580" viewBox="0 0 1000 580">
+<defs>
+  <marker id="n1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#484f58"/></marker>
+  <marker id="n1p" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#d2a8ff"/></marker>
+  <marker id="n1b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#58a6ff"/></marker>
+</defs>
+
+<!-- Desktop App -->
+<rect x="20" y="30" width="320" height="280" rx="10" fill="#1a0f2e" stroke="#d2a8ff" stroke-width="2"/>
+<text x="180" y="54" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle">桌面 App (Tauri / Electron)</text>
+<text x="180" y="70" fill="#8b949e" font-size="8" text-anchor="middle">用户本地安装运行</text>
+<line x1="35" y1="78" x2="325" y2="78" stroke="#2d1f3d"/>
+
+<rect x="40" y="90" width="280" height="60" rx="6" fill="#271f3d" stroke="#a371f7"/>
+<text x="180" y="110" fill="#c9b1f7" font-size="10" font-weight="700" text-anchor="middle">Agent 编排器</text>
+<text x="180" y="126" fill="#8b949e" font-size="8" text-anchor="middle">browser-use / Stagehand 本地</text>
+<text x="180" y="140" fill="#8b949e" font-size="8" text-anchor="middle">ReAct loop + tool dispatch</text>
+
+<rect x="40" y="160" width="280" height="50" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="180" y="180" fill="#e6edf3" font-size="9" font-weight="700" text-anchor="middle">LLM 调用</text>
+<text x="180" y="196" fill="#8b949e" font-size="8" text-anchor="middle">云端 Claude API 或本地 Ollama</text>
+
+<rect x="40" y="220" width="280" height="50" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="180" y="240" fill="#e6edf3" font-size="9" font-weight="700" text-anchor="middle">本地能力</text>
+<text x="180" y="256" fill="#8b949e" font-size="8" text-anchor="middle">bash · 文件读写 · 定时任务 · 批量</text>
+
+<rect x="40" y="280" width="280" height="20" rx="4" fill="#0f2d1a"/>
+<text x="180" y="294" fill="#56d364" font-size="8" text-anchor="middle">HITL: submit 前弹窗确认</text>
+
+<!-- CDP connection -->
+<rect x="400" y="120" width="180" height="100" rx="8" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+<text x="490" y="144" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle">CDP 连接</text>
+<text x="490" y="160" fill="#8b949e" font-size="8" text-anchor="middle">Chrome DevTools</text>
+<text x="490" y="172" fill="#8b949e" font-size="8" text-anchor="middle">Protocol</text>
+<text x="490" y="190" fill="#8b949e" font-size="8" text-anchor="middle">--remote-debugging-port</text>
+<text x="490" y="206" fill="#56d364" font-size="8" text-anchor="middle">连用户已开的 Chrome</text>
+
+<!-- User's real Chrome -->
+<rect x="640" y="30" width="340" height="280" rx="10" fill="#0a0e14" stroke="#58a6ff" stroke-width="2"/>
+<text x="810" y="54" fill="#58a6ff" font-size="11" font-weight="700" text-anchor="middle">用户真实的 Chrome</text>
+<text x="810" y="70" fill="#8b949e" font-size="8" text-anchor="middle">用户日常使用的浏览器,已登录所有账户</text>
+<line x1="655" y1="78" x2="965" y2="78" stroke="#1c3060"/>
+
+<rect x="660" y="90" width="300" height="60" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="810" y="110" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">用户的登录 Profile</text>
+<text x="810" y="126" fill="#8b949e" font-size="8" text-anchor="middle">LinkedIn / Boss直聘 / Workday 全登录</text>
+<text x="810" y="140" fill="#8b949e" font-size="8" text-anchor="middle">真实 cookies · 真实指纹 · 真实 IP</text>
+
+<rect x="660" y="160" width="300" height="60" rx="6" fill="#161b22" stroke="#30363d"/>
+<text x="810" y="180" fill="#e6edf3" font-size="9" font-weight="700" text-anchor="middle">职位申请页面</text>
+<text x="810" y="196" fill="#8b949e" font-size="8" text-anchor="middle">Agent 通过 CDP 控制:导航/填表/截图</text>
+<text x="810" y="210" fill="#8b949e" font-size="8" text-anchor="middle">就在用户自己的标签页里操作</text>
+
+<rect x="660" y="230" width="300" height="60" rx="6" fill="#1a2e24" stroke="#3fb950"/>
+<text x="810" y="250" fill="#56d364" font-size="9" font-weight="700" text-anchor="middle">为什么仍然安全</text>
+<text x="810" y="266" fill="#8b949e" font-size="8" text-anchor="middle">所有操作都在用户真实环境内发生</text>
+<text x="810" y="280" fill="#8b949e" font-size="8" text-anchor="middle">但多步自动化速度需人性化, submit 须确认</text>
+
+<!-- arrows -->
+<line x1="340" y1="170" x2="400" y2="170" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#n1p)"/>
+<line x1="580" y1="170" x2="640" y2="170" stroke="#ffa657" stroke-width="1.5" marker-end="url(#n1)"/>
+
+<!-- Bottom: tradeoffs -->
+<rect x="20" y="340" width="470" height="220" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+<text x="255" y="364" fill="#7ee787" font-size="11" font-weight="700" text-anchor="middle">优势</text>
+<line x1="30" y1="372" x2="480" y2="372" stroke="#21262d"/>
+<text x="35" y="392" fill="#56d364" font-size="9">✓ 最强能力:跨页自主导航 + 批量 + 定时</text>
+<text x="35" y="412" fill="#56d364" font-size="9">✓ 连用户已登录的真实浏览器</text>
+<text x="35" y="432" fill="#56d364" font-size="9">✓ 可做 LinkedIn/Boss直聘 (用户登录态)</text>
+<text x="35" y="452" fill="#56d364" font-size="9">✓ bash + 文件 + 本地 LLM (Ollama) 全能</text>
+<text x="35" y="472" fill="#56d364" font-size="9">✓ "夜间自动投递" 这类 power 功能</text>
+<text x="35" y="496" fill="#8b949e" font-size="9">browser-use 支持 Ollama 本地模型,</text>
+<text x="35" y="511" fill="#8b949e" font-size="9">可做到完全本地 + 零 API 成本</text>
+<text x="35" y="535" fill="#ffa657" font-size="9">Stagehand v3 直接通过 CDP 控制,</text>
+<text x="35" y="550" fill="#ffa657" font-size="9">砍掉传统自动化层,更快更稳</text>
+
+<rect x="510" y="340" width="470" height="220" rx="10" fill="#161b22" stroke="#f85149" stroke-width="1.5"/>
+<text x="745" y="364" fill="#ff7b72" font-size="11" font-weight="700" text-anchor="middle">代价 / 风险</text>
+<line x1="520" y1="372" x2="970" y2="372" stroke="#21262d"/>
+<text x="525" y="392" fill="#f85149" font-size="9">✗ 需用户下载安装桌面 app (信任门槛高)</text>
+<text x="525" y="412" fill="#f85149" font-size="9">✗ 跨平台打包/签名/自动更新 维护重</text>
+<text x="525" y="432" fill="#f85149" font-size="9">✗ 多步自动化速度过快仍可能触发检测</text>
+<text x="525" y="452" fill="#f85149" font-size="9">✗ LinkedIn/Boss直聘 自动化仍违反 ToS</text>
+<text x="525" y="472" fill="#ffa657" font-size="9">⚠ 即使本地, 批量投递仍有账户风险</text>
+<text x="525" y="496" fill="#8b949e" font-size="9">建议: 仅给 power users, 明确 opt-in,</text>
+<text x="525" y="511" fill="#8b949e" font-size="9">投递速度强制人性化, submit 必须确认</text>
+<text x="525" y="535" fill="#8b949e" font-size="9">现实判断: Phase 3 才做, 先用 A+B</text>
+<text x="525" y="550" fill="#8b949e" font-size="9">验证市场, 别一上来就背这个包袱</text>
+</svg>
+</div>
+</div>
+
+
+<!-- ═══════════════════ 5. FLOW ═══════════════════ -->
+<div id="flow" class="sec">
+<h2>⑤ 完整投递数据流 — 推荐方案 (A+B 混合)</h2>
+<div class="wrap">
+<svg width="1000" height="640" viewBox="0 0 1000 640">
+<defs>
+  <marker id="f1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#484f58"/></marker>
+  <marker id="f1g" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#3fb950"/></marker>
+  <marker id="f1b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#58a6ff"/></marker>
+  <marker id="f1p" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#a371f7"/></marker>
+  <marker id="f1o" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#ffa657"/></marker>
+</defs>
+
+<!-- swim lanes -->
+<text x="95" y="20" fill="#58a6ff" font-size="10" font-weight="700" text-anchor="middle">浏览器扩展 (本地)</text>
+<text x="400" y="20" fill="#a371f7" font-size="10" font-weight="700" text-anchor="middle">云端后端</text>
+<text x="700" y="20" fill="#3fb950" font-size="10" font-weight="700" text-anchor="middle">职位页面 (本地)</text>
+<text x="910" y="20" fill="#ffa657" font-size="10" font-weight="700" text-anchor="middle">用户</text>
+
+<line x1="190" y1="28" x2="190" y2="630" stroke="#21262d"/>
+<line x1="560" y1="28" x2="560" y2="630" stroke="#21262d"/>
+<line x1="830" y1="28" x2="830" y2="630" stroke="#21262d"/>
+
+<!-- Step 1: user opens job page -->
+<rect x="850" y="40" width="140" height="44" rx="6" fill="#2a1f1a" stroke="#ffa657"/>
+<text x="920" y="58" fill="#ffa657" font-size="9" font-weight="700" text-anchor="middle">打开职位页</text>
+<text x="920" y="74" fill="#8b949e" font-size="8" text-anchor="middle">已登录 ATS</text>
+
+<rect x="600" y="100" width="220" height="44" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="710" y="118" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">页面加载, 显示申请表单</text>
+<text x="710" y="134" fill="#8b949e" font-size="8" text-anchor="middle">content script 自动注入</text>
+
+<!-- Step 2: extension detects -->
+<rect x="20" y="160" width="160" height="50" rx="6" fill="#1c2c4a" stroke="#58a6ff"/>
+<text x="100" y="180" fill="#79c0ff" font-size="9" font-weight="700" text-anchor="middle">检测表单字段</text>
+<text x="100" y="196" fill="#8b949e" font-size="8" text-anchor="middle">扫描 DOM, 提取 labels</text>
+
+<!-- Step 3: local fill simple -->
+<rect x="20" y="226" width="160" height="50" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="100" y="246" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">本地填简单字段</text>
+<text x="100" y="262" fill="#8b949e" font-size="8" text-anchor="middle">name/email/phone (~70%)</text>
+
+<!-- Step 4: send complex to cloud -->
+<rect x="20" y="292" width="160" height="50" rx="6" fill="#271f3d" stroke="#a371f7"/>
+<text x="100" y="312" fill="#c9b1f7" font-size="9" font-weight="700" text-anchor="middle">复杂字段→云端</text>
+<text x="100" y="328" fill="#8b949e" font-size="8" text-anchor="middle">{未知字段, JD, profile}</text>
+
+<rect x="290" y="292" width="240" height="80" rx="6" fill="#1a0f2e" stroke="#a371f7" stroke-width="1.5"/>
+<text x="410" y="312" fill="#c9b1f7" font-size="9" font-weight="700" text-anchor="middle">LLM 智能映射 + 答案生成</text>
+<text x="410" y="330" fill="#8b949e" font-size="8" text-anchor="middle">map-fields: 陌生字段→profile值</text>
+<text x="410" y="345" fill="#8b949e" font-size="8" text-anchor="middle">answer-q: 开放题个性化草稿</text>
+<text x="410" y="362" fill="#56d364" font-size="8" text-anchor="middle">Haiku+Sonnet · ~$0.003/job</text>
+
+<!-- Step 5: fill back -->
+<rect x="20" y="390" width="160" height="50" rx="6" fill="#1c2c4a" stroke="#58a6ff"/>
+<text x="100" y="410" fill="#79c0ff" font-size="9" font-weight="700" text-anchor="middle">填回页面</text>
+<text x="100" y="426" fill="#8b949e" font-size="8" text-anchor="middle">人性化时序 + 高亮 LLM 项</text>
+
+<rect x="600" y="390" width="220" height="50" rx="6" fill="#0f2d1a" stroke="#3fb950"/>
+<text x="710" y="410" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">表单已填好</text>
+<text x="710" y="426" fill="#8b949e" font-size="8" text-anchor="middle">LLM 生成的字段标 ✦ 待审核</text>
+
+<!-- Step 6: user review -->
+<rect x="850" y="460" width="140" height="60" rx="6" fill="#2a1f1a" stroke="#ffa657" stroke-width="1.5"/>
+<text x="920" y="480" fill="#ffa657" font-size="9" font-weight="700" text-anchor="middle">审核 + 修改</text>
+<text x="920" y="496" fill="#8b949e" font-size="8" text-anchor="middle">检查 LLM 答案</text>
+<text x="920" y="510" fill="#56d364" font-size="8" text-anchor="middle">满意后点 submit</text>
+
+<!-- Step 7: submit -->
+<rect x="600" y="540" width="220" height="44" rx="6" fill="#1a2e24" stroke="#3fb950" stroke-width="2"/>
+<text x="710" y="558" fill="#7ee787" font-size="9" font-weight="700" text-anchor="middle">用户亲自提交</text>
+<text x="710" y="574" fill="#56d364" font-size="8" text-anchor="middle">真实 session · 零封号</text>
+
+<!-- Step 8: track -->
+<rect x="290" y="540" width="240" height="44" rx="6" fill="#1a0f2e" stroke="#a371f7"/>
+<text x="410" y="558" fill="#c9b1f7" font-size="9" font-weight="700" text-anchor="middle">记录投递 → 数据飞轮</text>
+<text x="410" y="574" fill="#8b949e" font-size="8" text-anchor="middle">投递历史 · 趋势 · 面试准备入口</text>
+
+<!-- arrows -->
+<line x1="850" y1="62" x2="820" y2="110" stroke="#ffa657" stroke-width="1.2" marker-end="url(#f1o)"/>
+<line x1="600" y1="122" x2="180" y2="175" stroke="#3fb950" stroke-width="1.2" marker-end="url(#f1g)"/>
+<text x="350" y="140" fill="#3fb950" font-size="8">注入完成</text>
+<line x1="100" y1="210" x2="100" y2="226" stroke="#484f58" stroke-width="1.2" marker-end="url(#f1)"/>
+<line x1="100" y1="276" x2="100" y2="292" stroke="#484f58" stroke-width="1.2" marker-end="url(#f1)"/>
+<line x1="180" y1="317" x2="290" y2="325" stroke="#a371f7" stroke-width="1.2" marker-end="url(#f1p)"/>
+<line x1="410" y1="372" x2="180" y2="405" stroke="#a371f7" stroke-width="1.2" marker-end="url(#f1p)"/>
+<text x="250" y="395" fill="#a371f7" font-size="8">返回填充值</text>
+<line x1="180" y1="415" x2="600" y2="415" stroke="#58a6ff" stroke-width="1.2" marker-end="url(#f1b)"/>
+<line x1="710" y1="440" x2="850" y2="475" stroke="#ffa657" stroke-width="1.2" marker-end="url(#f1o)"/>
+<line x1="900" y1="520" x2="820" y2="555" stroke="#3fb950" stroke-width="1.5" marker-end="url(#f1g)"/>
+<line x1="600" y1="562" x2="530" y2="562" stroke="#a371f7" stroke-width="1.2" marker-end="url(#f1p)"/>
+
+<!-- key principle box -->
+<rect x="20" y="470" width="500" height="50" rx="8" fill="#0f2d1a" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="270" y="490" fill="#7ee787" font-size="10" font-weight="700" text-anchor="middle">核心原则:智能在云端, 执行在本地, 提交靠用户</text>
+<text x="270" y="506" fill="#8b949e" font-size="8" text-anchor="middle">= 既有 AI 智能, 又有真实环境的零封号, 还有用户的最终控制权</text>
+</svg>
+</div>
+</div>
+
+<script>
+function show(id){
+  document.querySelectorAll('.sec').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>
