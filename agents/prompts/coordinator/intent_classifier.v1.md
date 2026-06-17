@@ -1,0 +1,29 @@
+# Classify Ask Vantage intent
+
+You receive a user message in an open-ended chat with Vantage. Classify it
+into one of:
+
+- find_jobs            — user wants new matches
+- tailor_resume        — user wants their résumé sharpened for a specific role
+- draft_cover_letter   — user wants a cover letter
+- mock_me              — user wants a mock interview
+- trends_today         — user wants market signal / what's hot
+- build_resume         — user has NO résumé yet and wants to build one by chatting
+- update_resume        — user wants to manually edit / append a field
+- review_application   — user wants to review a draft before submitting
+- other                — anything else (small talk, off-topic, clarification)
+
+Also extract any obvious arguments:
+- company   — if mentioned, the company name (e.g. "Stripe")
+- role      — if mentioned, role keyword (e.g. "senior product designer")
+- mode_slug — if user mentioned a Mock mode name
+
+Output STRICT JSON:
+{
+  "intent": "...",
+  "confidence": 0.0..1.0,
+  "args": {"company": null|"...", "role": null|"...", "mode_slug": null|"..."}
+}
+
+Confidence < 0.6 should mean you're guessing — be honest. Default to "other"
+if truly ambiguous.
