@@ -64,6 +64,12 @@ const EnvSchema = z.object({
   S3_SECRET_KEY: z.string().default(""),
   S3_BUCKET: z.string().default("relay-user-files"),
   S3_REGION: z.string().default("us-east-1"),
+
+  // Python FastAPI agent layer (LangGraph host). The Ask Vantage SSE
+  // path proxies to /ask/stream there; mock + résumé write endpoints
+  // similarly forward through. Defaults match agents/api/server.py's
+  // local bind.
+  AGENT_BASE_URL: z.string().url().default("http://localhost:8000"),
 });
 
 export type Env = z.infer<typeof EnvSchema> & {
