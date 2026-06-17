@@ -29,10 +29,11 @@ Relay 处理高度敏感的个人数据(简历、面试记录、求职偏好)。
 - 扩展遵循 Manifest V3 最小权限原则,只申请必要的 host permissions
 - content script 与 background 之间用消息传递,不暴露敏感数据到页面上下文
 
-### 服务器端(若用云端 LLM)
+### 服务器端(云端 LLM via OpenRouter)
 - 传输加密(TLS),静态加密(at-rest)
-- LLM 请求经 proxy,API key 不下发到客户端
-- 每次 agent 调用 audit log(谁、做了什么、何时)
+- LLM 请求经 OpenRouter API(`https://openrouter.ai/api/v1`),API key 仅存服务端 `.env`，不下发到客户端
+- 数据流：客户端 → Relay API(TS) → Python Agent(LangGraph) → OpenRouter → DeepSeek/GLM 模型。用户数据不持久存储于 OpenRouter 侧
+- 每次 agent 调用 audit log(谁、做了什么、何时、模型、成本)
 - 行级安全(RLS):用户只能访问自己的数据
 
 ### Sandbox(服务器端工具执行)

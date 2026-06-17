@@ -1,0 +1,7 @@
+# Purpose: surface sponsor button on repo page.
+# When to edit: when new funding channel exists.
+# Optional: delete this file if you don't want a sponsor button yet.
+
+github: [cubxxw]
+# ko_fi: cubxxw
+# custom: ["https://relay.example.com/sponsor"]

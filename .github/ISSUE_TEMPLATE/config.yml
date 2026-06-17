@@ -1,0 +1,13 @@
+# Purpose: direct users away from issues for things that aren't bugs/features.
+
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/cubxxw/apply-agent/security/advisories/new
+    about: Report privately via GitHub Security Advisories (see SECURITY.md)
+  - name: Question / discussion
+    url: https://github.com/cubxxw/apply-agent/discussions
+    about: Ask questions, share use cases, propose ideas before formal issues
+  - name: Documentation
+    url: https://github.com/cubxxw/apply-agent/tree/main/docs
+    about: Architecture, product spec, data model

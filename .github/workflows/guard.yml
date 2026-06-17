@@ -1,0 +1,80 @@
+# ============================================================================
+# 关键文件保护
+# 触发：所有 PR
+# 行为：bot 改 protected paths 直接 fail；人类改 protected paths 提示双 reviewer
+# ============================================================================
+name: Guard
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect:
+    name: Detect protected path changes
+    runs-on: ubuntu-latest
+    outputs:
+      hit: ${{ steps.filter.outputs.protected }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            protected:
+              - 'infra/postgres/migrations/**'
+              - '.env*'
+              - 'agents/harness/guards.py'
+              - 'agents/harness/permissions.py'
+              - 'agents/harness/checkpointer.py'
+              - 'agents/tools/approve.py'
+              - 'apps/extension/manifest.json'
+              - '.github/workflows/**'
+              - '.github/CODEOWNERS'
+
+  enforce:
+    name: Enforce protection
+    needs: detect
+    if: needs.detect.outputs.hit == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block bot
+        if: endsWith(github.actor, '[bot]')
+        run: |
+          echo "::error::Bot ${{ github.actor }} is not allowed to modify protected paths."
+          exit 1
+
+      - name: Warn human
+        if: ${{ !endsWith(github.actor, '[bot]') }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              `## ⚠️ Protected paths modified`,
+              ``,
+              `This PR touches one or more **protected paths** (migrations, harness guards, manifest, workflows).`,
+              ``,
+              `Required:`,
+              `- [ ] 2 human reviewers approve`,
+              `- [ ] Manual smoke test in staging`,
+              `- [ ] Rollback plan documented in PR description`,
+              ``,
+              `Author: @${context.actor}`,
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            if (!comments.some(c => c.body?.startsWith('## ⚠️ Protected paths modified'))) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }

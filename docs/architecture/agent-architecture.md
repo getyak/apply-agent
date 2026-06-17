@@ -4,6 +4,23 @@
 
 系统由 5 个单一职责的 agent 组成,通过 **Coordinator 编排** + **共享 DB 状态** + **事件总线**协作。
 
+## 为什么是 5 个 agent（而不是 1 个、不是 10 个）
+
+> 调研结论（[getmaxim.ai 多 agent 失败模式分析](https://www.getmaxim.ai/articles/multi-agent-system-reliability-failure-patterns-root-causes-and-production-validation-strategies/)，2-1 票确认）：**默认 single-agent，只在并行明显有收益时才拆**。agent 间协调代价是 O(N²)，错误传染、状态分歧、调试难度都随 agent 数量超线性增长。
+
+Relay 拆 5 个 agent 不是为了"并行"，而是为了**职责分离**：
+
+| 拆分理由 | Relay 的体现 |
+|---------|-------------|
+| 触发方式不同 | ResumeAgent 用户触发；JobMatchAgent/TrendAgent cron；InterviewAgent 半结构化对话 |
+| 模型分层不同 | InterviewAgent 用 V4 Pro 深度评估；TrendAgent 用 V4 Flash 大批量 ETL |
+| 数据飞轮不同 | InterviewAgent 是众包题库的入口，独立成长 |
+| Prompt 演化节奏不同 | 简历定制周改、面试评估月改、趋势报告季改 |
+
+**反例（不拆的场景）**：如果只是同一个用户请求里串两步 LLM 调用（先 parse 再 summarize），那是同一个 agent 的两个 tool，不该拆成两个 agent。
+
+**红线**：未来想加第 6 个 agent 之前，先问：能不能塞进现有 5 个之一？只有当答案是"职责完全错位"才新增。
+
 ## 编排模式
 
 ```
@@ -37,9 +54,10 @@ GET  /api/resumes/:id/analyze   提取技能/指标/缺口
 GET  /api/resumes/:id/versions  版本历史
 ```
 
-- 模型:Sonnet(优化/定制),Haiku(分析/解析)
+- 模型:GLM-4.7(优化/定制),DeepSeek V4 Flash(分析/解析)
+- 框架:LangGraph `create_react_agent` + resume 相关 tools
 - 缓存:`resume:tailored:{user}:{job}:{version}`,TTL 7 天
-- 被 AppPrepAgent 组合调用
+- 被 AppPrepAgent 通过 Coordinator StateGraph 组合调用
 
 ---
 
@@ -59,6 +77,7 @@ GET  /api/jobs/:id/details       完整 JD + 公司情报
 - 地点匹配 20%
 - 薪资匹配 10%
 
+- 模型:DeepSeek V4 Flash(解析/匹配)
 - 数据源:Greenhouse / Lever / Ashby public API
 - 每日 cron 增量抓取 → 匹配 → 通知
 
@@ -75,7 +94,7 @@ GET  /api/interviews/company/:co/role/:r  聚合面试题库
 GET  /api/interviews/insights             个人面试洞察
 ```
 
-- 模型:Opus(深度评估),Sonnet(生成问题)
+- 模型:DeepSeek V4 Pro(深度评估),GLM-4.7(生成问题)
 - **数据飞轮核心**:聚合所有用户的面试问答(opt-in),形成众包题库
 - 网络效应:用户越多,题库越丰富,新用户价值越高
 
@@ -92,8 +111,8 @@ GET  /api/applications/user/:id   投递历史
 PATCH /api/applications/:id       更新结果(rejected/interview/offer)
 ```
 
-- 调用 ResumeAgent.customize() 获取定制简历
-- 生成求职信(Sonnet)+ 表单答案(Haiku)
+- 通过 Coordinator 调用 ResumeAgent.customize() 获取定制简历
+- 生成求职信(GLM-4.7)+ 表单答案(DeepSeek V4 Flash)
 - 提交策略:Greenhouse/Lever/Ashby Partner API → 否则手动 checklist
 - **永远 review-before-submit**
 
@@ -110,7 +129,7 @@ GET  /api/trends/personalized   个人技能缺口
 POST /api/trends/generate-report 夜间 cron
 ```
 
-- 模型:Haiku(技能提取)
+- 模型:DeepSeek V4 Flash(技能提取)
 - 存储:DuckDB(分析型)
 - 每日 02:00 ETL → 08:00 邮件简报
 - 个性化:对比用户简历 vs trending 技能 → "学了 X 多匹配 Y 个岗位"

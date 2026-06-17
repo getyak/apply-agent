@@ -1,0 +1,89 @@
+# Purpose: keep deps fresh while minimizing PR noise for a solo project.
+# When to edit: when adding a new package manager, a new submodule, or
+# when a dep keeps breaking on auto-bump (add to ignore).
+
+version: 2
+updates:
+  # ─── Web + Extension + API (Bun / npm) ────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+      types:
+        patterns: ["@types/*"]
+    labels: ["chore", "deps", "scope:web"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    ignore:
+      # Manual review required — Next.js majors regularly break app router.
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      # Hono majors change middleware contract.
+      - dependency-name: "hono"
+        update-types: ["version-update:semver-major"]
+      # React 19 + server components churn — manual.
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+
+  # ─── Python agents (uv / pip) ─────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/agents"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    labels: ["chore", "deps", "scope:agents"]
+    commit-message:
+      prefix: "chore(deps-py)"
+    ignore:
+      # LangGraph internals (hooks, interrupt semantics) change between
+      # minors — must hand-verify HITL still resumes.
+      - dependency-name: "langgraph"
+      - dependency-name: "langgraph-checkpoint-postgres"
+      # LangChain core has frequent breaking changes in tool calling.
+      - dependency-name: "langchain"
+      - dependency-name: "langchain-core"
+      - dependency-name: "langchain-openai"
+      # Pydantic v2 → v3 will be a manual migration.
+      - dependency-name: "pydantic"
+        update-types: ["version-update:semver-major"]
+
+  # ─── GitHub Actions ───────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["chore", "ci"]
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # ─── Docker base images (infra) ───────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/infra"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["chore", "infra", "scope:infra"]
+    commit-message:
+      prefix: "chore(docker)"
+    ignore:
+      # PG major bumps require manual data migration verification.
+      - dependency-name: "pgvector/pgvector"
+        update-types: ["version-update:semver-major"]

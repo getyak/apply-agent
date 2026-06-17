@@ -25,7 +25,7 @@
 - 可恢复旧版本或对比两版
 
 **关键点**
-- 解析用 LLM(Claude),输出符合 JSON Resume schema
+- 解析用 LLM(via OpenRouter,DeepSeek V4 Flash),输出符合 JSON Resume schema
 - 版本不覆盖,保留完整历史
 - 这是整个系统的数据脊骨——"写一次,映射到多处"
 
@@ -118,6 +118,6 @@
 ## 不在 MVP 中(Phase 2+)
 
 - ❌ 任何形式的服务器端全自动投递
-- ❌ 桌面 App + CDP(power user 功能,见路线图)
+- ❌ 桌面 App + CDP(browser-use/Stagehand,power user 功能,见路线图)
 - ❌ 高级趋势分析(付费数据源)
 - ❌ 真人面试教练(marketplace)

@@ -1,0 +1,80 @@
+# Purpose: dedicated channel for prompt drift, eval regressions, hallucinations.
+
+name: Prompt / eval regression
+description: Quality degradation in agent output (drift, hallucination, score drop)
+title: "prompt: "
+labels: ["prompt-issue", "needs-review", "scope:prompts"]
+assignees: ["cubxxw"]
+body:
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Affected agent
+      options:
+        - resume_agent
+        - jobmatch_agent
+        - interview_agent
+        - appprep_agent
+        - trend_agent
+    validations:
+      required: true
+
+  - type: input
+    id: prompt-version
+    attributes:
+      label: Prompt version (filename or git SHA)
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model used
+      placeholder: "z-ai/glm-4.7"
+
+  - type: dropdown
+    id: failure-mode
+    attributes:
+      label: Failure mode
+      options:
+        - Hallucination (fabricated facts)
+        - Drift (response style changed)
+        - Eval score regression
+        - Format violation (JSON schema break)
+        - Refusal / over-refusal
+        - Loop / does not terminate
+        - Cost spike
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+    validations:
+      required: true
+
+  - type: input
+    id: eval-delta
+    attributes:
+      label: Eval score delta (if measured)
+      placeholder: "before: 0.87 → after: 0.71"
+
+  - type: input
+    id: trace
+    attributes:
+      label: Langfuse trace URL
+
+  - type: textarea
+    id: repro-input
+    attributes:
+      label: Minimal reproducing input
+      render: json

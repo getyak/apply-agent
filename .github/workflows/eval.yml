@@ -1,0 +1,174 @@
+# ============================================================================
+# Prompt + Agent quality gate
+# 触发：agents/prompts/** 或 eval/** 改动
+# Secrets：OPENROUTER_API_KEY（OpenRouter，不是 Anthropic 直连）
+# 安全模式：未配 OPENROUTER_API_KEY 时整个 job no-op 跳过；功能 eval 失败才阻塞
+# ============================================================================
+name: Eval
+
+on:
+  pull_request:
+    paths:
+      - 'agents/prompts/**'
+      - 'eval/**'
+      - 'agents/nodes/**'
+
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-secret:
+    name: Check OPENROUTER_API_KEY availability
+    runs-on: ubuntu-latest
+    outputs:
+      has_key: ${{ steps.probe.outputs.has_key }}
+    steps:
+      - id: probe
+        env:
+          KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENROUTER_API_KEY not configured; eval will be skipped."
+          fi
+
+  promptfoo:
+    name: Promptfoo functional eval
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      score: ${{ steps.score.outputs.score }}
+      baseline: ${{ steps.score.outputs.baseline }}
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+      OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install promptfoo
+        run: npm install -g promptfoo@latest
+
+      - name: Restore baseline (main branch)
+        id: baseline
+        run: |
+          git show origin/main:eval/baseline.json > /tmp/baseline.json 2>/dev/null || echo '{"score":0}' > /tmp/baseline.json
+          echo "value=$(jq -r .score /tmp/baseline.json)" >> $GITHUB_OUTPUT
+
+      - name: Run functional eval
+        working-directory: eval
+        run: promptfoo eval -c promptfooconfig.yaml --output /tmp/eval.json
+
+      - name: Compute score
+        id: score
+        run: |
+          SCORE=$(jq '[.results.results[].success] | (map(select(.)) | length) / length' /tmp/eval.json)
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          echo "baseline=${{ steps.baseline.outputs.value }}" >> $GITHUB_OUTPUT
+          awk -v s="$SCORE" -v b="${{ steps.baseline.outputs.value }}" 'BEGIN { exit !(s + 0.05 >= b) }'
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-${{ github.run_id }}
+          path: /tmp/eval.json
+          retention-days: 14
+
+  redteam:
+    name: Promptfoo red-team (warn-only)
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install -g promptfoo@latest
+      - name: Red-team eval
+        working-directory: eval
+        run: promptfoo redteam run --output /tmp/redteam.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: redteam-${{ github.run_id }}
+          path: /tmp/redteam.json
+
+  deepeval:
+    name: DeepEval metrics
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Install
+        working-directory: eval
+        run: uv sync --frozen
+      - name: DeepEval pytest (faithfulness, hallucination)
+        working-directory: eval
+        run: uv run pytest tests_deepeval/ --json-report --json-report-file=/tmp/deepeval.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepeval-${{ github.run_id }}
+          path: /tmp/deepeval.json
+
+  post-comment:
+    name: Post eval comment
+    needs: [promptfoo, redteam, deepeval]
+    if: always() && needs.promptfoo.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const score = '${{ needs.promptfoo.outputs.score }}';
+            const baseline = '${{ needs.promptfoo.outputs.baseline }}';
+            const delta = (parseFloat(score) - parseFloat(baseline)).toFixed(3);
+            const emoji = delta >= 0 ? '🟢' : (delta > -0.05 ? '🟡' : '🔴');
+            const body = [
+              `## Eval Report ${emoji}`,
+              ``,
+              `| Metric | Value |`,
+              `|---|---|`,
+              `| Functional score | ${score} |`,
+              `| Baseline (main) | ${baseline} |`,
+              `| Delta | ${delta} |`,
+              `| Red-team | warn-only, see artifact |`,
+              `| DeepEval | see artifact |`,
+            ].join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

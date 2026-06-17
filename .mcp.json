@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/mcp.json",
+  "_comment": "Relay project MCP servers. Committed. Secrets resolved from .env via ${VAR} interpolation at runtime.",
+  "mcpServers": {
+    "playwright": {
+      "_purpose": "Used by extension dev (autofill testing) and by relay-extension-auditor for headless verification.",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "env": {}
+    },
+    "postgres": {
+      "_purpose": "Read-only inspection of local PG 5433 (relay DB). Used by relay-migration-guardian for schema queries.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://relay:${POSTGRES_PASSWORD}@localhost:5433/relay"],
+      "env": {
+        "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}"
+      }
+    },
+    "filesystem": {
+      "_purpose": "Filesystem ops scoped to project root only — prevents accidental access to ~/.ssh, ~/.aws etc.",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${CLAUDE_PROJECT_DIR}"
+      ],
+      "env": {}
+    }
+  }
+}

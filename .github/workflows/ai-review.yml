@@ -1,0 +1,88 @@
+# ============================================================================
+# Claude Code Action · advisory PR review
+# 触发：PR opened / synchronize
+# Secrets：ANTHROPIC_API_KEY（Claude Code Action 仍用 Anthropic 直连；
+#         business rule LLM 才走 OpenRouter）
+# 安全模式：未配 ANTHROPIC_API_KEY 时整个 job no-op 跳过，不阻塞 merge
+# ============================================================================
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-secret:
+    name: Check ANTHROPIC_API_KEY availability
+    runs-on: ubuntu-latest
+    outputs:
+      has_key: ${{ steps.probe.outputs.has_key }}
+    steps:
+      - id: probe
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY not configured; AI review will be skipped."
+          fi
+
+  ai-review:
+    name: Claude Code review
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude Code review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          mode: review-advisory
+          allowed_paths: |
+            api/**
+            apps/web/**
+            apps/extension/**
+            agents/nodes/**
+            agents/coordinator/**
+            agents/tools/auto.py
+            agents/tools/notify.py
+            agents/api/**
+            eval/**
+            docs/**
+          blocked_paths: |
+            infra/postgres/migrations/**
+            .env*
+            **/secrets/**
+            agents/harness/guards.py
+            agents/harness/permissions.py
+            agents/harness/checkpointer.py
+            agents/tools/approve.py
+            apps/extension/manifest.json
+            .github/workflows/**
+          subagents: |
+            - code-reviewer
+            - security-reviewer
+          fail_on_error: false
+          comment_style: summary
+          max_turns: 8
+
+      - name: Note advisory status
+        if: always()
+        run: echo "AI review is advisory-only and does not gate merge."
