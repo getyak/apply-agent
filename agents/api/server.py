@@ -15,27 +15,29 @@ Caller: Bun api/ layer proxies user requests here over HTTP.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
-from typing import Annotated, Any
+from typing import Any, AsyncIterator
 from uuid import UUID, uuid4
 
 import structlog
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 
 from agents.api.deps import UserDep
-from agents.coordinator.router import classify_intent, dispatch, persist_turn
+from agents.coordinator.router import classify_intent, dispatch
 from agents.coordinator.workflows import build_from_scratch_graph
 from agents.harness.checkpointer import (
     ask_vantage_thread_id,
+    build_resume_thread_id,
     get_checkpointer,
     mock_thread_id,
 )
 from agents.harness.state import InterviewMode
 from agents.nodes import interview_agent, resume_agent
 from agents.tools.auto import pg_query
+
 
 log = structlog.get_logger("agents.api")
 app = FastAPI(title="Relay Agents", version="0.1.0")
@@ -83,28 +85,8 @@ class AskPayload(BaseModel):
 
 
 @app.post("/ask/stream")
-async def ask_stream(
-    payload: AskPayload,
-    user_id: UserDep,
-    x_relay_thread_id: Annotated[str | None, Header()] = None,
-    x_relay_surface: Annotated[str | None, Header()] = None,
-) -> StreamingResponse:
-    """SSE stream — classifies intent, runs the dispatched agent, emits task cards.
-
-    Two conversation channels share this endpoint (vantage-ui-mapping.md
-    §2.6): the dock (lifetime per-user thread) and the document-scoped vibe
-    chats (resume_studio, mock_studio, applications). The web layer picks
-    the right thread id, sends it as ``X-Relay-Thread-Id``, and labels the
-    surface via ``X-Relay-Surface`` so the router can adjust context loading
-    if it needs to. A missing thread header falls back to the dock thread —
-    matches old curl behaviour.
-    """
-    thread_id = x_relay_thread_id or ask_vantage_thread_id(str(user_id))
-    # surface is informational today (we trust the gateway's thread id);
-    # logged for observability and reserved for future per-surface context
-    # tuning in the router.
-    surface = (x_relay_surface or "dock").lower()
-    log.info("ask_stream.start", thread_id=thread_id, surface=surface)
+async def ask_stream(payload: AskPayload, user_id: UserDep) -> StreamingResponse:
+    """SSE stream — classifies intent, runs the dispatched agent, emits task cards."""
 
     async def gen() -> AsyncIterator[str]:
         yield _sse({"event": "thinking", "agent": "coordinator"})
@@ -121,17 +103,8 @@ async def ask_stream(
         )
 
         try:
-            result = await dispatch(
-                intent, user_id=user_id, message=payload.message, thread_id=thread_id
-            )
+            result = await dispatch(intent, user_id=user_id, message=payload.message)
             yield _sse({"event": "result", **result})
-            # Persist the turn so the next dock prompt has context.
-            await persist_turn(
-                thread_id=thread_id,
-                user_id=user_id,
-                user_message=payload.message,
-                assistant_text=_result_summary(result),
-            )
         except Exception as exc:  # noqa: BLE001 boundary
             log.error("ask_stream.dispatch_failed", error=str(exc))
             yield _sse({"event": "error", "message": str(exc)})
@@ -139,16 +112,6 @@ async def ask_stream(
         yield _sse({"event": "done"})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
-
-
-def _result_summary(result: dict[str, Any]) -> str:
-    """Compact human-readable summary of a dispatch result for the turn log."""
-    text = result.get("text")
-    if isinstance(text, str) and text:
-        return text
-    agent = result.get("agent", "coordinator")
-    action = result.get("action", "")
-    return f"[{agent} → {action}]".strip()
 
 
 def _sse(payload: dict[str, Any]) -> str:

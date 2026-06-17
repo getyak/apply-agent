@@ -10,7 +10,6 @@ The Ask Vantage dock holds a lifetime thread per user
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,9 +17,10 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.harness.llm import pick_model
+
 
 log = structlog.get_logger("agents.coordinator.router")
 
@@ -36,12 +36,6 @@ VALID_INTENTS = {
     "build_resume",
     "update_resume",
     "review_application",
-    # Applications kanban — move a row between columns, list the user's
-    # pipeline, or record an outcome. Lives in the agent's surface so a
-    # user can say "move Stripe to interviewing" inside any vibe chat.
-    "list_applications",
-    "move_application",
-    "set_application_outcome",
     "other",
 }
 
@@ -73,69 +67,11 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     (re.compile(r"\bi\s+don[\'']?t\s+have\s+a\s+r[eé]sum[eé]\b", re.I), "build_resume", 0.95),
     (re.compile(r"\b(update|edit|change|fix)\s+(my\s+)?r[eé]sum[eé]\b", re.I), "update_resume", 0.85),
     (re.compile(r"\breview\s+(my\s+)?application\b", re.I), "review_application", 0.85),
-    # Applications kanban.
-    (
-        re.compile(
-            # "move <company> to interviewing", "drag stripe to outcome",
-            # "shift the openai card to interview".
-            r"\b(move|drag|shift|push|bump)\s+(the\s+)?[\w-]+(?:\s+(card|app|application|role))?\s+to\s+(applied|interview|interviewing|outcome|offer|rejected|ghosted|submitted)\b",
-            re.I,
-        ),
-        "move_application",
-        0.90,
-    ),
-    (
-        re.compile(
-            # "mark <company> as interviewing|rejected|offer"
-            r"\bmark\s+(the\s+)?[\w-]+\s+as\s+(applied|interview|interviewing|outcome|offer|rejected|ghosted|submitted|accepted|closed)\b",
-            re.I,
-        ),
-        "move_application",
-        0.90,
-    ),
-    (
-        re.compile(r"\b(show|list)\s+(me\s+)?(my\s+)?(applications|pipeline|kanban)\b", re.I),
-        "list_applications",
-        0.92,
-    ),
-    (
-        re.compile(
-            # "record outcome: signed offer", "note outcome <company> ..."
-            r"\b(record|note|log|set)\s+(the\s+)?outcome\b",
-            re.I,
-        ),
-        "set_application_outcome",
-        0.85,
-    ),
 ]
 
 
 _COMPANY_HINT = re.compile(r"\bfor\s+([A-Z][a-zA-Z0-9&\-]+(?:\s+[A-Z][a-zA-Z0-9&\-]+){0,2})\b")
 _MODE_HINT = re.compile(r"\b(scene\s+recreation|pressure\s+drill|warm[\s-]?up|rapid\s+fire)\b", re.I)
-# Word after "to <X>" or "as <X>" in the move/mark intents — used to derive
-# the target status. We canonicalise interviewing → interview etc. before
-# dispatch so the tool gets one of the values _ALLOWED_STATUSES (see
-# tools/applications.py) accepts.
-_MOVE_TARGET = re.compile(
-    r"\b(?:to|as)\s+(applied|interview|interviewing|outcome|offer|rejected|ghosted|submitted|accepted|closed)\b",
-    re.I,
-)
-# Company hint specific to the move/mark intents. Matches the first capitalised
-# token or the slug after "move <X>". Conservative on purpose — when we can't
-# pull a name we fall through to the LLM layer for clarification.
-_MOVE_COMPANY = re.compile(
-    r"\b(?:move|drag|shift|push|bump|mark)\s+(?:the\s+)?([A-Za-z][\w-]{1,40})\b",
-    re.I,
-)
-
-# Canonical-status mapping for the kanban → status field. The drawer's
-# COLUMN_DEFAULT_STATUS in web/src/components/views/tracker-view.tsx is the
-# same mapping in reverse; keep them in sync.
-_TARGET_TO_STATUS = {
-    "applied": "submitted",
-    "interviewing": "interview",
-    "outcome": "rejected",
-}
 
 
 def cheap_intent_classifier(message: str) -> Intent | None:
@@ -149,12 +85,7 @@ def cheap_intent_classifier(message: str) -> Intent | None:
 
 
 def _extract_args(message: str) -> dict[str, Any]:
-    args: dict[str, Any] = {
-        "company": None,
-        "role": None,
-        "mode_slug": None,
-        "target_status": None,
-    }
+    args: dict[str, Any] = {"company": None, "role": None, "mode_slug": None}
     m = _COMPANY_HINT.search(message)
     if m:
         args["company"] = m.group(1)
@@ -164,17 +95,6 @@ def _extract_args(message: str) -> dict[str, Any]:
         slug = {"scene_recreation": "scene_recreation", "pressure_drill": "pressure_drill",
                 "warmup": "warm_up", "warm_up": "warm_up", "rapid_fire": "rapid_fire"}.get(slug, slug)
         args["mode_slug"] = slug
-    # Applications: pull the move target and any company hint. The company
-    # regex here is looser than _COMPANY_HINT (no leading "for") so we
-    # try it second and only use it when _COMPANY_HINT already missed.
-    m = _MOVE_TARGET.search(message)
-    if m:
-        raw = m.group(1).lower()
-        args["target_status"] = _TARGET_TO_STATUS.get(raw, raw)
-    if not args["company"]:
-        m = _MOVE_COMPANY.search(message)
-        if m:
-            args["company"] = m.group(1)
     return args
 
 
@@ -226,18 +146,12 @@ async def classify_intent(message: str) -> Intent:
 # ───────────────────────────────────────────────────────────────────────
 
 
-async def dispatch(
-    intent: Intent, user_id: UUID, message: str, thread_id: str | None = None
-) -> dict[str, Any]:
+async def dispatch(intent: Intent, user_id: UUID, message: str) -> dict[str, Any]:
     """Route to the relevant agent. Returns a result dict the API streams back.
 
     Each branch invokes the agent layer's high-level function. The actual
     LangGraph nodes / workflows are constructed lazily so this module doesn't
     pull every agent at import time.
-
-    ``thread_id`` is the lifetime ask_vantage thread for this user
-    (vantage-ui-mapping.md § 1.2). It is threaded into the small-talk reply so
-    the dock has multi-turn memory.
     """
     if intent.intent == "find_jobs":
         return {"agent": "jobmatch_agent", "action": "find_matches", "status": "not_implemented_yet"}
@@ -282,74 +196,11 @@ async def dispatch(
     if intent.intent == "review_application":
         return {"agent": "appprep_agent", "action": "review", "status": "not_implemented_yet"}
 
-    if intent.intent == "list_applications":
-        from agents.tools.applications import list_applications
-
-        rows = await list_applications(user_id=user_id)
-        return {
-            "agent": "applications",
-            "action": "list",
-            "count": len(rows),
-            # Trim to the fields the dock surface card uses so we don't blow
-            # past frame size on a 100-row pipeline. Full data is in PG; if
-            # the agent needs more it can ask for a specific row.
-            "items": [
-                {
-                    "id": r.get("id"),
-                    "company": r.get("company"),
-                    "role_title": r.get("role_title"),
-                    "status": r.get("status"),
-                }
-                for r in rows[:25]
-            ],
-        }
-
-    if intent.intent == "move_application":
-        # We don't resolve "Stripe" → an application_id from here — that
-        # requires a name match against application_drafts.company and
-        # potentially user disambiguation when the user has multiple Stripe
-        # applications. Return needs_clarification with what we extracted so
-        # the UI / next-turn prompt can ask the right question. Once the
-        # web side wires up "Vantage says: which Stripe row?" we'll add the
-        # lookup here. For now the agent surface is informational + the
-        # web drawer / drag-drop remains the live edit path.
-        return {
-            "agent": "applications",
-            "action": "move",
-            "status": "needs_clarification",
-            "needs": ["application_id"],
-            "company_hint": intent.args.get("company"),
-            "target_status": intent.args.get("target_status"),
-        }
-
-    if intent.intent == "set_application_outcome":
-        return {
-            "agent": "applications",
-            "action": "set_outcome",
-            "status": "needs_clarification",
-            "needs": ["application_id", "outcome"],
-            "company_hint": intent.args.get("company"),
-        }
-
     # 'other' → small-talk fallback (free, V4 Flash).
-    return await _smalltalk_reply(message, thread_id=thread_id)
+    return await _smalltalk_reply(message)
 
 
-async def _smalltalk_reply(message: str, thread_id: str | None = None) -> dict[str, Any]:
-    # Load the last few turns of this lifetime thread so the reply has memory
-    # (vantage-ui-mapping.md § 1.2). Best-effort: no history if PG is down.
-    history: list[BaseMessage] = []
-    if thread_id:
-        try:
-            history = await load_recent_turns(thread_id, limit=6)
-        except Exception as exc:  # noqa: BLE001 — boundary, never break the reply
-            # A transient DB problem (auth failure, query error) must degrade to a
-            # context-free reply, not replace the whole reply with an error frame.
-            log.error(
-                "router.load_recent_turns_failed", thread_id=thread_id, error=str(exc)
-            )
-            history = []
-
+async def _smalltalk_reply(message: str) -> dict[str, Any]:
     model = pick_model("fast", temperature=0.7, max_tokens=200)
     resp = await model.ainvoke(
         [
@@ -361,143 +212,10 @@ async def _smalltalk_reply(message: str, thread_id: str | None = None) -> dict[s
                     "or build a résumé from scratch."
                 )
             ),
-            *history,
             HumanMessage(content=message[:1000]),
         ]
     )
     return {"agent": "coordinator", "action": "reply", "text": str(resp.content)}
-
-
-# ───────────────────────────────────────────────────────────────────────
-# Thread persistence — ask_vantage lifetime conversation (PG 007 tables)
-# ───────────────────────────────────────────────────────────────────────
-#
-# The ask_vantage dock holds ONE lifetime conversation per user
-# (vantage-ui-mapping.md § 1.2). We mirror each turn into conversation_messages
-# keyed by a conversation_sessions row whose ``title`` is the thread_id. This is
-# the same pair of tables the TS /api/chat uses (infra/postgres/migrations/007),
-# so history is shared and durable. LangGraph's PostgresSaver still owns the
-# checkpoint state for in-flight workflows; this is the human-readable turn log
-# that powers context-aware small talk.
-
-
-# Env vars that may carry the PG DSN, in resolution order. The agents layer has
-# historically read ``RELAY_PG_DSN`` only, but the root .env ships ``DATABASE_URL``
-# (infra/CLAUDE.md, PG on 5433) — so a normal boot left both persist + history
-# load silently no-op'ing. Falling back across the names that actually exist keeps
-# the dock's multi-turn memory working without requiring an extra env var.
-_PG_DSN_ENV_VARS = ("RELAY_PG_DSN", "DATABASE_URL", "POSTGRES_URL")
-
-
-def _resolve_pg_dsn() -> str | None:
-    """Resolve the Postgres DSN from the first env var that is set.
-
-    Order: ``RELAY_PG_DSN`` → ``DATABASE_URL`` → ``POSTGRES_URL``. Returns None
-    (and logs a warning) when none are set so callers degrade gracefully instead
-    of failing silently. Shared by persist_turn + load_recent_turns so the read
-    and write paths can never drift onto different DSNs.
-    """
-    for name in _PG_DSN_ENV_VARS:
-        dsn = os.environ.get(name)
-        if dsn:
-            return dsn
-    log.warning(
-        "router.pg_dsn_unresolved",
-        tried=_PG_DSN_ENV_VARS,
-        detail="conversation persistence + history load disabled (no PG DSN env var set)",
-    )
-    return None
-
-
-async def load_recent_turns(thread_id: str, limit: int = 6) -> list[BaseMessage]:
-    """Load the last ``limit`` turns of this thread as LangChain messages.
-
-    Best-effort: returns [] if PG is unconfigured/unreachable (dev/tests).
-    """
-    dsn = _resolve_pg_dsn()
-    if not dsn:
-        return []
-
-    import psycopg
-    from psycopg.rows import dict_row
-
-    async with await psycopg.AsyncConnection.connect(dsn) as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                """
-                SELECT m.role, m.content
-                FROM conversation_messages m
-                JOIN conversation_sessions s ON s.id = m.session_id
-                WHERE s.title = %s
-                ORDER BY m.created_at DESC
-                LIMIT %s
-                """,
-                (thread_id, limit),
-            )
-            rows = await cur.fetchall()
-
-    msgs: list[BaseMessage] = []
-    for r in reversed(rows):  # chronological order for the model
-        content = str(r["content"])
-        if r["role"] == "user":
-            msgs.append(HumanMessage(content=content))
-        else:
-            msgs.append(AIMessage(content=content))
-    return msgs
-
-
-async def persist_turn(
-    thread_id: str, user_id: UUID, user_message: str, assistant_text: str
-) -> None:
-    """Append a (user, assistant) turn to the lifetime thread.
-
-    Upserts the conversation_sessions row (one per thread_id), then inserts both
-    messages. Best-effort: silently no-ops if PG is unconfigured (dev/tests) and
-    logs on real failures so a logging hiccup never breaks the dock response.
-    """
-
-    dsn = _resolve_pg_dsn()
-    if not dsn:
-        return
-    try:
-        import psycopg
-
-        async with await psycopg.AsyncConnection.connect(dsn) as conn:
-            async with conn.cursor() as cur:
-                # One session row per lifetime thread, identified by title.
-                await cur.execute(
-                    "SELECT id FROM conversation_sessions WHERE title = %s LIMIT 1",
-                    (thread_id,),
-                )
-                row = await cur.fetchone()
-                if row:
-                    session_id = row[0]
-                    await cur.execute(
-                        "UPDATE conversation_sessions "
-                        "SET last_active_at = now(), message_count = message_count + 2 "
-                        "WHERE id = %s",
-                        (session_id,),
-                    )
-                else:
-                    await cur.execute(
-                        """
-                        INSERT INTO conversation_sessions
-                            (user_id, session_type, agent_type, title, message_count)
-                        VALUES (%s, 'general', 'coordinator', %s, 2)
-                        RETURNING id
-                        """,
-                        (str(user_id), thread_id),
-                    )
-                    session_id = (await cur.fetchone())[0]  # type: ignore[index]
-
-                await cur.execute(
-                    "INSERT INTO conversation_messages (session_id, role, content) "
-                    "VALUES (%s, 'user', %s), (%s, 'assistant', %s)",
-                    (session_id, user_message[:8000], session_id, assistant_text[:8000]),
-                )
-            await conn.commit()
-    except Exception as exc:  # noqa: BLE001 — boundary, never break the reply
-        log.error("router.persist_turn_failed", thread_id=thread_id, error=str(exc))
 
 
 def _safe_json(content: Any) -> dict[str, Any]:

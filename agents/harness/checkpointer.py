@@ -55,13 +55,3 @@ def mock_thread_id(session_id: str) -> str:
 def build_resume_thread_id(user_id: str, session_id: str) -> str:
     """Per-session thread for build_from_scratch workflow."""
     return f"build_resume:{user_id}:{session_id}"
-
-
-def resume_studio_thread_id(user_id: str, resume_root_id: str) -> str:
-    """Per-résumé-branch thread for the Resume Studio vibe chat.
-
-    See vantage-ui-mapping.md §2.6. Each résumé root (the base version's id —
-    its variants share the same root) gets its own conversation so the chat
-    doesn't carry "which résumé are we talking about" as in-context state.
-    """
-    return f"resume_studio:{user_id}:{resume_root_id}"

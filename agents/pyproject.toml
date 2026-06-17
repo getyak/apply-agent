@@ -3,10 +3,6 @@
 # Caller: `uv sync` from this dir; CI ci.yml's `agents` job uses uv to install
 # + ruff/mypy/pytest. No data file IO.
 
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "relay-agents"
 version = "0.1.0"
@@ -35,22 +31,6 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "deepeval>=1.5.0",
-]
-
-[tool.setuptools]
-# The directory holding this pyproject IS the `agents` package (has __init__.py),
-# and imports are namespaced `agents.api`, `agents.nodes`, etc. Map the `agents`
-# package to this dir so flat-layout subdirs install as a single coherent package
-# without touching any `from agents.*` import in the source.
-package-dir = { "agents" = "." }
-packages = [
-    "agents",
-    "agents.api",
-    "agents.coordinator",
-    "agents.events",
-    "agents.harness",
-    "agents.nodes",
-    "agents.tools",
 ]
 
 [tool.ruff]
