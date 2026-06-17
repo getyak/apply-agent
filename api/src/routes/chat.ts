@@ -46,20 +46,14 @@ interface CoordinatorOutput {
 async function coordinate(
   history: ChatMessage[],
   message: string,
-): Promise<{
-  content: string;
-  agent: AgentName;
-  degraded: boolean;
-  tokens: number;
-  costCents: number;
-}> {
+): Promise<{ content: string; agent: AgentName; degraded: boolean }> {
   if (!llm.available) {
     const fb = fallbackReply(message);
-    return { content: fb.content, agent: fb.agent, degraded: true, tokens: 0, costCents: 0 };
+    return { content: fb.content, agent: fb.agent, degraded: true };
   }
 
   try {
-    const { data, meta } = await llm.chatJSON<CoordinatorOutput>(
+    const { data } = await llm.chatJSON<CoordinatorOutput>(
       [
         { role: "system", content: SYSTEM_PROMPT },
         ...history,
@@ -69,18 +63,15 @@ async function coordinate(
     );
 
     const agent: AgentName = AGENTS.includes(data.agent) ? data.agent : "coordinator";
-    const replyOk = typeof data.reply === "string" && data.reply.trim().length > 0;
-    if (!replyOk) {
-      console.warn("[chat] LLM returned empty reply; data=", JSON.stringify(data).slice(0, 200));
-    }
-    const content = replyOk ? data.reply.trim() : fallbackReply(message).content;
-    const tokens = meta.usage.promptTokens + meta.usage.completionTokens;
-    return { content, agent, degraded: false, tokens, costCents: meta.costCents };
+    const content =
+      typeof data.reply === "string" && data.reply.trim().length > 0
+        ? data.reply.trim()
+        : fallbackReply(message).content;
+    return { content, agent, degraded: false };
   } catch (err) {
     if (err instanceof LLMUnavailableError) {
-      console.warn("[chat] LLMUnavailableError:", (err as Error).message);
       const fb = fallbackReply(message);
-      return { content: fb.content, agent: fb.agent, degraded: true, tokens: 0, costCents: 0 };
+      return { content: fb.content, agent: fb.agent, degraded: true };
     }
     throw err;
   }
@@ -186,25 +177,12 @@ app.post("/send", async (c) => {
     [sid, message],
   );
 
-  const { content, agent, degraded, tokens, costCents } = await coordinate(history, message);
+  const { content, agent, degraded } = await coordinate(history, message);
 
   await query(
     `INSERT INTO conversation_messages (session_id, role, content, metadata, created_at)
      VALUES ($1, 'assistant', $2, $3, NOW())`,
     [sid, content, JSON.stringify({ agent, aiGenerated: !degraded })],
-  );
-
-  // Keep the session's rollup counters current — message_count grows by 2
-  // (user + assistant), and token/cost accumulate from the LLM usage meta.
-  // Migration 007 defines these columns; without this they'd stay at 0.
-  await query(
-    `UPDATE conversation_sessions
-        SET last_active_at = NOW(),
-            message_count = message_count + 2,
-            total_tokens = total_tokens + $2,
-            total_cost_cents = total_cost_cents + $3
-      WHERE id = $1`,
-    [sid, tokens, costCents],
   );
 
   return c.json({

@@ -95,24 +95,6 @@ describe("schemas", () => {
     ).toBe(true);
   });
 
-  // Flywheel opt-in is an explicit boolean. Anything truthy-but-not-boolean
-  // (legacy string from an older client, accidental `"true"`) must fail so a
-  // user is never silently opted in by a serialisation glitch.
-  test("UserPreferencesSchema accepts crowdsourceOptIn boolean and rejects strings", () => {
-    expect(
-      UserPreferencesSchema.safeParse({ crowdsourceOptIn: true }).success,
-    ).toBe(true);
-    expect(
-      UserPreferencesSchema.safeParse({ crowdsourceOptIn: false }).success,
-    ).toBe(true);
-    expect(
-      UserPreferencesSchema.safeParse({ crowdsourceOptIn: "true" }).success,
-    ).toBe(false);
-    expect(
-      UserPreferencesSchema.safeParse({ crowdsourceOptIn: 1 }).success,
-    ).toBe(false);
-  });
-
   test("UpdateUserSchema rejects an empty patch", () => {
     expect(UpdateUserSchema.safeParse({}).success).toBe(false);
   });

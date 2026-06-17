@@ -11,7 +11,6 @@ describe("buildReadinessReport", () => {
         pgPing: okPing,
         redisPing: okPing,
         storageAvailable: () => true,
-        agentPing: okPing,
       },
       (() => {
         let t = 1000;
@@ -31,7 +30,6 @@ describe("buildReadinessReport", () => {
       pgPing: okPing,
       redisPing: okPing,
       storageAvailable: () => false,
-      agentPing: okPing,
     });
     expect(report.status).toBe("ok");
     expect(report.checks.storage.status).toBe("unconfigured");
@@ -42,7 +40,6 @@ describe("buildReadinessReport", () => {
       pgPing: failPing("ECONNREFUSED"),
       redisPing: okPing,
       storageAvailable: () => true,
-      agentPing: okPing,
     });
     expect(report.status).toBe("degraded");
     expect(report.checks.postgres.status).toBe("down");
@@ -55,37 +52,9 @@ describe("buildReadinessReport", () => {
       pgPing: okPing,
       redisPing: failPing("redis: connection lost"),
       storageAvailable: () => true,
-      agentPing: okPing,
     });
     expect(report.status).toBe("degraded");
     expect(report.checks.redis.status).toBe("down");
-  });
-
-  // agents host (Python LangGraph) is optional — its `down` status is
-  // surfaced in the report for ops dashboards but does NOT flip readiness.
-  // Routes that don't touch the LLM keep working, and ask.ts returns a
-  // 503 with a hint for routes that do.
-  it("reports agents down without flipping readiness to degraded", async () => {
-    const report = await buildReadinessReport({
-      pgPing: okPing,
-      redisPing: okPing,
-      storageAvailable: () => true,
-      agentPing: failPing("fetch failed"),
-    });
-    expect(report.status).toBe("ok");
-    expect(report.checks.agents.status).toBe("down");
-    expect(report.checks.agents.reason).toContain("fetch failed");
-  });
-
-  it("reports agents up alongside other checks", async () => {
-    const report = await buildReadinessReport({
-      pgPing: okPing,
-      redisPing: okPing,
-      storageAvailable: () => true,
-      agentPing: okPing,
-    });
-    expect(report.status).toBe("ok");
-    expect(report.checks.agents.status).toBe("up");
   });
 });
 
@@ -95,7 +64,6 @@ describe("createHealthRoutes", () => {
       pgPing: failPing("down"),
       redisPing: failPing("down"),
       storageAvailable: () => false,
-      agentPing: okPing,
     });
     const res = await app.request("/health");
     expect(res.status).toBe(200);
@@ -108,7 +76,6 @@ describe("createHealthRoutes", () => {
       pgPing: okPing,
       redisPing: okPing,
       storageAvailable: () => true,
-      agentPing: okPing,
     });
     const res = await app.request("/ready");
     expect(res.status).toBe(200);
@@ -121,7 +88,6 @@ describe("createHealthRoutes", () => {
       pgPing: failPing("pg down"),
       redisPing: okPing,
       storageAvailable: () => true,
-      agentPing: okPing,
     });
     const res = await app.request("/ready");
     expect(res.status).toBe(503);

@@ -184,18 +184,12 @@ export class LLMClient {
     }
 
     const data = (await res.json()) as {
-      choices?: { message?: { content?: string; reasoning?: string } }[];
+      choices?: { message?: { content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
       model?: string;
     };
 
-    // GLM-4.7 (and some other reasoning models) on certain OpenRouter providers
-    // place the JSON-mode response inside `reasoning` while leaving `content`
-    // empty. Fall back to `reasoning` when `content` is blank so JSON-mode
-    // callers (chatJSON) don't spuriously fail.
-    const choice = data.choices?.[0]?.message;
-    const rawContent = (choice?.content ?? "").trim();
-    const text = rawContent.length > 0 ? (choice!.content as string) : (choice?.reasoning ?? "");
+    const text = data.choices?.[0]?.message?.content ?? "";
     const promptTokens = data.usage?.prompt_tokens ?? 0;
     const completionTokens = data.usage?.completion_tokens ?? 0;
     const usedModel = data.model ?? model;

@@ -41,32 +41,16 @@ export const bodySizeLimit = bodyLimit({
     ),
 });
 
-// Loopback host literals we admit in development — covers IPv4, the
-// `localhost` alias, and IPv6. Port is free-form so a `prod build` running
-// on 3010 or a Playwright smoke binding 3030 just works without touching
-// CORS_ORIGINS. Production is unaffected.
-const LOOPBACK_HOST_RE =
-  /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
-
 /**
  * CORS origin resolver. Returns the origin to echo back (enabling credentials)
- * or null to deny. Allows:
- *   - the configured web origins from CORS_ORIGINS,
- *   - any `chrome-extension://` origin (the client-side delivery extension
- *     calls the API from its own origin and must be permitted, but only the
- *     extension scheme — not arbitrary cross-site pages),
- *   - in non-production runs only, any loopback host (127.0.0.1 / localhost
- *     / [::1]) on any port. test-run-2026-06-18 § 5 hit this: a prod build
- *     run on 127.0.0.1:3010 was blocked by a default allowlist of
- *     localhost:3000, and the fix would otherwise need each dev to remember
- *     to bump CORS_ORIGINS by hand.
+ * or null to deny. Allows the configured web origins plus any
+ * `chrome-extension://` origin — the client-side delivery extension calls the
+ * API from its own origin and must be permitted, but only the extension scheme,
+ * not arbitrary cross-site pages.
  */
 export function resolveCorsOrigin(origin: string): string | null {
   if (!origin) return null;
   if (config.corsOrigins.includes(origin)) return origin;
   if (origin.startsWith("chrome-extension://")) return origin;
-  if (config.NODE_ENV !== "production" && LOOPBACK_HOST_RE.test(origin)) {
-    return origin;
-  }
   return null;
 }

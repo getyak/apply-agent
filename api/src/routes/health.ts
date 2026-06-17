@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { config } from "../config";
 import { query } from "../db";
 import redis from "../redis";
 import { storage } from "../storage";
@@ -30,10 +29,6 @@ export interface ReadinessReport {
     postgres: DependencyCheck;
     redis: DependencyCheck;
     storage: DependencyCheck;
-    /** Python LangGraph host. Optional dep — `down` doesn't flip readiness
-     *  to degraded by itself, because /api/ask gracefully 503s with a
-     *  user-facing hint and every non-LLM route keeps working. */
-    agents: DependencyCheck;
   };
 }
 
@@ -41,10 +36,6 @@ interface Deps {
   pgPing: () => Promise<void>;
   redisPing: () => Promise<void>;
   storageAvailable: () => boolean;
-  /** Probes the Python LangGraph host. Returns void on success; throws on
-   *  unreachable/timeout/non-2xx. Test seam — production wiring lives in
-   *  defaultDeps. */
-  agentPing: () => Promise<void>;
 }
 
 async function timed(
@@ -67,10 +58,9 @@ export async function buildReadinessReport(
   now: () => number = Date.now,
   nowIso: () => string = () => new Date().toISOString(),
 ): Promise<ReadinessReport> {
-  const [postgres, redisCheck, agentsCheck] = await Promise.all([
+  const [postgres, redisCheck] = await Promise.all([
     timed(deps.pgPing, now),
     timed(deps.redisPing, now),
-    timed(deps.agentPing, now),
   ]);
 
   // Object storage is optional in dev/CI (no S3 creds). "unconfigured" is not
@@ -80,10 +70,6 @@ export async function buildReadinessReport(
     ? { status: "up" }
     : { status: "unconfigured" };
 
-  // Postgres + Redis are required; storage and agents are optional. The
-  // agents host can be missing in dev (no Python process running) — ask.ts
-  // returns a 503 with a human-readable code in that case, but routes that
-  // don't touch the LLM keep serving, so we don't let it flip readiness.
   const status: ReadinessReport["status"] =
     postgres.status === "down" || redisCheck.status === "down"
       ? "degraded"
@@ -92,34 +78,8 @@ export async function buildReadinessReport(
   return {
     status,
     timestamp: nowIso(),
-    checks: {
-      postgres,
-      redis: redisCheck,
-      storage: storageCheck,
-      agents: agentsCheck,
-    },
+    checks: { postgres, redis: redisCheck, storage: storageCheck },
   };
-}
-
-/** 1.5 s — well under the LB readiness probe interval. Slow agent host
- *  shouldn't make the API look down by tying up the probe. */
-const AGENT_PING_TIMEOUT_MS = 1500;
-
-async function pingAgentHost(): Promise<void> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AGENT_PING_TIMEOUT_MS);
-  try {
-    const base = config.AGENT_BASE_URL.replace(/\/$/, "");
-    const res = await fetch(`${base}/health`, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      throw new Error(`agent host returned ${res.status}`);
-    }
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 const defaultDeps: Deps = {
@@ -130,7 +90,6 @@ const defaultDeps: Deps = {
     await redis.ping();
   },
   storageAvailable: () => storage.available,
-  agentPing: pingAgentHost,
 };
 
 /**
