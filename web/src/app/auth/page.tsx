@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth as authApi, setToken } from "@/lib/api";
 
@@ -114,7 +115,7 @@ export default function AuthPage() {
         </p>
 
         <p className="text-center mt-4 text-xs text-[var(--ink)]/30">
-          <a href="/" className="hover:underline">← Back to home</a>
+          <Link href="/" className="hover:underline">← Back to home</Link>
         </p>
       </div>
     </div>
