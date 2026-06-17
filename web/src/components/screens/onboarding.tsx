@@ -110,7 +110,7 @@ function IdleState() {
               </div>
               <p className="font-display text-[17px] font-medium text-ink">No résumé? Build one by talking.</p>
               <p className="max-w-[360px] font-body text-[13px] text-ink-light">
-                Answer a few questions and we'll draft a strong résumé from scratch.
+                Answer a few questions and we&apos;ll draft a strong résumé from scratch.
               </p>
               <button
                 type="button"
@@ -232,7 +232,7 @@ function DoneState() {
           </div>
           <p className="font-body text-[14px] leading-relaxed text-ink">
             <span className="font-semibold text-green">38 matching roles found</span> — 6 are a strong
-            fit, and we've started tailoring your applications.
+            fit, and we&apos;ve started tailoring your applications.
           </p>
         </div>
 
