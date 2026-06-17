@@ -44,8 +44,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 20 }
       - run: npm install -g promptfoo@latest
       - name: Run 20 golden inputs × 5 agents
@@ -57,7 +57,7 @@ jobs:
           PASS_RATE=$(jq '[.results.results[].success] | (map(select(.)) | length) / length' /tmp/canary.json)
           echo "pass_rate=$PASS_RATE" >> $GITHUB_OUTPUT
           awk -v r="$PASS_RATE" 'BEGIN { exit !(r >= 0.85) }'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: canary-${{ github.run_id }}
@@ -74,14 +74,14 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 20 }
       - run: npm install -g promptfoo@latest
       - name: Strict red-team
         working-directory: eval
         run: promptfoo redteam run --strict --output /tmp/redteam-full.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: redteam-full-${{ github.run_id }}
@@ -109,7 +109,7 @@ jobs:
       PGPASSWORD: relay
       PGDATABASE: relay_staging
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Forward all
         run: |
           for f in infra/postgres/migrations/*.sql; do
@@ -146,7 +146,7 @@ jobs:
               "content":{"text":"🚨 Relay nightly failed · run ${{ github.run_id }}\nhttps://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
             }'
       - name: Open tracking issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.create({
