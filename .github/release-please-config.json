@@ -14,25 +14,15 @@
     { "type": "ci", "section": "CI", "hidden": true }
   ],
   "packages": {
-    "apps/web": {
+    "web": {
       "release-type": "node",
       "package-name": "@relay/web",
       "component": "web"
-    },
-    "apps/extension": {
-      "release-type": "node",
-      "package-name": "@relay/extension",
-      "component": "extension"
     },
     "api": {
       "release-type": "node",
       "package-name": "@relay/api",
       "component": "api"
-    },
-    "agents": {
-      "release-type": "python",
-      "package-name": "relay-agents",
-      "component": "agents"
     },
     "infra": {
       "release-type": "simple",

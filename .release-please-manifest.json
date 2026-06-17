@@ -1,7 +1,5 @@
 {
-  "apps/web": "0.0.0",
-  "apps/extension": "0.0.0",
+  "web": "0.0.0",
   "api": "0.0.0",
-  "agents": "0.0.0",
   "infra": "0.0.0"
 }
