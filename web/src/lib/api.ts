@@ -35,10 +35,28 @@ export async function api<T = unknown>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, body.error || "Request failed");
+    throw new ApiError(res.status, extractErrorMessage(body));
   }
 
   return res.json();
+}
+
+/**
+ * Pull a human-readable message out of an error body. The API uses two shapes:
+ * the typed envelope `{ error: { code, message } }` (newer routes) and a plain
+ * `{ error: "..." }` (auth/older routes). Handle both so we never surface
+ * "[object Object]" to the user.
+ */
+function extractErrorMessage(body: unknown): string {
+  if (body && typeof body === "object" && "error" in body) {
+    const e = (body as { error: unknown }).error;
+    if (typeof e === "string") return e;
+    if (e && typeof e === "object" && "message" in e) {
+      const m = (e as { message: unknown }).message;
+      if (typeof m === "string") return m;
+    }
+  }
+  return "Request failed";
 }
 
 export class ApiError extends Error {
@@ -50,6 +68,66 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
+
+// Offset-paginated list envelope returned by API routes that opt into
+// `paginated(...)` on the server (see api/src/pagination.ts). Kept in sync
+// with PaginatedEnvelope<T> so the client deserializes the same shape.
+export interface PaginatedEnvelope<T> {
+  data: T[];
+  page: {
+    total: number;
+    limit: number;
+    offset: number;
+    nextOffset: number | null;
+  };
+}
+
+// Profile preferences mirror api/src/schemas.ts UserPreferencesSchema. NB the
+// API is camelCase + strict — unknown keys are rejected, so do NOT send
+// snake_case (target_roles etc.). All fields optional on the wire.
+export interface UserPreferences {
+  targetRoles?: string[];
+  skills?: string[];
+  minSalary?: number;
+  locations?: string[];
+  remote?: boolean;
+}
+
+export interface UserRecord {
+  id: string;
+  email: string;
+  display_name: string;
+  preferences: UserPreferences | null;
+  created_at: string;
+}
+
+export const users = {
+  // GET /api/auth/me — the canonical "who am I" read (there is no /api/users/me
+  // GET; the users route only exposes PATCH + DELETE).
+  getMe: () => api<{ user: UserRecord }>("/api/auth/me"),
+
+  // PATCH /api/users/me — partial profile update. We only send `preferences`
+  // here; the settings form has no display-name field yet.
+  updateMe: (preferences: UserPreferences) =>
+    api<{ user: UserRecord }>("/api/users/me", {
+      method: "PATCH",
+      body: JSON.stringify({ preferences }),
+    }),
+
+  // DELETE /api/users/me — GDPR erasure. Returns 204 (no JSON body), so don't
+  // parse a response — the api() helper would choke on an empty body.
+  deleteMe: async (): Promise<void> => {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/api/users/me`, {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, extractErrorMessage(body));
+    }
+  },
+};
 
 export const auth = {
   register: (email: string, password: string, displayName?: string) =>
@@ -70,6 +148,23 @@ export const auth = {
     ),
 };
 
+/** Async parse job mirrored from the API's AsyncJob record. */
+export interface ParseJob {
+  id: string;
+  type: string;
+  status: "pending" | "extracting" | "markdown" | "parsing" | "done" | "failed";
+  progress: number;
+  result?: {
+    resume: object;
+    saved: boolean;
+    resumeId?: string;
+    meta: { model: string; costCents: number };
+  };
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const resumes = {
   create: (content: object, isBase = true) =>
     api<{ resume: { id: string; version: number; content: object } }>(
@@ -77,8 +172,35 @@ export const resumes = {
       { method: "POST", body: JSON.stringify({ content, isBase }) },
     ),
 
+  // Parse raw resume text → structured JSON Resume via the LLM. `save:true`
+  // persists it as the base resume in one call. This is the real onboarding
+  // path — no hardcoded resume.
+  parse: (text: string, save = false) =>
+    api<{
+      resume: object;
+      saved: boolean;
+      meta?: { model: string; costCents: number };
+    }>("/api/resumes/parse", {
+      method: "POST",
+      body: JSON.stringify({ text, save }),
+    }),
+
+  // Start an ASYNCHRONOUS parse: returns a job id immediately so the UI can
+  // enter the workspace and poll, instead of blocking on the LLM. Prefer the
+  // Markdown middle state (richer structure) when the upload produced it.
+  parseAsync: (input: { text?: string; markdown?: string; save?: boolean }) =>
+    api<{ job: ParseJob }>("/api/resumes/parse-async", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  // Poll an async parse job until status is "done" (result present) or
+  // "failed" (error present).
+  parseStatus: (jobId: string) =>
+    api<{ job: ParseJob }>(`/api/resumes/parse/${jobId}`),
+
   list: () =>
-    api<{ resumes: Array<{ id: string; version: number; is_base: boolean; created_at: string }> }>(
+    api<PaginatedEnvelope<{ id: string; version: number; is_base: boolean; created_at: string }>>(
       "/api/resumes",
     ),
 
@@ -86,6 +208,37 @@ export const resumes = {
     api<{ resume: { id: string; content: object; version: number } }>(
       `/api/resumes/${id}`,
     ),
+};
+
+export interface UploadResult {
+  file: { id: string; filename: string; sizeBytes: number; kind: string } | null;
+  stored: boolean;
+  /** Structured Markdown — the canonical middle state for async parse. */
+  markdown: string;
+  /** Extracted plain text, ready to hand to resumes.parse() (mirrors markdown). */
+  text: string;
+  kind: "pdf" | "docx" | "text";
+}
+
+export const files = {
+  // Multipart upload of a resume file. Bypasses the JSON api() helper because
+  // the body is FormData (the browser sets the multipart boundary itself — we
+  // must NOT set Content-Type manually).
+  upload: async (file: File): Promise<UploadResult> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/files`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, body.error?.message || body.error || "Upload failed");
+    }
+    return res.json();
+  },
 };
 
 export const jobs = {
@@ -121,9 +274,17 @@ export const applications = {
 
   list: (status?: string) => {
     const qs = status ? `?status=${status}` : "";
-    return api<{ applications: Array<{ id: string; status: string; company: string; role_title: string }> }>(
-      `/api/applications${qs}`,
-    );
+    return api<
+      PaginatedEnvelope<{
+        id: string;
+        status: string;
+        company: string;
+        role_title: string;
+        cover_letter?: string;
+        submitted_at?: string;
+        created_at: string;
+      }>
+    >(`/api/applications${qs}`);
   },
 
   update: (id: string, data: { status?: string; outcome?: string; coverLetter?: string }) =>

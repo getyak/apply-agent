@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { auth as authApi, setToken } from "@/lib/api";
+import Link from "next/link";
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import { auth as authApi, setToken, getToken } from "@/lib/api";
+import { Button, Field, Input } from "@/components/ui";
 
 export default function AuthPage() {
   const router = useRouter();
@@ -13,6 +15,20 @@ export default function AuthPage() {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Forward guard: if already signed in, skip the form and go straight to the app.
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      queueMicrotask(() => setChecking(false));
+      return;
+    }
+    authApi
+      .me()
+      .then(() => router.replace("/app"))
+      .catch(() => queueMicrotask(() => setChecking(false)));
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,88 +50,113 @@ export default function AuthPage() {
     }
   };
 
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-paper flex items-center justify-center">
+        <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
+          Loading…
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[var(--paper)] flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{
+        background:
+          "radial-gradient(120% 120% at 50% 0%, #FFFFFF 0%, var(--color-paper) 55%, var(--color-cream) 100%)",
+      }}
+    >
+      <div className="w-full max-w-md animate-fade-up">
         <div className="text-center mb-8">
-          <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold text-[var(--ink)]">
+          <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
             VANTAGE
+          </div>
+          <h1 className="mt-4 font-display text-[32px] font-bold -tracking-[0.3px] text-ink leading-tight">
+            {isLogin ? "Welcome back." : "Start your hunt."}
           </h1>
-          <p className="text-[var(--ink)]/50 mt-2">
-            {isLogin ? "Sign in to your account" : "Create your account"}
+          <p className="mt-2 font-body text-[14px] text-ink-light">
+            {isLogin ? "Sign in to your workspace." : "It takes under a minute."}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-4 bg-white border border-border rounded-[14px] p-6 shadow-sm"
+        >
           {!isLogin && (
-            <div>
-              <label className="block text-sm font-medium text-[var(--ink)]/70 mb-1">
-                Display name
-              </label>
-              <input
-                type="text"
+            <Field label="Display name">
+              <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-[var(--ink)]/10 bg-white text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--brown)]/30"
-                placeholder="Jordan Avery"
+                placeholder="What we should call you"
+                autoComplete="name"
               />
-            </div>
+            </Field>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-[var(--ink)]/70 mb-1">
-              Email
-            </label>
-            <input
+          <Field label="Email">
+            <Input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-4 py-3 rounded-xl border border-[var(--ink)]/10 bg-white text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--brown)]/30"
               placeholder="you@example.com"
+              autoComplete="email"
             />
-          </div>
+          </Field>
 
-          <div>
-            <label className="block text-sm font-medium text-[var(--ink)]/70 mb-1">
-              Password
-            </label>
-            <input
+          <Field label="Password" hint={isLogin ? undefined : "6+ characters."}>
+            <Input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="w-full px-4 py-3 rounded-xl border border-[var(--ink)]/10 bg-white text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--brown)]/30"
               placeholder="••••••"
+              autoComplete={isLogin ? "current-password" : "new-password"}
             />
-          </div>
+          </Field>
 
           {error && (
-            <p className="text-red-500 text-sm">{error}</p>
+            <p
+              role="alert"
+              className="font-body text-[13px] text-amber bg-gold-bg border border-cream-border rounded-[10px] px-3 py-2"
+            >
+              {error}
+            </p>
           )}
 
-          <button
+          <Button
             type="submit"
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-[var(--ink)] text-[var(--paper)] font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+            fullWidth
+            size="lg"
+            trailingIcon={!loading ? <ArrowRight size={16} strokeWidth={2} /> : null}
           >
-            {loading ? "..." : isLogin ? "Sign in" : "Create account"}
-          </button>
+            {loading ? "…" : isLogin ? "Sign in" : "Create account"}
+          </Button>
         </form>
 
-        <p className="text-center mt-6 text-sm text-[var(--ink)]/50">
+        <p className="text-center mt-6 font-body text-[14px] text-ink-light">
           {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
           <button
-            onClick={() => { setIsLogin(!isLogin); setError(""); }}
-            className="text-[var(--brown)] hover:underline font-medium"
+            type="button"
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError("");
+            }}
+            className="text-brown font-semibold hover:underline outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
           >
             {isLogin ? "Sign up" : "Sign in"}
           </button>
         </p>
 
-        <p className="text-center mt-4 text-xs text-[var(--ink)]/30">
-          <Link href="/" className="hover:underline">← Back to home</Link>
+        <p className="text-center mt-4 font-mono text-[11px] tracking-[0.4px] uppercase text-ink-muted">
+          <Link href="/" className="inline-flex items-center gap-1 hover:text-ink transition-colors">
+            <ArrowLeft size={11} /> Back to home
+          </Link>
         </p>
       </div>
     </div>

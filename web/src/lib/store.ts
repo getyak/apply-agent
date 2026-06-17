@@ -5,10 +5,14 @@ import {
   jobs as jobsApi,
   applications as applicationsApi,
   trends as trendsApi,
+  files as filesApi,
+  auth as authApi,
+  ApiError,
+  clearToken,
 } from "./api";
 
 export type Screen = "onboarding" | "app" | "review" | "extension" | "builder" | "mock";
-export type Nav = "chat" | "today" | "apps";
+export type Nav = "chat" | "today" | "apps" | "settings";
 export type ParseStage = "idle" | "parsing" | "done";
 export type OnboardMethod = "upload" | "chat" | "paste" | "link";
 export type MockState = "setup" | "live";
@@ -239,6 +243,21 @@ export interface ChatMessage {
   agent?: string;
 }
 
+// Structured resume as returned by the LLM parser (JSON Resume subset). Only
+// the fields the onboarding "résumé understood" card reads are typed; the rest
+// passes through.
+export interface ParsedResume {
+  basics?: {
+    name?: string;
+    label?: string;
+    summary?: string;
+    location?: { city?: string; region?: string };
+  };
+  skills?: { name?: string; level?: string }[];
+  work?: { name?: string; position?: string }[];
+  [key: string]: unknown;
+}
+
 export interface ApiJob {
   id: string;
   company: string;
@@ -266,6 +285,14 @@ export interface TrendSnapshot {
   newJobsThisWeek: number;
   topSkills: { skill: string; count: number }[];
   topRoles: { role_title: string; count: number }[];
+}
+
+/** Authenticated user as returned by /api/auth/me. Display name is what we
+ *  greet by; preferences power future personalisation. */
+export interface CurrentUser {
+  id: string;
+  email: string;
+  displayName: string;
 }
 
 interface VantageState {
@@ -298,17 +325,46 @@ interface VantageState {
   apiAppsLoading: boolean;
   trendSnapshot: TrendSnapshot | null;
   currentResumeId: string | null;
+  currentUser: CurrentUser | null;
+
+  // Onboarding parse state — driven by real upload/parse, no hardcoded resume.
+  parsedResume: ParsedResume | null;
+  parseError: string | null;
+  parseFileName: string;
+  uploadText: string;
+
+  // Async parse: the user enters the workspace immediately and the résumé is
+  // parsed in the background. The workspace shows a non-blocking progress
+  // banner driven by these fields; parsedResume is filled in when it finishes.
+  parseJobId: string | null;
+  parseJobStatus: "idle" | "running" | "done" | "failed";
+  parseJobProgress: number; // 0–100
+  parseJobError: string | null;
+
+  // First-run onboarding tour: a lightweight spotlight sequence over the three
+  // workspace tabs. tourStep -1 means inactive.
+  tourStep: number;
 
   setScreen: (s: Screen) => void;
   setParseStage: (s: ParseStage) => void;
   setOnboardMethod: (m: OnboardMethod) => void;
   setNav: (n: Nav) => void;
-  startParse: () => void;
+  setUploadText: (v: string) => void;
+  parseFile: (file: File) => Promise<void>;
+  parsePastedText: (text: string) => Promise<void>;
+  _startAsyncParse: (source: string) => Promise<void>;
+  pollParseJob: (jobId: string) => void;
+  dismissParseBanner: () => void;
+  startTour: () => void;
+  nextTourStep: () => void;
+  endTour: () => void;
   enterApp: () => void;
+  resumeWorkspace: (resumeId: string) => void;
   goChat: () => void;
   goToday: () => void;
   goTracker: () => void;
   goInterviews: () => void;
+  goSettings: () => void;
   openReview: (id: string) => void;
   backHome: () => void;
   submitReview: () => void;
@@ -336,6 +392,8 @@ interface VantageState {
   loadJobs: () => Promise<void>;
   loadApplications: () => Promise<void>;
   loadTrends: () => Promise<void>;
+  loadCurrentUser: () => Promise<void>;
+  signOut: () => void;
   submitApplication: (jobId: string) => Promise<void>;
 }
 
@@ -372,48 +430,164 @@ export const useVantage = create<VantageState>((set, get) => ({
   apiAppsLoading: false,
   trendSnapshot: null,
   currentResumeId: null,
+  currentUser: null,
+
+  parsedResume: null,
+  parseError: null,
+  parseFileName: "",
+  uploadText: "",
+
+  parseJobId: null,
+  parseJobStatus: "idle",
+  parseJobProgress: 0,
+  parseJobError: null,
+
+  tourStep: -1,
 
   setScreen: (s) => set({ screen: s }),
   setParseStage: (s) => set({ parseStage: s }),
   setOnboardMethod: (m) => set({ onboardMethod: m }),
   setNav: (n) => set({ nav: n }),
+  setUploadText: (v) => set({ uploadText: v }),
 
-  startParse: () => {
-    set({ parseStage: "parsing" });
-    setTimeout(() => set({ parseStage: "done" }), 2100);
+  // Upload → enter the workspace IMMEDIATELY, parse in the background. The old
+  // flow blocked the user on a spinner until the LLM finished; now the upload
+  // (extract → Markdown middle state) is the only synchronous step, and parsing
+  // runs as an async job the workspace polls. The user never waits at the door.
+  parseFile: async (file) => {
+    set({
+      parseError: null,
+      parseFileName: file.name,
+      parsedResume: null,
+      parseJobError: null,
+    });
+    let up;
+    try {
+      up = await filesApi.upload(file);
+    } catch (err) {
+      // Upload/extract failures (corrupt/scanned file) are the one thing we
+      // surface BEFORE entering the workspace — the user must pick another file.
+      const msg = err instanceof ApiError ? err.message : "Could not read that file.";
+      set({ parseStage: "idle", parseError: msg });
+      return;
+    }
+    // Prefer the Markdown middle state for a richer parse; fall back to text.
+    await get()._startAsyncParse(up.markdown || up.text);
+  },
+
+  // Paste/Link path: text is already in hand. Same optimistic flow — start the
+  // async parse and enter the workspace; no blocking.
+  parsePastedText: async (text) => {
+    const trimmed = text.trim();
+    if (trimmed.length < 20) {
+      set({ parseError: "Please paste a bit more of your résumé." });
+      return;
+    }
+    set({ parseError: null, parseFileName: "Pasted résumé", parsedResume: null, parseJobError: null });
+    await get()._startAsyncParse(trimmed);
+  },
+
+  // Shared: kick off the async parse job, enter the workspace, begin polling.
+  // Internal helper (not in the public interface) used by both upload paths.
+  _startAsyncParse: async (source: string) => {
+    try {
+      const { job } = await resumesApi.parseAsync({ markdown: source, save: false });
+      set({
+        parseJobId: job.id,
+        parseJobStatus: "running",
+        parseJobProgress: job.progress,
+      });
+      // Enter the workspace now — the banner + tour take over from here.
+      get().enterApp();
+      get().pollParseJob(job.id);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "Could not start parsing.";
+      set({ parseStage: "idle", parseError: msg });
+    }
+  },
+
+  // Poll the async parse job until it finishes. On success the REAL parsed
+  // résumé is filled into parsedResume (no fabrication) and persisted as the
+  // base; on failure the banner shows an honest retry message. Capped so a
+  // hung job can't poll forever.
+  pollParseJob: (jobId) => {
+    let elapsed = 0;
+    const intervalMs = 1500;
+    const timeoutMs = 90_000;
+    const tick = async () => {
+      elapsed += intervalMs;
+      try {
+        const { job } = await resumesApi.parseStatus(jobId);
+        // A newer job may have superseded this one (user re-uploaded).
+        if (get().parseJobId !== jobId) return;
+        set({ parseJobProgress: job.progress });
+        if (job.status === "done" && job.result) {
+          const resume = job.result.resume as ParsedResume;
+          set({ parseJobStatus: "done", parseJobProgress: 100, parsedResume: resume });
+          get().createResume(resume);
+          return;
+        }
+        if (job.status === "failed") {
+          set({ parseJobStatus: "failed", parseJobError: job.error || "Parsing failed." });
+          return;
+        }
+      } catch {
+        // transient poll error — keep trying until the timeout
+      }
+      if (elapsed >= timeoutMs) {
+        if (get().parseJobId === jobId && get().parseJobStatus === "running") {
+          set({ parseJobStatus: "failed", parseJobError: "Parsing is taking longer than expected. You can keep working — try re-uploading later." });
+        }
+        return;
+      }
+      setTimeout(tick, intervalMs);
+    };
+    setTimeout(tick, intervalMs);
+  },
+
+  dismissParseBanner: () => set({ parseJobStatus: "idle" }),
+
+  // Onboarding tour: a 3-step spotlight over the workspace tabs. Shown once per
+  // browser (localStorage), kicked off when a first-time user enters the app.
+  startTour: () => {
+    if (typeof window !== "undefined" && localStorage.getItem("vantage_tour_done")) return;
+    set({ tourStep: 0 });
+  },
+  nextTourStep: () => {
+    const cur = get().tourStep;
+    if (cur >= 2) {
+      get().endTour();
+    } else {
+      set({ tourStep: cur + 1 });
+    }
+  },
+  endTour: () => {
+    if (typeof window !== "undefined") localStorage.setItem("vantage_tour_done", "true");
+    set({ tourStep: -1 });
   },
 
   enterApp: () => {
     set({ screen: "app", nav: "chat" });
     get().loadJobs();
     get().loadTrends();
-    get().createResume({
-      basics: {
-        name: "Jordan Avery",
-        label: "Senior Product Designer",
-        email: "jordan@example.com",
-        location: { city: "San Francisco", region: "CA" },
-        summary: "Senior Product Designer with 7 years of experience designing tools where speed and craft both matter.",
-      },
-      skills: [
-        { name: "Design Systems", level: "Expert" },
-        { name: "User Research", level: "Advanced" },
-        { name: "Prototyping", level: "Expert" },
-        { name: "Accessibility", level: "Advanced" },
-        { name: "Design Leadership", level: "Advanced" },
-        { name: "Figma", level: "Expert" },
-        { name: "React", level: "Intermediate" },
-        { name: "CSS", level: "Advanced" },
-      ],
-      work: [
-        {
-          company: "Previous Company",
-          position: "Senior Product Designer",
-          startDate: "2020-01",
-          summary: "Led the redesign of a real-time collaboration tool used by 40k teams. Built a design system that cut design-to-dev handoff time by 60%.",
-        },
-      ],
-    });
+    get().loadCurrentUser();
+    get().startTour();
+    // Persist the REAL parsed resume if it's already in hand (sync path). On the
+    // async path parsedResume is null here and gets persisted by pollParseJob
+    // when the job completes — we never invent one.
+    const parsed = get().parsedResume;
+    if (parsed) {
+      get().createResume(parsed);
+    }
+  },
+  // Returning user with an existing résumé: land directly in the workspace,
+  // no onboarding and no résumé re-creation. Used by /app on auth success.
+  resumeWorkspace: (resumeId) => {
+    set({ screen: "app", nav: "chat", currentResumeId: resumeId });
+    get().loadJobs();
+    get().loadTrends();
+    get().loadApplications();
+    get().loadCurrentUser();
   },
   startByChat: () => set({ screen: "builder" }),
   goChat: () => set({ screen: "app", nav: "chat" }),
@@ -423,6 +597,7 @@ export const useVantage = create<VantageState>((set, get) => ({
     set({ screen: "app", nav: "apps" });
     setTimeout(() => set({ prepId: 0 }), 60);
   },
+  goSettings: () => set({ screen: "app", nav: "settings" }),
 
   openReview: (id) => set({ screen: "review", activeId: id }),
   backHome: () => set({ screen: "app", nav: "today" }),
@@ -615,7 +790,14 @@ export const useVantage = create<VantageState>((set, get) => ({
     set({ apiAppsLoading: true });
     try {
       const res = await applicationsApi.list();
-      set({ apiApplications: res.applications as ApiApplication[], apiAppsLoading: false });
+      // The route uses the offset-paginated envelope `{ data, page }`. Tolerate
+      // the legacy `{ applications }` shape during rollout, and fall back to []
+      // so apiApplications can never become undefined for the consumer.
+      const rows =
+        (res as { data?: ApiApplication[]; applications?: ApiApplication[] }).data ??
+        (res as { applications?: ApiApplication[] }).applications ??
+        [];
+      set({ apiApplications: rows, apiAppsLoading: false });
     } catch {
       set({ apiAppsLoading: false });
     }
@@ -638,5 +820,42 @@ export const useVantage = create<VantageState>((set, get) => ({
     } catch {
       // silently fail for MVP
     }
+  },
+
+  // Resolve "who am I" so the greeting / sidebar can render the real name
+  // instead of the historical "Jordan Avery" placeholder. The JSON Resume
+  // basics.name (when present) wins over auth.display_name because it's what
+  // the user actually wrote in their résumé. Falls back gracefully when the
+  // /me call 401s (token expired etc) so we don't blank out the workspace.
+  loadCurrentUser: async () => {
+    try {
+      const res = await authApi.me();
+      set({
+        currentUser: {
+          id: res.user.id,
+          email: res.user.email,
+          displayName: res.user.display_name,
+        },
+      });
+    } catch {
+      // leave currentUser as-is; views handle null with a "there" fallback
+    }
+  },
+
+  // Clear local auth and reset the in-memory user-scoped slices so the next
+  // login starts on a clean slate. We DO NOT touch parsed-resume helpers like
+  // tour state — those are per-browser, not per-session.
+  signOut: () => {
+    clearToken();
+    set({
+      currentUser: null,
+      currentResumeId: null,
+      apiJobs: [],
+      apiApplications: [],
+      trendSnapshot: null,
+      chatMessages: [],
+      chatSessionId: null,
+      screen: "onboarding",
+    });
   },
 }));

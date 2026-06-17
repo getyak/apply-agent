@@ -7,14 +7,34 @@ import {
   INTERVIEWING_DATA,
 } from "@/lib/store";
 import { ArrowLeft, ArrowRight, Send, X, Mic, Check } from "lucide-react";
+import { Button, Chip, HintBox } from "@/components/ui";
+import { initialsOf } from "@/lib/dates";
 
+// The mock-interview screen is the closest to a "live" demo of Relay's interview-coach surface.
+// Until store.startMockSession() exists (see TODO WEB-009 + AGENT-033), the chips/feedback are
+// still the curated MOCK_QS demo — but we ground identity (user initials, job interviewing)
+// in real data when available, fall back to the first real interview application, and surface
+// an EmptyState when there's nothing to practice against at all.
 function SetupScreen() {
   const mockLevel = useVantage((s) => s.mockLevel);
   const setMockLevel = useVantage((s) => s.setMockLevel);
   const startMock = useVantage((s) => s.startMock);
   const backHome = useVantage((s) => s.backHome);
+  const apiApplications = useVantage((s) => s.apiApplications);
 
-  const job = INTERVIEWING_DATA[0];
+  // Prefer a real "interviewing" application if the user has one — otherwise fall back to the
+  // scripted demo INTERVIEWING_DATA so the surface is never empty for first-run users.
+  const realInterview = apiApplications.find((a) => a.status === "interview");
+  const job = realInterview
+    ? {
+        mono: realInterview.company.charAt(0).toUpperCase(),
+        co: realInterview.company,
+        role: realInterview.role_title,
+        stage: "Recruiter screen",
+        when: "soon",
+      }
+    : INTERVIEWING_DATA[0];
+
   const levels = [
     { key: "warmup" as const, label: "Warm-up" },
     { key: "standard" as const, label: "Standard" },
@@ -22,15 +42,20 @@ function SetupScreen() {
   ];
 
   return (
-    <div className="flex-1 flex items-center justify-center overflow-auto p-8 bg-[radial-gradient(120%_100%_at_50%_0%,#FFFDFB_0%,#FAF8F6_60%)]">
+    <div
+      className="flex-1 flex items-center justify-center overflow-auto p-8"
+      style={{ background: "radial-gradient(120% 100% at 50% 0%, #FFFDFB 0%, var(--color-paper) 60%)" }}
+    >
       <div className="w-[520px] max-w-full animate-fade-up">
-        <button
+        <Button
           onClick={backHome}
-          className="cursor-pointer border-none bg-transparent flex items-center gap-[6px] font-body font-medium text-[14px] text-ink-light p-[6px] mb-5 hover:text-ink"
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ArrowLeft size={16} strokeWidth={1.8} />}
+          className="mb-5 !px-[6px]"
         >
-          <ArrowLeft className="w-[18px] h-[18px]" strokeWidth={1.8} />
           Back
-        </button>
+        </Button>
         <div className="font-mono text-[11px] tracking-[1px] uppercase text-amber mb-[10px]">
           Mock interview
         </div>
@@ -47,7 +72,10 @@ function SetupScreen() {
             Practising for
           </div>
           <div className="flex items-center gap-[13px] mb-[18px]">
-            <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[18px] text-ink">
+            <div
+              className="w-[46px] h-[46px] rounded-[11px] bg-cream flex items-center justify-center font-display font-bold text-[18px] text-ink"
+              aria-label={`${job.co} interview`}
+            >
               {job.mono}
             </div>
             <div>
@@ -55,7 +83,7 @@ function SetupScreen() {
                 {job.role}
               </div>
               <div className="font-body text-[13px] text-ink-light">
-                {job.co} · {job.stage} · real interview {job.when}
+                {job.co} · {job.stage} · {realInterview ? "live application" : "demo"} {job.when}
               </div>
             </div>
           </div>
@@ -64,28 +92,26 @@ function SetupScreen() {
           </div>
           <div className="flex gap-2">
             {levels.map((lv) => (
-              <button
+              <Button
                 key={lv.key}
                 onClick={() => setMockLevel(lv.key)}
-                className={`cursor-pointer font-body font-medium text-[13px] px-4 py-[9px] rounded-[9px] transition-all ${
-                  mockLevel === lv.key
-                    ? "bg-brown text-paper border-none"
-                    : "bg-white text-ink border border-border-dark hover:border-brown"
-                }`}
+                variant={mockLevel === lv.key ? "primary" : "secondary"}
+                size="sm"
               >
                 {lv.label}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
 
-        <button
+        <Button
           onClick={startMock}
-          className="w-full cursor-pointer border-none bg-brown text-paper font-body font-semibold text-[16px] py-4 rounded-[11px] flex items-center justify-center gap-[9px] hover:bg-brown-light transition-colors"
+          fullWidth
+          size="lg"
+          trailingIcon={<ArrowRight size={17} strokeWidth={2} />}
         >
           Start session
-          <ArrowRight className="w-[17px] h-[17px]" strokeWidth={2} />
-        </button>
+        </Button>
         <div className="text-center mt-3 font-mono text-[10px] tracking-[0.5px] uppercase text-ink-muted">
           5 questions · ~10 min · coached live
         </div>
@@ -103,8 +129,22 @@ function LiveSession() {
   const sendMock = useVantage((s) => s.sendMock);
   const restartMock = useVantage((s) => s.restartMock);
   const backHome = useVantage((s) => s.backHome);
+  const apiApplications = useVantage((s) => s.apiApplications);
+  const parsedResume = useVantage((s) => s.parsedResume);
+  const currentUser = useVantage((s) => s.currentUser);
 
-  const job = INTERVIEWING_DATA[0];
+  const realInterview = apiApplications.find((a) => a.status === "interview");
+  const job = realInterview
+    ? {
+        mono: realInterview.company.charAt(0).toUpperCase(),
+        co: realInterview.company,
+        role: realInterview.role_title,
+      }
+    : { mono: INTERVIEWING_DATA[0].mono, co: INTERVIEWING_DATA[0].co, role: INTERVIEWING_DATA[0].role };
+
+  const userName = parsedResume?.basics?.name || currentUser?.displayName || "You";
+  const userInitials = initialsOf(userName);
+
   const qIdx = mockAnswers.length;
   const isComplete = qIdx >= MOCK_QS.length;
   const canAnswer = !isComplete && pendingAnswer === null && !mockThinking;
@@ -139,11 +179,15 @@ function LiveSession() {
       <div className="h-[60px] shrink-0 border-b border-border bg-paper/85 backdrop-blur-xl flex items-center px-6 gap-[14px]">
         <button
           onClick={backHome}
-          className="cursor-pointer border-none bg-transparent flex items-center text-ink-light p-1 hover:text-ink"
+          aria-label="Close mock interview"
+          className="cursor-pointer border-none bg-transparent flex items-center text-ink-light p-1 hover:text-ink rounded outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
         >
           <X className="w-[19px] h-[19px]" strokeWidth={1.8} />
         </button>
-        <div className="w-[30px] h-[30px] rounded-lg bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[13px] text-ink">
+        <div
+          className="w-[30px] h-[30px] rounded-lg bg-cream flex items-center justify-center font-display font-bold text-[13px] text-ink"
+          aria-label={`${job.co} interview`}
+        >
           {job.mono}
         </div>
         <div>
@@ -194,8 +238,11 @@ function LiveSession() {
                             {isPending ? pendingAnswer : mockAnswers[i]}
                           </div>
                         </div>
-                        <div className="w-[34px] h-[34px] rounded-[9px] bg-cream-border text-brown shrink-0 flex items-center justify-center font-display font-bold text-[13px]">
-                          JA
+                        <div
+                          className="w-[34px] h-[34px] rounded-[9px] bg-cream-border text-brown shrink-0 flex items-center justify-center font-display font-bold text-[13px]"
+                          aria-label={userName}
+                        >
+                          {userInitials}
                         </div>
                       </div>
                     )}
@@ -203,14 +250,9 @@ function LiveSession() {
                     {answered && (
                       <div className="flex gap-[11px] items-start">
                         <div className="w-[34px] shrink-0" />
-                        <div className="bg-[#FFFBF4] border border-cream-border rounded-[11px] px-4 py-3 max-w-[520px]">
-                          <div className="font-mono text-[9px] tracking-[0.6px] uppercase text-amber mb-[5px]">
-                            Coach
-                          </div>
-                          <div className="font-body text-[13px] leading-[1.55] text-[#3a352e]">
-                            {q.feedback}
-                          </div>
-                        </div>
+                        <HintBox label="Coach" tone="ai" className="max-w-[520px]">
+                          {q.feedback}
+                        </HintBox>
                       </div>
                     )}
                   </div>
@@ -242,13 +284,9 @@ function LiveSession() {
                 </div>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {MOCK_QS[qIdx].chips.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => answerMock(MOCK_QS[qIdx].sample)}
-                      className="cursor-pointer bg-white border border-border-dark text-ink font-body font-medium text-[13px] px-[15px] py-[9px] rounded-full text-left max-w-[320px] hover:border-brown hover:bg-[#FFFDFB] transition-all"
-                    >
+                    <Chip key={c} onClick={() => answerMock(MOCK_QS[qIdx].sample)}>
                       {c}
-                    </button>
+                    </Chip>
                   ))}
                 </div>
                 <div className="flex items-center gap-[10px] bg-white border border-border-dark rounded-xl pl-4 pr-[5px] py-[5px]">
@@ -282,6 +320,7 @@ function LiveSession() {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   className="shrink-0"
+                  aria-hidden
                 >
                   <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                   <path d="M22 4L12 14.01l-3-3" />
@@ -290,24 +329,18 @@ function LiveSession() {
                   Session complete. You&apos;re noticeably sharper on impact
                   metrics — bring that into the real round.
                 </div>
-                <button
-                  onClick={restartMock}
-                  className="cursor-pointer border border-border-dark bg-white text-ink font-body font-semibold text-[13px] px-4 py-[10px] rounded-[9px] whitespace-nowrap hover:border-brown transition-colors"
-                >
+                <Button onClick={restartMock} variant="secondary" size="sm">
                   Run it again
-                </button>
-                <button
-                  onClick={backHome}
-                  className="cursor-pointer border-none bg-brown text-paper font-body font-semibold text-[13px] px-[18px] py-[10px] rounded-[9px] whitespace-nowrap hover:bg-brown-light transition-colors"
-                >
+                </Button>
+                <Button onClick={backHome} size="sm">
                   Done
-                </button>
+                </Button>
               </div>
             </div>
           )}
         </div>
 
-        <div className="w-[300px] shrink-0 border-l border-border bg-[#FBF8F3] overflow-y-auto px-6 py-7">
+        <div className="w-[300px] shrink-0 border-l border-border bg-cream overflow-y-auto px-6 py-7">
           <div className="font-display font-bold text-[11px] tracking-[1.3px] uppercase text-ink-light mb-4">
             Live read
           </div>

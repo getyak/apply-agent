@@ -1,6 +1,7 @@
 "use client";
 
 import { useVantage, INTERVIEWING_DATA } from "@/lib/store";
+import { Button } from "@/components/ui";
 
 export function PrepModal() {
   const prepId = useVantage((s) => s.prepId);
@@ -74,30 +75,21 @@ export function PrepModal() {
 
         {/* Footer */}
         <div className="flex gap-3 border-t border-border px-7 py-5">
-          <button
-            onClick={closePrep}
-            className="flex-1 rounded-xl border border-border-dark bg-paper px-4 py-3 text-sm font-medium text-ink transition-colors hover:bg-cream"
-          >
+          <Button onClick={closePrep} variant="secondary" size="md" className="flex-1">
             Close
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={mockFromPrep}
-            className="flex flex-[1.4] items-center justify-center gap-2 rounded-xl bg-brown px-4 py-3 text-sm font-semibold text-paper transition-colors hover:bg-brown-light"
+            size="md"
+            className="flex-[1.4]"
+            leadingIcon={
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            }
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
             Run a mock interview
-          </button>
+          </Button>
         </div>
       </div>
     </div>
