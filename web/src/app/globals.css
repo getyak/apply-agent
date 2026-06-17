@@ -111,3 +111,22 @@ body {
 .animate-spin { animation: spin 0.7s linear infinite; }
 .animate-bob { animation: bob 1s infinite; }
 .animate-check { animation: check-in 0.3s ease-out; }
+
+/* DayPage Design System — semantic classes from colors_and_type.css */
+.ds-display-lg { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 56px; line-height: 1.02; letter-spacing: 0.5px; text-transform: uppercase; }
+.ds-h1 { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 32px; line-height: 1.15; letter-spacing: -0.2px; }
+.ds-h2 { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 600; font-size: 22px; line-height: 1.25; }
+.ds-headline-md { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 24px; line-height: 1.2; letter-spacing: 0.8px; text-transform: uppercase; }
+.ds-headline-caps { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 18px; line-height: 1.2; letter-spacing: 2px; text-transform: uppercase; }
+.ds-section-label { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 13px; line-height: 1.2; letter-spacing: 1.5px; text-transform: uppercase; color: #6B6560; }
+.ds-title-sm { font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 20px; line-height: 1.3; }
+.ds-body-md { font-family: 'Inter', system-ui, sans-serif; font-weight: 400; font-size: 16px; line-height: 1.5; }
+.ds-body-sm { font-family: 'Inter', system-ui, sans-serif; font-weight: 400; font-size: 14px; line-height: 1.5; }
+.ds-caption { font-family: 'Inter', system-ui, sans-serif; font-weight: 500; font-size: 13px; line-height: 1.4; color: #6B6560; }
+.ds-label { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 11px; line-height: 1.2; letter-spacing: 1px; text-transform: uppercase; color: #6B6560; }
+.ds-mono-11 { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 500; font-size: 11px; line-height: 1.2; letter-spacing: 0.5px; text-transform: uppercase; color: #6B6560; }
+.ds-mono-10 { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 400; font-size: 10px; line-height: 1.2; letter-spacing: 0.4px; text-transform: uppercase; color: #6B6560; }
+.ds-mono-9 { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 400; font-size: 9px; line-height: 1.2; letter-spacing: 0.4px; text-transform: uppercase; color: #6B6560; }
+.ds-card { background: #FFFFFF; border: 1px solid #EDE8DF; border-radius: 12px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+.ds-surface-sunken { background: #F3F0EB; border: 1px solid #EDE8DF; border-radius: 10px; }
+.ds-backdrop { background: rgba(250, 248, 246, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
