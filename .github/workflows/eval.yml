@@ -55,11 +55,11 @@ jobs:
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: promptfoo-${{ github.run_id }}
           path: /tmp/eval.json
@@ -104,14 +104,14 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 20 }
       - run: npm install -g promptfoo@latest
       - name: Red-team eval
         working-directory: eval
         run: promptfoo redteam run --output /tmp/redteam.json || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: redteam-${{ github.run_id }}
           path: /tmp/redteam.json
@@ -126,8 +126,8 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Install
@@ -136,7 +136,7 @@ jobs:
       - name: DeepEval pytest (faithfulness, hallucination)
         working-directory: eval
         run: uv run pytest tests_deepeval/ --json-report --json-report-file=/tmp/deepeval.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: deepeval-${{ github.run_id }}
@@ -148,7 +148,7 @@ jobs:
     if: always() && needs.promptfoo.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         with:
           script: |
             const score = '${{ needs.promptfoo.outputs.score }}';
