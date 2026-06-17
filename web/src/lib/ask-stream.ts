@@ -51,7 +51,9 @@ const AGENT_LABELS: Record<string, string> = {
 };
 
 function endpoint(): string {
-  const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8787";
+  // Matches api/src/config.ts API_PORT default (3001). Override with
+  // NEXT_PUBLIC_API_BASE in deployment envs.
+  const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3001";
   return `${base.replace(/\/$/, "")}/api/ask/stream`;
 }
 
