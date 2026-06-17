@@ -84,6 +84,7 @@ vantage-*.png
 
 # TODO (ephemeral)
 TODO.md
+.todo-log/
 
 # env (ensure .env.example is allowed)
 .env.*
