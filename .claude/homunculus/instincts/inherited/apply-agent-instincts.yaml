@@ -1,0 +1,340 @@
+# Instincts generated from https://github.com/getyak/apply-agent
+# Generated: 2026-06-17T02:29:27.347Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: apply-agent-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/getyak/apply-agent
+---
+
+# Apply Agent Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat
+
+## Evidence
+
+- 1 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat: full-stack MVP — API layer, frontend integration, infra & CI/CD
+
+---
+id: apply-agent-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/getyak/apply-agent
+---
+
+# Apply Agent Commit Length
+
+## Action
+
+Write moderate-length commit messages (~69 characters)
+
+## Evidence
+
+- Average commit message length: 69 chars
+- Based on 1 commits
+
+---
+id: apply-agent-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/getyak/apply-agent
+---
+
+# Apply Agent Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: apply-agent-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/getyak/apply-agent
+---
+
+# Apply Agent Export Style
+
+## Action
+
+Prefer default exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: default
+
+---
+id: apply-agent-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/getyak/apply-agent
+---
+
+# Apply Agent Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: apply-agent-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/getyak/apply-agent
+---
+
+# Apply Agent Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: apply-agent-instinct-naming-files
+trigger: "When creating or renaming a file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Naming Files
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Pattern in files: web/next.config.ts, api/package.json
+
+---
+id: apply-agent-instinct-naming-functions
+trigger: "When defining a function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in TypeScript code
+- Naming conventions specified
+
+---
+id: apply-agent-instinct-naming-classes
+trigger: "When defining a class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in TypeScript code
+- Naming conventions specified
+
+---
+id: apply-agent-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in TypeScript code
+- Naming conventions specified
+
+---
+id: apply-agent-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Import Style
+
+## Action
+
+Use a mixed import style (both default and named imports as appropriate)
+
+## Evidence
+
+- importStyle: mixed
+
+---
+id: apply-agent-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Export Style
+
+## Action
+
+Use default exports
+
+## Evidence
+
+- exportStyle: default
+
+---
+id: apply-agent-instinct-error-handling
+trigger: "When handling errors in code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Error Handling
+
+## Action
+
+Use try-catch blocks for error handling
+
+## Evidence
+
+- errorHandling: try-catch
+
+---
+id: apply-agent-instinct-git-commits-conventional
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Git Commits Conventional
+
+## Action
+
+Use the conventional commit format with a 'feat' prefix for features
+
+## Evidence
+
+- Seen in commit: feat: full-stack MVP — API layer, frontend integration, infra & CI/CD
+
+---
+id: apply-agent-instinct-git-commit-length
+trigger: "When composing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Git Commit Length
+
+## Action
+
+Keep commit messages concise, averaging around 69 characters
+
+## Evidence
+
+- commits.averageLength: 69
+
+---
+id: apply-agent-instinct-test-location
+trigger: "When adding or organizing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Test Location
+
+## Action
+
+Place tests in a separate location from source code
+
+## Evidence
+
+- architecture.folderStructure.testLocation: separate
+
+---
+id: apply-agent-instinct-module-organization
+trigger: "When organizing code modules"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: getyak/apply-agent
+---
+
+# Apply Agent Instinct Module Organization
+
+## Action
+
+Organize modules by type (e.g., api, web, infra)
+
+## Evidence
+
+- architecture.moduleOrganization: type-based
+- commonFolders: web, api, infra
+
