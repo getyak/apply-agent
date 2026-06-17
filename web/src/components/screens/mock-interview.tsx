@@ -23,195 +23,24 @@ import {
   MOCK_PROGRESS_LABELS,
   INTERVIEWING_DATA,
 } from "@/lib/store";
-import { useDock } from "@/lib/ask-vantage-store";
+import { ArrowLeft, ArrowRight, Send, X, Mic, Check } from "lucide-react";
+import { Button, Chip, HintBox } from "@/components/ui";
 import { initialsOf } from "@/lib/dates";
 
-type IntelStrategy =
-  | "none"
-  | "jd_based"
-  | "crowdsourced"
-  | "recruiter_specific";
-type PressureLevel = "encourage_only" | "one_follow_up" | "chained_to_stuck";
-type FeedbackStyle =
-  | "rating_1to5"
-  | "three_perspective_translation"
-  | "one_line_per_answer";
-type LoopBehavior = "standalone" | "save_to_card" | "replay_real_interview";
-
-interface BuiltInMode {
-  slug: string;
-  name: string;
-  tagline: string;
-  intel: IntelStrategy;
-  pressure: PressureLevel;
-  feedback: FeedbackStyle;
-  loop: LoopBehavior;
-}
-
-// Mirrors infra/postgres/migrations/013_seed_interview_modes.up.sql. We
-// inline here because the modes API isn't on the dev API gateway yet
-// and the UI shouldn't block on an extra round-trip when these four are
-// the product's load-bearing defaults. Custom modes append client-side
-// once /api/interview-modes lands.
-const BUILT_IN_MODES: BuiltInMode[] = [
-  {
-    slug: "scene_recreation",
-    name: "Scene recreation",
-    tagline:
-      "Crowd-sourced intel and a single sharp follow-up. Closest to a real round.",
-    intel: "crowdsourced",
-    pressure: "one_follow_up",
-    feedback: "three_perspective_translation",
-    loop: "save_to_card",
-  },
-  {
-    slug: "pressure_drill",
-    name: "Pressure drill",
-    tagline:
-      "JD-grounded questions, chained follow-ups until you stick a landing.",
-    intel: "jd_based",
-    pressure: "chained_to_stuck",
-    feedback: "three_perspective_translation",
-    loop: "save_to_card",
-  },
-  {
-    slug: "warm_up",
-    name: "Warm-up",
-    tagline:
-      "No intel, gentle pacing. Use before a real round when you need momentum.",
-    intel: "none",
-    pressure: "encourage_only",
-    feedback: "three_perspective_translation",
-    loop: "standalone",
-  },
-  {
-    slug: "rapid_fire",
-    name: "Rapid fire",
-    tagline:
-      "No intel, no follow-ups — single-line feedback per answer. Highest reps.",
-    intel: "none",
-    pressure: "encourage_only",
-    feedback: "one_line_per_answer",
-    loop: "save_to_card",
-  },
-];
-
-// Mock-local palette. Mock studio renders against a neutral grayscale system
-// (Linear/Vercel-leaning), distinct from the workspace's warm cream paper.
-// Keep this private to mock-interview.tsx — the rest of Vantage stays on the
-// shared design tokens in globals.css. Single accent color `gold` is reused
-// from the brand to keep CTAs visually connected to the rest of the product.
-const M = {
-  paper: "#FAFAFA",
-  surface: "#FFFFFF",
-  surfaceAlt: "#F5F5F5",
-  ink: "#0A0A0A",
-  body: "#525252",
-  muted: "#A3A3A3",
-  border: "#E5E5E5",
-  borderStrong: "#D4D4D4",
-  borderInk: "#0A0A0A",
-  accent: "#e8a317", // brand gold — reserved for state pills (LIVE / FOLLOW-UP)
-  accentInkOnAccent: "#0A0A0A",
-  danger: "#B91C1C", // muted red, used only for THE TRAP banner
-  dangerBg: "#FEF2F2",
-  dangerBorder: "#FECACA",
-} as const;
-
-function intelLabel(s: IntelStrategy): string {
-  return s === "none"
-    ? "NO INTEL"
-    : s === "jd_based"
-      ? "JD INTEL"
-      : s === "crowdsourced"
-        ? "CROWD INTEL"
-        : "RECRUITER INTEL";
-}
-
-function pressureLabel(p: PressureLevel): string {
-  return p === "encourage_only"
-    ? "LOW"
-    : p === "one_follow_up"
-      ? "MED"
-      : "HIGH";
-}
-
-function feedbackLabel(f: FeedbackStyle): string {
-  return f === "rating_1to5"
-    ? "1–5 RATING"
-    : f === "one_line_per_answer"
-      ? "ONE-LINE"
-      : "3 PERSPECTIVE";
-}
-
-function loopLabel(l: LoopBehavior): string {
-  return l === "standalone"
-    ? "STANDALONE"
-    : l === "save_to_card"
-      ? "SAVE CARD"
-      : "REPLAY REAL";
-}
-
-function modeDescriptor(m: BuiltInMode): string {
-  return `${intelLabel(m.intel)} · PRESSURE ${pressureLabel(m.pressure)}`;
-}
-
-type Stage = "modes" | "intel" | "live" | "debrief";
-
-interface TranslationFeedback {
-  said: string;
-  heard: string;
-  rephrase: string;
-  stuck?: string;
-}
-
-interface MockMessage {
-  role: "interviewer" | "user" | "translation" | "coach";
-  text?: string;
-  label?: string;
-  feedback?: TranslationFeedback;
-}
-
-export function MockScreen() {
+// The mock-interview screen is the closest to a "live" demo of Relay's interview-coach surface.
+// Until store.startMockSession() exists (see TODO WEB-009 + AGENT-033), the chips/feedback are
+// still the curated MOCK_QS demo — but we ground identity (user initials, job interviewing)
+// in real data when available, fall back to the first real interview application, and surface
+// an EmptyState when there's nothing to practice against at all.
+function SetupScreen() {
+  const mockLevel = useVantage((s) => s.mockLevel);
+  const setMockLevel = useVantage((s) => s.setMockLevel);
+  const startMock = useVantage((s) => s.startMock);
   const backHome = useVantage((s) => s.backHome);
   const apiApplications = useVantage((s) => s.apiApplications);
-  const currentUser = useVantage((s) => s.currentUser);
 
-  const [stage, setStage] = useState<Stage>("modes");
-  const [selectedSlug, setSelectedSlug] = useState<string>("scene_recreation");
-  const [qIdx, setQIdx] = useState(0);
-  const [messages, setMessages] = useState<MockMessage[]>([]);
-  const [pendingAnswer, setPendingAnswer] = useState<string>("");
-  // HITL gate — agent-harness.md §HITL requires an explicit-go before any
-  // session that holds the user's attention. Live mock is a 10–25 min
-  // commitment, so we always interrupt with a confirm modal before the
-  // stage flips to "live". The modal carries duration / question count /
-  // mode name so the user knows what they're opting into.
-  const [pendingStart, setPendingStart] = useState(false);
-
-  // Immersive live stage — collapse the dock to its 54px launcher per
-  // vantage-ui-mapping.md §3.6 ("进 live 阶段：dock 自动收起到 54px
-  // launcher"). modes / intel / debrief stages keep the dock available so
-  // the user can still ask Vantage to refine their answer between rounds.
-  // Cleanup restores the dock when leaving the mock screen or on crash.
-  useEffect(() => {
-    if (stage === "live") {
-      useDock.getState().setHintedCollapse(true);
-    } else {
-      useDock.getState().setHintedCollapse(false);
-    }
-  }, [stage]);
-  useEffect(() => {
-    return () => {
-      useDock.getState().setHintedCollapse(false);
-    };
-  }, []);
-
-  const selectedMode = useMemo(
-    () => BUILT_IN_MODES.find((m) => m.slug === selectedSlug) ?? BUILT_IN_MODES[0],
-    [selectedSlug],
-  );
-
+  // Prefer a real "interviewing" application if the user has one — otherwise fall back to the
+  // scripted demo INTERVIEWING_DATA so the surface is never empty for first-run users.
   const realInterview = apiApplications.find((a) => a.status === "interview");
   const job = realInterview
     ? {
@@ -223,261 +52,29 @@ export function MockScreen() {
       }
     : INTERVIEWING_DATA[0];
 
-  const initials = initialsOf(currentUser?.displayName ?? "");
+  const levels = [
+    { key: "warmup" as const, label: "Warm-up" },
+    { key: "standard" as const, label: "Standard" },
+    { key: "pressure" as const, label: "Pressure" },
+  ];
 
-  const intel = {
-    duration: "30 MIN",
-    style:
-      "Conversational. Stripe weighs craft and written communication heavily — expect a follow-up take-home, not a live exercise.",
-    freq: [
-      { q: "Walk me through a project you're proud of.", p: "94%" },
-      { q: "Why Stripe, specifically?", p: "81%" },
-      { q: "How do you handle disagreement with engineering?", p: "67%" },
-    ],
-    trap: {
-      q: "Tell me about a time a design of yours failed.",
-      note: "Easy to over-hedge here. Own it plainly, then show the correction with a number.",
-    },
-  };
-
-  function onModePick(slug: string) {
-    setSelectedSlug(slug);
-  }
-
-  function startMode() {
-    const m = BUILT_IN_MODES.find((x) => x.slug === selectedSlug);
-    if (!m) return;
-    setQIdx(0);
-    setMessages([]);
-    if (m.intel === "none") {
-      // No intel page to read — go straight to the HITL confirm.
-      setPendingStart(true);
-    } else {
-      setStage("intel");
-    }
-  }
-
-  function beginLive() {
-    // After reading the intel brief, still require an explicit-go before
-    // entering the timed live stage.
-    setPendingStart(true);
-  }
-
-  function confirmStart() {
-    setPendingStart(false);
-    seedFirstQuestion();
-    setStage("live");
-  }
-
-  function cancelStart() {
-    setPendingStart(false);
-  }
-
-  function seedFirstQuestion() {
-    const first = MOCK_QS[0];
-    setMessages([
-      {
-        role: "interviewer",
-        text: first.q,
-        label: "OPENING",
-      },
-    ]);
-  }
-
-  function sendAnswer() {
-    const text = pendingAnswer.trim();
-    if (!text) return;
-    const cur = MOCK_QS[qIdx];
-    if (!cur) return;
-    setPendingAnswer("");
-
-    const nextMsgs: MockMessage[] = [
-      ...messages,
-      { role: "user", text },
-    ];
-
-    if (selectedMode.feedback === "three_perspective_translation") {
-      nextMsgs.push({
-        role: "translation",
-        feedback: {
-          said: text,
-          heard:
-            "Confident, but they're listening for the *decision* you made — not just the outcome.",
-          rephrase: cur.feedback,
-          stuck:
-            selectedMode.pressure === "chained_to_stuck"
-              ? "Stuck on impact — next time, lead with the metric in one sentence."
-              : undefined,
-        },
-      });
-    } else if (selectedMode.feedback === "one_line_per_answer") {
-      nextMsgs.push({
-        role: "coach",
-        text: cur.feedback,
-      });
-    }
-
-    const nextIdx = qIdx + 1;
-    if (nextIdx < MOCK_QS.length) {
-      const followUp =
-        selectedMode.pressure === "one_follow_up" ||
-        selectedMode.pressure === "chained_to_stuck";
-      const nq = MOCK_QS[nextIdx];
-      nextMsgs.push({
-        role: "interviewer",
-        text: nq.q,
-        label: followUp ? "FOLLOW-UP" : undefined,
-      });
-      setMessages(nextMsgs);
-      setQIdx(nextIdx);
-    } else {
-      setMessages(nextMsgs);
-      setStage("debrief");
-    }
-  }
-
-  if (stage === "modes") {
-    return (
-      <Shell>
-        <ModeGallery
-          job={job}
-          modes={BUILT_IN_MODES}
-          selectedSlug={selectedSlug}
-          onPick={onModePick}
-          onStart={startMode}
-          onBack={backHome}
-        />
-        {pendingStart && (
-          <StartConfirmModal
-            mode={selectedMode}
-            questionCount={MOCK_QS.length}
-            onCancel={cancelStart}
-            onConfirm={confirmStart}
-          />
-        )}
-      </Shell>
-    );
-  }
-
-  if (stage === "intel") {
-    return (
-      <Shell>
-        <IntelBrief
-          job={job}
-          intel={intel}
-          onBack={() => setStage("modes")}
-          onBegin={beginLive}
-        />
-        {pendingStart && (
-          <StartConfirmModal
-            mode={selectedMode}
-            questionCount={MOCK_QS.length}
-            onCancel={cancelStart}
-            onConfirm={confirmStart}
-          />
-        )}
-      </Shell>
-    );
-  }
-
-  if (stage === "live") {
-    return (
-      <Shell>
-        <LiveStage
-          job={job}
-          mode={selectedMode}
-          initials={initials}
-          messages={messages}
-          pendingAnswer={pendingAnswer}
-          setPendingAnswer={setPendingAnswer}
-          onBack={() => setStage("modes")}
-          onSend={sendAnswer}
-          progressIdx={qIdx}
-        />
-      </Shell>
-    );
-  }
-
-  return (
-    <Shell>
-      <Debrief
-        job={job}
-        focusNext="Owning impact, naming the metric early"
-        onRestart={() => {
-          setQIdx(0);
-          setMessages([]);
-          setStage("modes");
-        }}
-        onDone={backHome}
-      />
-    </Shell>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="animate-fade-in"
-      style={{
-        height: "100vh",
-        width: "100vw",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        background: M.paper,
-        color: M.ink,
-      }}
+      className="flex-1 flex items-center justify-center overflow-auto p-8"
+      style={{ background: "radial-gradient(120% 100% at 50% 0%, #FFFDFB 0%, var(--color-paper) 60%)" }}
     >
-      {children}
-    </div>
-  );
-}
-
-function ModeGallery({
-  job,
-  modes,
-  selectedSlug,
-  onPick,
-  onStart,
-  onBack,
-}: {
-  job: { mono: string; co: string; role: string; stage: string; when: string };
-  modes: BuiltInMode[];
-  selectedSlug: string;
-  onPick: (slug: string) => void;
-  onStart: () => void;
-  onBack: () => void;
-}) {
-  const selected = modes.find((x) => x.slug === selectedSlug);
-  return (
-    <div
-      style={{
-        flex: 1,
-        overflowY: "auto",
-        padding: "48px 32px 80px",
-        background: M.paper,
-      }}
-    >
-      <div style={{ maxWidth: 720, margin: "0 auto" }} className="animate-fade-up">
-        <button onClick={onBack} style={ghostBtnStyle()}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M11 18l-6-6 6-6" />
-          </svg>
-          Back
-        </button>
-
-        {/* For-line: who you're practising for. Mono, one line, left-aligned. */}
-        <div
-          style={{
-            fontFamily: "JetBrains Mono",
-            fontSize: 11,
-            letterSpacing: 1,
-            color: M.muted,
-            textTransform: "uppercase",
-            marginBottom: 18,
-          }}
+      <div className="w-[520px] max-w-full animate-fade-up">
+        <Button
+          onClick={backHome}
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ArrowLeft size={16} strokeWidth={1.8} />}
+          className="mb-5 !px-[6px]"
         >
-          For · {job.co} · {job.role} · {job.stage}
+          Back
+        </Button>
+        <div className="font-mono text-[11px] tracking-[1px] uppercase text-amber mb-[10px]">
+          Mock interview
         </div>
 
         <h1
@@ -506,185 +103,87 @@ function ModeGallery({
           Each mode is a different way to practise for a real round.
         </p>
 
-        {/* Single-column mode list. Each card carries the 4-dimension mono row
-            (ANCHOR / PRESSURE / FEEDBACK / LOOP) — those four slots ARE the
-            mode (vantage-ui-mapping.md §3.1), so they belong on every card. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {modes.map((m) => {
-            const isSel = m.slug === selectedSlug;
-            return (
-              <button
-                key={m.slug}
-                onClick={() => onPick(m.slug)}
-                style={modeCardStyle(isSel)}
+        <div className="bg-white border border-border rounded-[14px] p-[22px] shadow-sm mb-4">
+          <div className="font-display font-bold text-[10px] tracking-[1.4px] uppercase text-ink-muted mb-[13px]">
+            Practising for
+          </div>
+          <div className="flex items-center gap-[13px] mb-[18px]">
+            <div
+              className="w-[46px] h-[46px] rounded-[11px] bg-cream flex items-center justify-center font-display font-bold text-[18px] text-ink"
+              aria-label={`${job.co} interview`}
+            >
+              {job.mono}
+            </div>
+            <div>
+              <div className="font-body font-semibold text-[16px] text-ink">
+                {job.role}
+              </div>
+              <div className="font-body text-[13px] text-ink-light">
+                {job.co} · {job.stage} · {realInterview ? "live application" : "demo"} {job.when}
+              </div>
+            </div>
+          </div>
+          <div className="font-display font-bold text-[10px] tracking-[1.4px] uppercase text-ink-muted mb-[9px]">
+            Intensity
+          </div>
+          <div className="flex gap-2">
+            {levels.map((lv) => (
+              <Button
+                key={lv.key}
+                onClick={() => setMockLevel(lv.key)}
+                variant={mockLevel === lv.key ? "primary" : "secondary"}
+                size="sm"
               >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    justifyContent: "space-between",
-                    gap: 16,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontFamily: "Inter",
-                      fontWeight: 600,
-                      fontSize: 17,
-                      color: M.ink,
-                    }}
-                  >
-                    {m.name}
-                  </span>
-                  <span
-                    aria-hidden
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 999,
-                      border: `1px solid ${isSel ? M.ink : M.borderStrong}`,
-                      background: isSel ? M.ink : "transparent",
-                      flexShrink: 0,
-                    }}
-                  />
-                </div>
-                <div
-                  style={{
-                    fontFamily: "Inter",
-                    fontSize: 14,
-                    lineHeight: 1.5,
-                    color: M.body,
-                    marginBottom: 14,
-                  }}
-                >
-                  {m.tagline}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "6px 14px",
-                    fontFamily: "JetBrains Mono",
-                    fontSize: 10.5,
-                    letterSpacing: 0.6,
-                    color: M.muted,
-                  }}
-                >
-                  <span>ANCHOR · {intelLabel(m.intel)}</span>
-                  <span>PRESSURE · {pressureLabel(m.pressure)}</span>
-                  <span>FEEDBACK · {feedbackLabel(m.feedback)}</span>
-                  <span>LOOP · {loopLabel(m.loop)}</span>
-                </div>
-              </button>
-            );
-          })}
+                {lv.label}
+              </Button>
+            ))}
+          </div>
         </div>
 
-        <button onClick={onStart} style={primaryBtnStyle()}>
-          Start{selected ? ` · ${selected.name}` : ""}
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={M.surface} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M13 6l6 6-6 6" />
-          </svg>
-        </button>
+        <Button
+          onClick={startMock}
+          fullWidth
+          size="lg"
+          trailingIcon={<ArrowRight size={17} strokeWidth={2} />}
+        >
+          Start session
+        </Button>
+        <div className="text-center mt-3 font-mono text-[10px] tracking-[0.5px] uppercase text-ink-muted">
+          5 questions · ~10 min · coached live
+        </div>
       </div>
     </div>
   );
 }
 
-function IntelBrief({
-  job,
-  intel,
-  onBack,
-  onBegin,
-}: {
-  job: { co: string; stage: string };
-  intel: {
-    duration: string;
-    style: string;
-    freq: { q: string; p: string }[];
-    trap: { q: string; note: string };
-  };
-  onBack: () => void;
-  onBegin: () => void;
-}) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        overflowY: "auto",
-        padding: "48px 32px 80px",
-        background: M.paper,
-      }}
-    >
-      <div style={{ maxWidth: 680, margin: "0 auto" }} className="animate-fade-up">
-        <button onClick={onBack} style={ghostBtnStyle()}>
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M11 18l-6-6 6-6" />
-          </svg>
-          Modes
-        </button>
-        <div
-          style={{
-            fontFamily: "JetBrains Mono",
-            fontSize: 11,
-            letterSpacing: 1,
-            color: M.muted,
-            textTransform: "uppercase",
-            marginBottom: 18,
-          }}
-        >
-          Intel brief · {job.co} · {job.stage}
-        </div>
-        <h1
-          style={{
-            fontFamily: "Inter",
-            fontWeight: 600,
-            fontSize: 32,
-            lineHeight: 1.15,
-            letterSpacing: -0.5,
-            color: M.ink,
-            margin: "0 0 12px",
-          }}
-        >
-          What this round actually asks.
-        </h1>
-        <p style={{ fontFamily: "Inter", fontSize: 15, lineHeight: 1.55, color: M.body, margin: "0 0 32px" }}>
-          Pulled from the crowd-sourced question bank and public signals. We drill the likely ones first.
-        </p>
+function LiveSession() {
+  const mockAnswers = useVantage((s) => s.mockAnswers);
+  const pendingAnswer = useVantage((s) => s.pendingAnswer);
+  const mockThinking = useVantage((s) => s.mockThinking);
+  const mockLevel = useVantage((s) => s.mockLevel);
+  const answerMock = useVantage((s) => s.answerMock);
+  const sendMock = useVantage((s) => s.sendMock);
+  const restartMock = useVantage((s) => s.restartMock);
+  const backHome = useVantage((s) => s.backHome);
+  const apiApplications = useVantage((s) => s.apiApplications);
+  const parsedResume = useVantage((s) => s.parsedResume);
+  const currentUser = useVantage((s) => s.currentUser);
 
-        {/* Round summary — bordered card, no fills. */}
-        <div
-          style={{
-            background: M.surface,
-            border: `1px solid ${M.border}`,
-            borderRadius: 10,
-            padding: "16px 18px",
-            marginBottom: 24,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 15, color: M.ink }}>
-              {job.stage}
-            </span>
-            <span
-              style={{
-                fontFamily: "JetBrains Mono",
-                fontSize: 10,
-                letterSpacing: 0.6,
-                color: M.muted,
-                border: `1px solid ${M.border}`,
-                padding: "2px 8px",
-                borderRadius: 4,
-              }}
-            >
-              {intel.duration}
-            </span>
-          </div>
-          <div style={{ fontFamily: "Inter", fontSize: 14, lineHeight: 1.6, color: M.body }}>
-            {intel.style}
-          </div>
-        </div>
+  const realInterview = apiApplications.find((a) => a.status === "interview");
+  const job = realInterview
+    ? {
+        mono: realInterview.company.charAt(0).toUpperCase(),
+        co: realInterview.company,
+        role: realInterview.role_title,
+      }
+    : { mono: INTERVIEWING_DATA[0].mono, co: INTERVIEWING_DATA[0].co, role: INTERVIEWING_DATA[0].role };
+
+  const userName = parsedResume?.basics?.name || currentUser?.displayName || "You";
+  const userInitials = initialsOf(userName);
+
+  const qIdx = mockAnswers.length;
+  const isComplete = qIdx >= MOCK_QS.length;
+  const canAnswer = !isComplete && pendingAnswer === null && !mockThinking;
 
         <div
           style={{
@@ -801,26 +300,22 @@ function LiveStage({
 
   return (
     <>
-      {/* Top bar: minimal — back, role/co, progress pill. */}
-      <div
-        style={{
-          height: 56,
-          flexShrink: 0,
-          borderBottom: `1px solid ${M.border}`,
-          background: M.surface,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 20px",
-          gap: 14,
-        }}
-      >
-        <button onClick={onBack} style={iconBtnStyleInk()} aria-label="Exit mock">
-          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+      <div className="h-[60px] shrink-0 border-b border-border bg-paper/85 backdrop-blur-xl flex items-center px-6 gap-[14px]">
+        <button
+          onClick={backHome}
+          aria-label="Close mock interview"
+          className="cursor-pointer border-none bg-transparent flex items-center text-ink-light p-1 hover:text-ink rounded outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
+        >
+          <X className="w-[19px] h-[19px]" strokeWidth={1.8} />
         </button>
-        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
-          <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: M.ink }}>
+        <div
+          className="w-[30px] h-[30px] rounded-lg bg-cream flex items-center justify-center font-display font-bold text-[13px] text-ink"
+          aria-label={`${job.co} interview`}
+        >
+          {job.mono}
+        </div>
+        <div>
+          <div className="font-body font-semibold text-[14px] text-ink leading-[1.1]">
             {job.role}
           </div>
           <div
@@ -858,12 +353,167 @@ function LiveStage({
         </div>
       </div>
 
-      {/* Single-column immersive Q/A. No right rail. */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: M.paper }}>
-        <div style={{ flex: 1, overflowY: "auto", padding: "32px 0 12px" }}>
-          <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 40px", display: "flex", flexDirection: "column", gap: 22 }}>
-            {messages.map((m, i) => (
-              <MessageBlock key={i} m={m} job={job} initials={initials} />
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 min-w-0 flex flex-col">
+          <div className="flex-1 overflow-y-auto py-[30px]">
+            <div className="max-w-[680px] mx-auto px-10 flex flex-col gap-5">
+              {MOCK_QS.slice(0, qIdx + (isComplete ? 0 : 1)).map((q, i) => {
+                const answered = i < mockAnswers.length;
+                const isPending = i === qIdx && pendingAnswer !== null;
+
+                return (
+                  <div key={i} className="flex flex-col gap-3">
+                    <div className="flex gap-[11px] items-start">
+                      <div className="w-[34px] h-[34px] rounded-[9px] bg-ink text-paper shrink-0 flex items-center justify-center font-display font-bold text-[13px]">
+                        {job.mono}
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted mb-[6px]">
+                          Interviewer
+                        </div>
+                        <div className="font-body text-[15px] leading-[1.55] text-ink max-w-[520px]">
+                          {q.q}
+                        </div>
+                      </div>
+                    </div>
+
+                    {(answered || isPending) && (
+                      <div className="flex gap-[11px] items-start justify-end">
+                        <div className="flex flex-col items-end">
+                          <div className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted mb-[6px]">
+                            You
+                          </div>
+                          <div className="bg-brown text-paper font-body text-[14px] leading-[1.5] px-4 py-[10px] rounded-[13px] rounded-br-[4px] max-w-[460px]">
+                            {isPending ? pendingAnswer : mockAnswers[i]}
+                          </div>
+                        </div>
+                        <div
+                          className="w-[34px] h-[34px] rounded-[9px] bg-cream-border text-brown shrink-0 flex items-center justify-center font-display font-bold text-[13px]"
+                          aria-label={userName}
+                        >
+                          {userInitials}
+                        </div>
+                      </div>
+                    )}
+
+                    {answered && (
+                      <div className="flex gap-[11px] items-start">
+                        <div className="w-[34px] shrink-0" />
+                        <HintBox label="Coach" tone="ai" className="max-w-[520px]">
+                          {q.feedback}
+                        </HintBox>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {mockThinking && (
+                <div className="flex gap-[11px] items-center">
+                  <div className="w-[34px] h-[34px] rounded-[9px] bg-ink text-paper shrink-0 flex items-center justify-center font-display font-bold text-[13px]">
+                    {job.mono}
+                  </div>
+                  <div className="flex gap-1">
+                    <span className="w-[6px] h-[6px] rounded-full bg-border-dark animate-bob" />
+                    <span className="w-[6px] h-[6px] rounded-full bg-border-dark animate-bob [animation-delay:0.15s]" />
+                    <span className="w-[6px] h-[6px] rounded-full bg-border-dark animate-bob [animation-delay:0.3s]" />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {canAnswer && (
+            <div className="shrink-0 border-t border-border bg-paper px-10 pt-[14px] pb-[22px]">
+              <div className="max-w-[680px] mx-auto">
+                <div className="flex items-center gap-2 mb-[10px]">
+                  <span className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted">
+                    Suggested angle
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {MOCK_QS[qIdx].chips.map((c) => (
+                    <Chip key={c} onClick={() => answerMock(MOCK_QS[qIdx].sample)}>
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+                <div className="flex items-center gap-[10px] bg-white border border-border-dark rounded-xl pl-4 pr-[5px] py-[5px]">
+                  <button className="border-none bg-transparent cursor-pointer flex items-center text-ink-light shrink-0 hover:text-brown">
+                    <Mic className="w-[18px] h-[18px]" strokeWidth={1.7} />
+                  </button>
+                  <span className="flex-1 font-body text-[14px] text-ink-muted">
+                    Type your answer, or speak it…
+                  </span>
+                  <button
+                    onClick={sendMock}
+                    className="cursor-pointer border-none bg-brown w-[34px] h-[34px] rounded-[9px] flex items-center justify-center shrink-0 hover:bg-brown-light transition-colors"
+                  >
+                    <Send className="w-4 h-4 text-paper" strokeWidth={2} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isComplete && (
+            <div className="shrink-0 border-t border-border bg-white px-10 py-[18px]">
+              <div className="max-w-[680px] mx-auto w-full flex items-center gap-4">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#4C7A3F"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="shrink-0"
+                  aria-hidden
+                >
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                  <path d="M22 4L12 14.01l-3-3" />
+                </svg>
+                <div className="flex-1 font-body text-[14px] text-ink">
+                  Session complete. You&apos;re noticeably sharper on impact
+                  metrics — bring that into the real round.
+                </div>
+                <Button onClick={restartMock} variant="secondary" size="sm">
+                  Run it again
+                </Button>
+                <Button onClick={backHome} size="sm">
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="w-[300px] shrink-0 border-l border-border bg-cream overflow-y-auto px-6 py-7">
+          <div className="font-display font-bold text-[11px] tracking-[1.3px] uppercase text-ink-light mb-4">
+            Live read
+          </div>
+          <div className="flex flex-col gap-[18px] mb-7">
+            {scoreData.map((sc) => (
+              <div key={sc.label}>
+                <div className="flex items-center justify-between mb-[7px]">
+                  <span className="font-body font-medium text-[13px] text-ink">
+                    {sc.label}
+                  </span>
+                  <span
+                    className="font-mono text-[11px] font-medium"
+                    style={{ color: sc.color }}
+                  >
+                    {sc.pct}%
+                  </span>
+                </div>
+                <div className="h-[7px] rounded-full bg-border overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500 ease-out"
+                    style={{ width: `${sc.pct}%`, background: sc.color }}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         </div>

@@ -3,15 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, Check, AlertCircle, Download, Trash2 } from "lucide-react";
-import {
-  users,
-  resumes as resumesApi,
-  applications as applicationsApi,
-  clearToken,
-  ApiError,
-  type UserRecord,
-  type UserPreferences,
-} from "@/lib/api";
+import { users, clearToken, ApiError, type UserRecord, type UserPreferences } from "@/lib/api";
 
 type RemoteChoice = "any" | "remote" | "hybrid" | "onsite";
 
@@ -118,9 +110,6 @@ export function SettingsView() {
   const [locations, setLocations] = useState<string[]>([]);
   const [minSalary, setMinSalary] = useState<string>("");
   const [remote, setRemote] = useState<RemoteChoice>("any");
-  // Data-flywheel opt-in (vantage-ui-mapping.md §3.5). Starts false until
-  // we hear from the server — the answer "off" is never silently flipped on.
-  const [crowdsourceOptIn, setCrowdsourceOptIn] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
@@ -133,14 +122,6 @@ export function SettingsView() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Export. vision.md commits to letting users export every byte we hold;
-  // until the API ships a one-shot /api/users/export, we aggregate
-  // client-side from existing endpoints. This is honest-degrade: it covers
-  // user + résumés + applications, which is everything the API currently
-  // returns scoped to the caller.
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-
   useEffect(() => {
     users
       .getMe()
@@ -152,7 +133,6 @@ export function SettingsView() {
         setLocations(p.locations ?? []);
         setMinSalary(p.minSalary != null ? String(p.minSalary) : "");
         setRemote(remoteFromBool(p.remote));
-        setCrowdsourceOptIn(p.crowdsourceOptIn === true);
       })
       .catch((err) => {
         setLoadError(err instanceof ApiError ? err.message : "Could not load your profile.");
@@ -182,10 +162,6 @@ export function SettingsView() {
     if (parsedSalary !== undefined) preferences.minSalary = parsedSalary;
     const remoteBool = remoteToBool(remote);
     if (remoteBool !== undefined) preferences.remote = remoteBool;
-    // Always send the opt-in explicitly. Sending `false` when the user
-    // turns it off is the whole point — silently dropping the field would
-    // leave a stale `true` in storage.
-    preferences.crowdsourceOptIn = crowdsourceOptIn;
 
     setSaving(true);
     try {
@@ -213,72 +189,6 @@ export function SettingsView() {
       setDeleting(false);
     }
   };
-
-  const onExport = async () => {
-    setExporting(true);
-    setExportError(null);
-    try {
-      // Fan out reads in parallel — these endpoints are scoped to the caller
-      // and don't depend on each other. Each response is unwrapped from its
-      // envelope (`{user}`, `{data|resumes}`, etc.) so the export stays flat.
-      const [meRes, resumesRes, appsRes] = await Promise.all([
-        users.getMe(),
-        resumesApi.list().catch(() => ({ data: [] as unknown[] })),
-        applicationsApi.list().catch(() => ({ data: [] as unknown[] })),
-      ]);
-
-      const unwrap = (
-        res: unknown,
-        key: "resumes" | "applications",
-      ): unknown[] => {
-        const r = res as Record<string, unknown>;
-        return (
-          (r.data as unknown[] | undefined) ??
-          (r[key] as unknown[] | undefined) ??
-          []
-        );
-      };
-
-      const payload = {
-        schema: "vantage.export.v1",
-        exported_at: new Date().toISOString(),
-        user: meRes.user,
-        resumes: unwrap(resumesRes, "resumes"),
-        applications: unwrap(appsRes, "applications"),
-      };
-
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const stamp = new Date().toISOString().slice(0, 10);
-      a.href = url;
-      a.download = `vantage-export-${stamp}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setExportError(
-        err instanceof ApiError ? err.message : "Could not export your data.",
-      );
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  // Esc cancels the delete modal — standard dialog affordance. We do NOT
-  // bind Enter to confirm; the DELETE-typing requirement is the intentional
-  // friction agent-harness.md §HITL calls for on destructive actions.
-  useEffect(() => {
-    if (!showDelete) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !deleting) setShowDelete(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [showDelete, deleting]);
 
   const created = me?.created_at
     ? new Date(me.created_at).toLocaleDateString(undefined, {
@@ -402,81 +312,21 @@ export function SettingsView() {
           </div>
         </Section>
 
-        {/* Privacy — flywheel opt-in (vantage-ui-mapping.md §3.5) */}
-        <Section
-          title="Privacy"
-          desc="Help future job-seekers without exposing yourself. Off by default."
-        >
-          <div className="flex items-start gap-3 rounded-[10px] border border-border bg-paper px-4 py-3">
-            <label
-              htmlFor="crowdsource-opt-in"
-              className="flex-1 cursor-pointer"
-            >
-              <div className="font-body text-[14px] font-semibold text-ink">
-                Donate anonymised interview questions to the shared pool
-              </div>
-              <p className="mt-1 font-body text-[13px] leading-[1.55] text-ink-light">
-                When you log a real interview, Vantage strips company /
-                personal identifiers and contributes the question text to a
-                pool that helps other users prep for the same round. Your
-                résumé, answers, and outcomes never leave your account. You
-                can turn this off at any time and any previously donated
-                questions stay in the pool — past contributions are
-                anonymised, so we can&apos;t pull a specific one back.
-              </p>
-              <a
-                href="/legal/privacy"
-                className="mt-1 inline-block font-body text-[12px] text-brown underline hover:no-underline"
-              >
-                Read what we collect →
-              </a>
-            </label>
-            <button
-              id="crowdsource-opt-in"
-              type="button"
-              role="switch"
-              aria-checked={crowdsourceOptIn}
-              onClick={() => setCrowdsourceOptIn((v) => !v)}
-              className={`mt-1 relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
-                crowdsourceOptIn ? "bg-brown" : "bg-border-dark"
-              }`}
-            >
-              <span
-                className={`absolute top-[2px] h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                  crowdsourceOptIn ? "translate-x-[22px]" : "translate-x-[2px]"
-                }`}
-              />
-              <span className="sr-only">
-                {crowdsourceOptIn ? "On" : "Off"} — toggle question donation
-              </span>
-            </button>
-          </div>
-        </Section>
-
         {/* Data (export + delete) */}
         <Section title="Data" desc="Export or permanently delete everything Vantage holds about you.">
           <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-2">
+            <div className="group relative w-fit">
               <button
                 type="button"
-                onClick={onExport}
-                disabled={exporting}
-                className="flex w-fit items-center gap-[7px] rounded-[9px] border border-border bg-white px-[16px] py-[10px] font-body text-[14px] font-medium text-ink transition-colors hover:border-border-dark disabled:cursor-not-allowed disabled:opacity-60"
+                disabled
+                className="flex cursor-not-allowed items-center gap-[7px] rounded-[9px] border border-border bg-white px-[16px] py-[10px] font-body text-[14px] font-medium text-ink-light opacity-70"
               >
                 <Download className="h-[15px] w-[15px]" strokeWidth={1.8} />
-                {exporting ? "Preparing export…" : "Export my data"}
+                Export my data
               </button>
-              <p className="font-body text-[12px] text-ink-light">
-                Downloads a JSON file with your profile, all résumé versions, and every
-                application Vantage holds for you. No server-side queue — generated on
-                the spot.
-              </p>
-              {exportError && (
-                <span className="flex items-center gap-[6px] font-body text-[12px] text-red-600">
-                  <AlertCircle className="h-[14px] w-[14px]" strokeWidth={2} />
-                  {exportError}
-                </span>
-              )}
+              <span className="pointer-events-none absolute left-0 top-full mt-1 whitespace-nowrap rounded-md bg-ink px-2 py-1 font-body text-[11px] text-paper opacity-0 transition-opacity group-hover:opacity-100">
+                Coming soon
+              </span>
             </div>
 
             <div className="mt-2 rounded-[10px] border border-red-200 bg-red-50/60 p-4">
@@ -504,25 +354,9 @@ export function SettingsView() {
 
       {/* Delete confirmation modal */}
       {showDelete && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-account-title"
-          onClick={() => {
-            if (!deleting) setShowDelete(false);
-          }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-[420px] animate-fade-up rounded-[16px] border border-border bg-white p-6 shadow-xl"
-          >
-            <h3
-              id="delete-account-title"
-              className="font-display text-[19px] font-bold text-ink"
-            >
-              Delete your account?
-            </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6">
+          <div className="w-full max-w-[420px] animate-fade-up rounded-[16px] border border-border bg-white p-6 shadow-xl">
+            <h3 className="font-display text-[19px] font-bold text-ink">Delete your account?</h3>
             <p className="mt-2 font-body text-[13px] text-ink-light">
               This permanently deletes all your data. Type{" "}
               <span className="font-mono font-semibold text-ink">DELETE</span> to confirm.
@@ -532,7 +366,6 @@ export function SettingsView() {
               value={deleteConfirm}
               onChange={(e) => setDeleteConfirm(e.target.value)}
               placeholder="DELETE"
-              aria-label="Type DELETE to confirm"
               className="mt-4 w-full rounded-[10px] border border-border bg-white px-3 py-[10px] font-mono text-[14px] text-ink outline-none focus:border-red-300"
             />
             {deleteError && (

@@ -143,13 +143,6 @@ export async function api<T = unknown>(
   return res.json();
 }
 
-/** True when an error came from fetch's transport layer (offline, DNS,
- *  CORS preflight, our 15s timeout) rather than an HTTP status. UI can
- *  use this to decide between "retry" and "fix your input" affordances. */
-export function isNetworkError(err: unknown): err is ApiError {
-  return err instanceof ApiError && err.status === 0;
-}
-
 /**
  * Pull a human-readable message out of an error body. The API uses two shapes:
  * the typed envelope `{ error: { code, message } }` (newer routes) and a plain
@@ -200,10 +193,6 @@ export interface UserPreferences {
   minSalary?: number;
   locations?: string[];
   remote?: boolean;
-  /** Opt-in to anonymised question-pool donation (vantage-ui-mapping.md
-   *  §3.5). false / undefined means we never write to
-   *  interview_question_pool from this user. */
-  crowdsourceOptIn?: boolean;
 }
 
 export interface UserRecord {

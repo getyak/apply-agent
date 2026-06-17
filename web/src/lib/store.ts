@@ -9,9 +9,6 @@ import {
   auth as authApi,
   ApiError,
   clearToken,
-  getChatSessionId,
-  setChatSessionId,
-  clearChatSessionId,
 } from "./api";
 
 export type Screen = "onboarding" | "app" | "review" | "extension" | "builder" | "mock";
@@ -935,9 +932,6 @@ export const useVantage = create<VantageState>((set, get) => ({
   // tour state — those are per-browser, not per-session.
   signOut: () => {
     clearToken();
-    // Drop the persisted chat session too, or the next user to log in on this
-    // browser would resume the previous user's conversation.
-    clearChatSessionId();
     set({
       currentUser: null,
       currentResumeId: null,
@@ -946,7 +940,6 @@ export const useVantage = create<VantageState>((set, get) => ({
       trendSnapshot: null,
       chatMessages: [],
       chatSessionId: null,
-      chatHydrating: false,
       screen: "onboarding",
     });
   },
