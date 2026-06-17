@@ -16,31 +16,156 @@
 // The flow stage lives in local React state. The store's mockState
 // stays at "live" / "setup" for backward compat with onboarding code.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   useVantage,
   MOCK_QS,
   MOCK_PROGRESS_LABELS,
   INTERVIEWING_DATA,
 } from "@/lib/store";
-import { ArrowLeft, ArrowRight, Send, X, Mic, Check } from "lucide-react";
-import { Button, Chip, HintBox } from "@/components/ui";
 import { initialsOf } from "@/lib/dates";
 
-// The mock-interview screen is the closest to a "live" demo of Relay's interview-coach surface.
-// Until store.startMockSession() exists (see TODO WEB-009 + AGENT-033), the chips/feedback are
-// still the curated MOCK_QS demo — but we ground identity (user initials, job interviewing)
-// in real data when available, fall back to the first real interview application, and surface
-// an EmptyState when there's nothing to practice against at all.
-function SetupScreen() {
-  const mockLevel = useVantage((s) => s.mockLevel);
-  const setMockLevel = useVantage((s) => s.setMockLevel);
-  const startMock = useVantage((s) => s.startMock);
+type IntelStrategy =
+  | "none"
+  | "jd_based"
+  | "crowdsourced"
+  | "recruiter_specific";
+type PressureLevel = "encourage_only" | "one_follow_up" | "chained_to_stuck";
+type FeedbackStyle =
+  | "rating_1to5"
+  | "three_perspective_translation"
+  | "one_line_per_answer";
+type LoopBehavior = "standalone" | "save_to_card" | "replay_real_interview";
+
+interface BuiltInMode {
+  slug: string;
+  name: string;
+  tagline: string;
+  intel: IntelStrategy;
+  pressure: PressureLevel;
+  feedback: FeedbackStyle;
+  loop: LoopBehavior;
+}
+
+// Mirrors infra/postgres/migrations/013_seed_interview_modes.up.sql. We
+// inline here because the modes API isn't on the dev API gateway yet
+// and the UI shouldn't block on an extra round-trip when these four are
+// the product's load-bearing defaults. Custom modes append client-side
+// once /api/interview-modes lands.
+const BUILT_IN_MODES: BuiltInMode[] = [
+  {
+    slug: "scene_recreation",
+    name: "Scene recreation",
+    tagline:
+      "Crowd-sourced intel and a single sharp follow-up. Closest to a real round.",
+    intel: "crowdsourced",
+    pressure: "one_follow_up",
+    feedback: "three_perspective_translation",
+    loop: "save_to_card",
+  },
+  {
+    slug: "pressure_drill",
+    name: "Pressure drill",
+    tagline:
+      "JD-grounded questions, chained follow-ups until you stick a landing.",
+    intel: "jd_based",
+    pressure: "chained_to_stuck",
+    feedback: "three_perspective_translation",
+    loop: "save_to_card",
+  },
+  {
+    slug: "warm_up",
+    name: "Warm-up",
+    tagline:
+      "No intel, gentle pacing. Use before a real round when you need momentum.",
+    intel: "none",
+    pressure: "encourage_only",
+    feedback: "three_perspective_translation",
+    loop: "standalone",
+  },
+  {
+    slug: "rapid_fire",
+    name: "Rapid fire",
+    tagline:
+      "No intel, no follow-ups — single-line feedback per answer. Highest reps.",
+    intel: "none",
+    pressure: "encourage_only",
+    feedback: "one_line_per_answer",
+    loop: "save_to_card",
+  },
+];
+
+function modeDescriptor(m: BuiltInMode): string {
+  const i =
+    m.intel === "none"
+      ? "NO INTEL"
+      : m.intel === "jd_based"
+        ? "JD INTEL"
+        : m.intel === "crowdsourced"
+          ? "CROWD INTEL"
+          : "RECRUITER INTEL";
+  const p =
+    m.pressure === "encourage_only"
+      ? "ENCOURAGING"
+      : m.pressure === "one_follow_up"
+        ? "ONE FOLLOW-UP"
+        : "CHAINED";
+  return `${i} · ${p}`;
+}
+
+function PressureBars({ level }: { level: PressureLevel }) {
+  const filled =
+    level === "encourage_only" ? 1 : level === "one_follow_up" ? 2 : 3;
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+      {[1, 2, 3].map((i) => (
+        <span
+          key={i}
+          style={{
+            width: 3,
+            height: 9,
+            borderRadius: 1,
+            background: i <= filled ? "#5D3000" : "#E8DCCA",
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+type Stage = "modes" | "intel" | "live" | "debrief";
+
+interface TranslationFeedback {
+  said: string;
+  heard: string;
+  rephrase: string;
+  stuck?: string;
+}
+
+interface MockMessage {
+  role: "interviewer" | "user" | "translation" | "coach";
+  text?: string;
+  label?: string;
+  labelColor?: string;
+  feedback?: TranslationFeedback;
+}
+
+export function MockScreen() {
   const backHome = useVantage((s) => s.backHome);
   const apiApplications = useVantage((s) => s.apiApplications);
+  const currentUser = useVantage((s) => s.currentUser);
 
-  // Prefer a real "interviewing" application if the user has one — otherwise fall back to the
-  // scripted demo INTERVIEWING_DATA so the surface is never empty for first-run users.
+  const [stage, setStage] = useState<Stage>("modes");
+  const [selectedSlug, setSelectedSlug] = useState<string>("scene_recreation");
+  const [qIdx, setQIdx] = useState(0);
+  const [messages, setMessages] = useState<MockMessage[]>([]);
+  const [pendingAnswer, setPendingAnswer] = useState<string>("");
+
+  const selectedMode = useMemo(
+    () => BUILT_IN_MODES.find((m) => m.slug === selectedSlug) ?? BUILT_IN_MODES[0],
+    [selectedSlug],
+  );
+
   const realInterview = apiApplications.find((a) => a.status === "interview");
   const job = realInterview
     ? {
@@ -52,173 +177,405 @@ function SetupScreen() {
       }
     : INTERVIEWING_DATA[0];
 
-  const levels = [
-    { key: "warmup" as const, label: "Warm-up" },
-    { key: "standard" as const, label: "Standard" },
-    { key: "pressure" as const, label: "Pressure" },
-  ];
+  const initials = initialsOf(currentUser?.displayName ?? "");
+
+  const intel = {
+    duration: "30 MIN",
+    style:
+      "Conversational. Stripe weighs craft and written communication heavily — expect a follow-up take-home, not a live exercise.",
+    freq: [
+      { q: "Walk me through a project you're proud of.", p: "94%" },
+      { q: "Why Stripe, specifically?", p: "81%" },
+      { q: "How do you handle disagreement with engineering?", p: "67%" },
+    ],
+    trap: {
+      q: "Tell me about a time a design of yours failed.",
+      note: "Easy to over-hedge here. Own it plainly, then show the correction with a number.",
+    },
+  };
+
+  function onModePick(slug: string) {
+    setSelectedSlug(slug);
+  }
+
+  function startMode() {
+    const m = BUILT_IN_MODES.find((x) => x.slug === selectedSlug);
+    if (!m) return;
+    setQIdx(0);
+    setMessages([]);
+    if (m.intel === "none") {
+      seedFirstQuestion();
+      setStage("live");
+    } else {
+      setStage("intel");
+    }
+  }
+
+  function beginLive() {
+    seedFirstQuestion();
+    setStage("live");
+  }
+
+  function seedFirstQuestion() {
+    const first = MOCK_QS[0];
+    setMessages([
+      {
+        role: "interviewer",
+        text: first.q,
+        label: "OPENING",
+        labelColor: "#A66A00",
+      },
+    ]);
+  }
+
+  function sendAnswer() {
+    const text = pendingAnswer.trim();
+    if (!text) return;
+    const cur = MOCK_QS[qIdx];
+    if (!cur) return;
+    setPendingAnswer("");
+
+    const nextMsgs: MockMessage[] = [
+      ...messages,
+      { role: "user", text },
+    ];
+
+    if (selectedMode.feedback === "three_perspective_translation") {
+      nextMsgs.push({
+        role: "translation",
+        feedback: {
+          said: text,
+          heard:
+            "Confident, but they're listening for the *decision* you made — not just the outcome.",
+          rephrase: cur.feedback,
+          stuck:
+            selectedMode.pressure === "chained_to_stuck"
+              ? "Stuck on impact — next time, lead with the metric in one sentence."
+              : undefined,
+        },
+      });
+    } else if (selectedMode.feedback === "one_line_per_answer") {
+      nextMsgs.push({
+        role: "coach",
+        text: cur.feedback,
+      });
+    }
+
+    const nextIdx = qIdx + 1;
+    if (nextIdx < MOCK_QS.length) {
+      const followUp =
+        selectedMode.pressure === "one_follow_up" ||
+        selectedMode.pressure === "chained_to_stuck";
+      const nq = MOCK_QS[nextIdx];
+      nextMsgs.push({
+        role: "interviewer",
+        text: nq.q,
+        label: followUp ? "FOLLOW-UP" : undefined,
+        labelColor: followUp ? "#A23A2E" : "#A66A00",
+      });
+      setMessages(nextMsgs);
+      setQIdx(nextIdx);
+    } else {
+      setMessages(nextMsgs);
+      setStage("debrief");
+    }
+  }
+
+  if (stage === "modes") {
+    return (
+      <Shell>
+        <ModeGallery
+          job={job}
+          modes={BUILT_IN_MODES}
+          selectedSlug={selectedSlug}
+          onPick={onModePick}
+          onStart={startMode}
+          onBack={backHome}
+        />
+      </Shell>
+    );
+  }
+
+  if (stage === "intel") {
+    return (
+      <Shell>
+        <IntelBrief
+          job={job}
+          intel={intel}
+          onBack={() => setStage("modes")}
+          onBegin={beginLive}
+        />
+      </Shell>
+    );
+  }
+
+  if (stage === "live") {
+    return (
+      <Shell>
+        <LiveStage
+          job={job}
+          mode={selectedMode}
+          initials={initials}
+          messages={messages}
+          pendingAnswer={pendingAnswer}
+          setPendingAnswer={setPendingAnswer}
+          onBack={() => setStage("modes")}
+          onSend={sendAnswer}
+          progressIdx={qIdx}
+        />
+      </Shell>
+    );
+  }
 
   return (
-    <div
-      className="flex-1 flex items-center justify-center overflow-auto p-8"
-      style={{ background: "radial-gradient(120% 100% at 50% 0%, #FFFDFB 0%, var(--color-paper) 60%)" }}
-    >
-      <div className="w-[520px] max-w-full animate-fade-up">
-        <Button
-          onClick={backHome}
-          variant="ghost"
-          size="sm"
-          leadingIcon={<ArrowLeft size={16} strokeWidth={1.8} />}
-          className="mb-5 !px-[6px]"
-        >
-          Back
-        </Button>
-        <div className="font-mono text-[11px] tracking-[1px] uppercase text-amber mb-[10px]">
-          Mock interview
-        </div>
+    <Shell>
+      <Debrief
+        job={job}
+        focusNext="Owning impact, naming the metric early"
+        onRestart={() => {
+          setQIdx(0);
+          setMessages([]);
+          setStage("modes");
+        }}
+        onDone={backHome}
+      />
+    </Shell>
+  );
+}
 
-        <h1
-          style={{
-            fontFamily: "Inter",
-            fontWeight: 600,
-            fontSize: 32,
-            lineHeight: 1.15,
-            letterSpacing: -0.5,
-            color: M.ink,
-            margin: "0 0 12px",
-          }}
-        >
-          Pick how you want to rehearse.
-        </h1>
-        <p
-          style={{
-            fontFamily: "Inter",
-            fontSize: 15,
-            lineHeight: 1.55,
-            color: M.body,
-            margin: "0 0 32px",
-            maxWidth: 560,
-          }}
-        >
-          Each mode is a different way to practise for a real round.
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="animate-fade-in"
+      style={{
+        height: "100vh",
+        width: "100vw",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        background: "#FAF8F6",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModeGallery({
+  job,
+  modes,
+  selectedSlug,
+  onPick,
+  onStart,
+  onBack,
+}: {
+  job: { mono: string; co: string; role: string; stage: string; when: string };
+  modes: BuiltInMode[];
+  selectedSlug: string;
+  onPick: (slug: string) => void;
+  onStart: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        overflowY: "auto",
+        padding: "38px 32px 64px",
+        background: "radial-gradient(120% 80% at 50% 0%, #FFFDFB 0%, #FAF8F6 60%)",
+      }}
+    >
+      <div style={{ maxWidth: 780, margin: "0 auto" }} className="animate-fade-up">
+        <button onClick={onBack} style={ghostBtnStyle()}>
+          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M11 18l-6-6 6-6" />
+          </svg>
+          Back
+        </button>
+        <div className="ds-mono-11" style={{ color: "#A66A00", marginBottom: 10 }}>
+          MOCK INTERVIEW
+        </div>
+        <h1 className="ds-h1" style={{ margin: "0 0 10px" }}>Pick how you want to rehearse.</h1>
+        <p className="ds-body-md" style={{ margin: "0 0 24px", color: "#6B6560", maxWidth: 560 }}>
+          Each mode is a different way to practise for a real round — armed with intel, pushed under pressure, or warmed up gently.
         </p>
 
-        <div className="bg-white border border-border rounded-[14px] p-[22px] shadow-sm mb-4">
-          <div className="font-display font-bold text-[10px] tracking-[1.4px] uppercase text-ink-muted mb-[13px]">
+        <div className="ds-card" style={{ display: "flex", alignItems: "center", gap: 13, padding: "15px 18px", marginBottom: 22 }}>
+          <div
+            style={{
+              width: 42,
+              height: 42,
+              borderRadius: 11,
+              background: "#F3F0EB",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontFamily: "Space Grotesk",
+              fontWeight: 700,
+              fontSize: 16,
+              color: "#2B2822",
+              flexShrink: 0,
+            }}
+          >
+            {job.mono}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="ds-body-sm" style={{ fontWeight: 600, fontSize: 15 }}>{job.role}</div>
+            <div className="ds-body-sm" style={{ fontSize: 13, color: "#6B6560" }}>
+              {job.co} · {job.stage} · real interview {job.when}
+            </div>
+          </div>
+          <span
+            style={{
+              fontFamily: "JetBrains Mono",
+              fontSize: 9,
+              letterSpacing: 0.5,
+              textTransform: "uppercase",
+              color: "#A66A00",
+              background: "#F8ECD6",
+              padding: "4px 9px",
+              borderRadius: 5,
+            }}
+          >
             Practising for
-          </div>
-          <div className="flex items-center gap-[13px] mb-[18px]">
-            <div
-              className="w-[46px] h-[46px] rounded-[11px] bg-cream flex items-center justify-center font-display font-bold text-[18px] text-ink"
-              aria-label={`${job.co} interview`}
-            >
-              {job.mono}
-            </div>
-            <div>
-              <div className="font-body font-semibold text-[16px] text-ink">
-                {job.role}
-              </div>
-              <div className="font-body text-[13px] text-ink-light">
-                {job.co} · {job.stage} · {realInterview ? "live application" : "demo"} {job.when}
-              </div>
-            </div>
-          </div>
-          <div className="font-display font-bold text-[10px] tracking-[1.4px] uppercase text-ink-muted mb-[9px]">
-            Intensity
-          </div>
-          <div className="flex gap-2">
-            {levels.map((lv) => (
-              <Button
-                key={lv.key}
-                onClick={() => setMockLevel(lv.key)}
-                variant={mockLevel === lv.key ? "primary" : "secondary"}
-                size="sm"
-              >
-                {lv.label}
-              </Button>
-            ))}
-          </div>
+          </span>
         </div>
 
-        <Button
-          onClick={startMock}
-          fullWidth
-          size="lg"
-          trailingIcon={<ArrowRight size={17} strokeWidth={2} />}
-        >
-          Start session
-        </Button>
-        <div className="text-center mt-3 font-mono text-[10px] tracking-[0.5px] uppercase text-ink-muted">
-          5 questions · ~10 min · coached live
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          {modes.map((m) => {
+            const isSel = m.slug === selectedSlug;
+            return (
+              <button
+                key={m.slug}
+                onClick={() => onPick(m.slug)}
+                style={modeCardStyle(isSel)}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+                  <span style={{ fontFamily: "Space Grotesk", fontWeight: 700, fontSize: 16, color: "#2B2822" }}>
+                    {m.name}
+                  </span>
+                </div>
+                <div className="ds-body-sm" style={{ fontSize: 13.5, color: "#6B6560", marginBottom: 14, minHeight: 40 }}>
+                  {m.tagline}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span className="ds-mono-9" style={{ color: "#5D3000" }}>{modeDescriptor(m)}</span>
+                  <span style={{ color: "#E2DACB" }}>·</span>
+                  <PressureBars level={m.pressure} />
+                </div>
+              </button>
+            );
+          })}
         </div>
+
+        <button onClick={onStart} style={primaryBtnStyle()}>
+          Start · {modes.find((x) => x.slug === selectedSlug)?.name}
+          <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FAF8F6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
       </div>
     </div>
   );
 }
 
-function LiveSession() {
-  const mockAnswers = useVantage((s) => s.mockAnswers);
-  const pendingAnswer = useVantage((s) => s.pendingAnswer);
-  const mockThinking = useVantage((s) => s.mockThinking);
-  const mockLevel = useVantage((s) => s.mockLevel);
-  const answerMock = useVantage((s) => s.answerMock);
-  const sendMock = useVantage((s) => s.sendMock);
-  const restartMock = useVantage((s) => s.restartMock);
-  const backHome = useVantage((s) => s.backHome);
-  const apiApplications = useVantage((s) => s.apiApplications);
-  const parsedResume = useVantage((s) => s.parsedResume);
-  const currentUser = useVantage((s) => s.currentUser);
-
-  const realInterview = apiApplications.find((a) => a.status === "interview");
-  const job = realInterview
-    ? {
-        mono: realInterview.company.charAt(0).toUpperCase(),
-        co: realInterview.company,
-        role: realInterview.role_title,
-      }
-    : { mono: INTERVIEWING_DATA[0].mono, co: INTERVIEWING_DATA[0].co, role: INTERVIEWING_DATA[0].role };
-
-  const userName = parsedResume?.basics?.name || currentUser?.displayName || "You";
-  const userInitials = initialsOf(userName);
-
-  const qIdx = mockAnswers.length;
-  const isComplete = qIdx >= MOCK_QS.length;
-  const canAnswer = !isComplete && pendingAnswer === null && !mockThinking;
-
-        <div
-          style={{
-            fontFamily: "JetBrains Mono",
-            fontSize: 11,
-            letterSpacing: 1,
-            color: M.muted,
-            textTransform: "uppercase",
-            marginBottom: 10,
-          }}
-        >
-          Most likely questions
+function IntelBrief({
+  job,
+  intel,
+  onBack,
+  onBegin,
+}: {
+  job: { co: string; stage: string };
+  intel: {
+    duration: string;
+    style: string;
+    freq: { q: string; p: string }[];
+    trap: { q: string; note: string };
+  };
+  onBack: () => void;
+  onBegin: () => void;
+}) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        overflowY: "auto",
+        padding: "38px 32px 64px",
+        background: "radial-gradient(120% 80% at 50% 0%, #FFFDFB 0%, #FAF8F6 60%)",
+      }}
+    >
+      <div style={{ maxWidth: 680, margin: "0 auto" }} className="animate-fade-up">
+        <button onClick={onBack} style={ghostBtnStyle()}>
+          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M11 18l-6-6 6-6" />
+          </svg>
+          Modes
+        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#A66A00" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx={12} cy={12} r={10} />
+            <circle cx={12} cy={12} r={6} />
+            <circle cx={12} cy={12} r={2} />
+          </svg>
+          <span className="ds-mono-11" style={{ color: "#A66A00" }}>
+            INTEL BRIEF · {job.co} · {job.stage}
+          </span>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+        <h1 className="ds-h1" style={{ margin: "0 0 10px" }}>
+          Before you rehearse — here&apos;s what this round actually asks.
+        </h1>
+        <p className="ds-body-md" style={{ fontSize: 15, color: "#6B6560", margin: "0 0 24px" }}>
+          Pulled from our crowd-sourced question bank and public signals. We&apos;ll drill the likely ones first, then go random.
+        </p>
+
+        <div className="ds-card" style={{ padding: "18px 20px", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11 }}>
+            <span style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 15, color: "#2B2822" }}>
+              {job.stage}
+            </span>
+            <span
+              style={{
+                fontFamily: "JetBrains Mono",
+                fontSize: 10,
+                letterSpacing: 0.4,
+                color: "#5D3000",
+                background: "#F5EDE3",
+                padding: "3px 9px",
+                borderRadius: 5,
+              }}
+            >
+              {intel.duration}
+            </span>
+          </div>
+          <div className="ds-body-sm" style={{ fontSize: 13.5, lineHeight: 1.6, color: "#6B6560" }}>
+            {intel.style}
+          </div>
+        </div>
+
+        <div className="ds-label" style={{ marginBottom: 11 }}>MOST LIKELY QUESTIONS</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
           {intel.freq.map((q) => (
             <div
               key={q.q}
+              className="ds-card"
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 14,
-                background: M.surface,
-                border: `1px solid ${M.border}`,
-                padding: "12px 14px",
-                borderRadius: 8,
+                gap: 13,
+                padding: "13px 16px",
+                borderRadius: 11,
               }}
             >
-              <span style={{ flex: 1, fontFamily: "Inter", fontSize: 14, color: M.ink }}>{q.q}</span>
+              <span style={{ flex: 1, fontFamily: "Inter", fontSize: 14, color: "#2B2822" }}>{q.q}</span>
               <span
                 style={{
                   fontFamily: "JetBrains Mono",
                   fontSize: 11,
                   fontWeight: 500,
-                  color: M.body,
-                  letterSpacing: 0.4,
+                  color: "#4C7A3F",
+                  background: "#EBF3E5",
+                  padding: "3px 9px",
+                  borderRadius: 5,
                 }}
               >
                 {q.p}
@@ -227,38 +584,33 @@ function LiveSession() {
           ))}
         </div>
 
-        {/* THE TRAP — the one place a red accent earns its keep. */}
         <div
           style={{
-            background: M.dangerBg,
-            border: `1px solid ${M.dangerBorder}`,
-            borderRadius: 10,
-            padding: "16px 18px",
-            marginBottom: 28,
+            background: "#FBEDEA",
+            border: "1px solid #E8C4BC",
+            borderRadius: 13,
+            padding: "18px 20px",
+            marginBottom: 22,
           }}
         >
-          <div
-            style={{
-              fontFamily: "JetBrains Mono",
-              fontSize: 10.5,
-              letterSpacing: 1,
-              color: M.danger,
-              marginBottom: 8,
-            }}
-          >
-            THE TRAP
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#A23A2E" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z" />
+              <path d="M12 9v4M12 17h.01" />
+            </svg>
+            <span className="ds-mono-10" style={{ color: "#A23A2E" }}>THE TRAP</span>
           </div>
-          <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 15, color: M.ink, marginBottom: 6 }}>
+          <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 15, color: "#2B2822", marginBottom: 6 }}>
             {intel.trap.q}
           </div>
-          <div style={{ fontFamily: "Inter", fontSize: 13.5, lineHeight: 1.55, color: M.body }}>
+          <div style={{ fontFamily: "Inter", fontSize: 13.5, lineHeight: 1.6, color: "#7a3b32" }}>
             {intel.trap.note}
           </div>
         </div>
 
         <button onClick={onBegin} style={primaryBtnStyle()}>
-          I&apos;m ready — start
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={M.surface} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          I&apos;m ready — start the session
+          <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FAF8F6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 12h14M13 6l6 6-6 6" />
           </svg>
         </button>
@@ -288,284 +640,196 @@ function LiveStage({
   onSend: () => void;
   progressIdx: number;
 }) {
-  const total = MOCK_QS.length;
-  const curr = Math.min(progressIdx + 1, total);
-  // Topics breakdown becomes a hover tooltip in the progress pill so the
-  // right-rail is gone entirely — the live screen is now single-column,
-  // centered, and immersive. Tooltip text is plain HTML title for now.
-  const tooltip = MOCK_PROGRESS_LABELS.map((label, i) => {
-    const marker = i < progressIdx ? "✓" : i === progressIdx ? "›" : " ";
-    return `${marker} ${label}`;
-  }).join("\n");
-
   return (
     <>
-      <div className="h-[60px] shrink-0 border-b border-border bg-paper/85 backdrop-blur-xl flex items-center px-6 gap-[14px]">
-        <button
-          onClick={backHome}
-          aria-label="Close mock interview"
-          className="cursor-pointer border-none bg-transparent flex items-center text-ink-light p-1 hover:text-ink rounded outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
-        >
-          <X className="w-[19px] h-[19px]" strokeWidth={1.8} />
+      <div
+        className="ds-backdrop"
+        style={{
+          height: 60,
+          flexShrink: 0,
+          borderBottom: "1px solid #EDE8DF",
+          display: "flex",
+          alignItems: "center",
+          padding: "0 24px",
+          gap: 14,
+        }}
+      >
+        <button onClick={onBack} style={iconBtnStyleInk()}>
+          <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
         </button>
         <div
-          className="w-[30px] h-[30px] rounded-lg bg-cream flex items-center justify-center font-display font-bold text-[13px] text-ink"
-          aria-label={`${job.co} interview`}
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            background: "#2B2822",
+            color: "#FAF8F6",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: "Space Grotesk",
+            fontWeight: 700,
+            fontSize: 13,
+          }}
         >
           {job.mono}
         </div>
         <div>
-          <div className="font-body font-semibold text-[14px] text-ink leading-[1.1]">
+          <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: "#2B2822", lineHeight: 1.1 }}>
             {job.role}
           </div>
-          <div
-            style={{
-              fontFamily: "JetBrains Mono",
-              fontSize: 10.5,
-              letterSpacing: 0.8,
-              color: M.muted,
-              textTransform: "uppercase",
-              marginTop: 2,
-            }}
-          >
-            {job.co} · {mode.name}
-          </div>
+          <div className="ds-mono-10">{job.co.toUpperCase()} · {mode.name.toUpperCase()}</div>
         </div>
         <div
-          title={tooltip}
           style={{
             marginLeft: "auto",
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: 7,
             fontFamily: "JetBrains Mono",
             fontSize: 11,
             letterSpacing: 0.6,
-            color: M.body,
-            border: `1px solid ${M.border}`,
-            padding: "5px 11px",
+            textTransform: "uppercase",
+            color: "#5D3000",
+            background: "#F5EDE3",
+            border: "1px solid #E8DCCA",
+            padding: "6px 12px",
             borderRadius: 999,
-            cursor: "default",
           }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: 999, background: M.accent }} />
-          {curr} / {total}
+          <span style={{ width: 7, height: 7, borderRadius: 999, background: "#A23A2E" }} />
+          Topic {Math.min(progressIdx + 1, MOCK_QS.length)} of {MOCK_QS.length}
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 min-w-0 flex flex-col">
-          <div className="flex-1 overflow-y-auto py-[30px]">
-            <div className="max-w-[680px] mx-auto px-10 flex flex-col gap-5">
-              {MOCK_QS.slice(0, qIdx + (isComplete ? 0 : 1)).map((q, i) => {
-                const answered = i < mockAnswers.length;
-                const isPending = i === qIdx && pendingAnswer !== null;
-
-                return (
-                  <div key={i} className="flex flex-col gap-3">
-                    <div className="flex gap-[11px] items-start">
-                      <div className="w-[34px] h-[34px] rounded-[9px] bg-ink text-paper shrink-0 flex items-center justify-center font-display font-bold text-[13px]">
-                        {job.mono}
-                      </div>
-                      <div className="flex flex-col">
-                        <div className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted mb-[6px]">
-                          Interviewer
-                        </div>
-                        <div className="font-body text-[15px] leading-[1.55] text-ink max-w-[520px]">
-                          {q.q}
-                        </div>
-                      </div>
-                    </div>
-
-                    {(answered || isPending) && (
-                      <div className="flex gap-[11px] items-start justify-end">
-                        <div className="flex flex-col items-end">
-                          <div className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted mb-[6px]">
-                            You
-                          </div>
-                          <div className="bg-brown text-paper font-body text-[14px] leading-[1.5] px-4 py-[10px] rounded-[13px] rounded-br-[4px] max-w-[460px]">
-                            {isPending ? pendingAnswer : mockAnswers[i]}
-                          </div>
-                        </div>
-                        <div
-                          className="w-[34px] h-[34px] rounded-[9px] bg-cream-border text-brown shrink-0 flex items-center justify-center font-display font-bold text-[13px]"
-                          aria-label={userName}
-                        >
-                          {userInitials}
-                        </div>
-                      </div>
-                    )}
-
-                    {answered && (
-                      <div className="flex gap-[11px] items-start">
-                        <div className="w-[34px] shrink-0" />
-                        <HintBox label="Coach" tone="ai" className="max-w-[520px]">
-                          {q.feedback}
-                        </HintBox>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {mockThinking && (
-                <div className="flex gap-[11px] items-center">
-                  <div className="w-[34px] h-[34px] rounded-[9px] bg-ink text-paper shrink-0 flex items-center justify-center font-display font-bold text-[13px]">
-                    {job.mono}
-                  </div>
-                  <div className="flex gap-1">
-                    <span className="w-[6px] h-[6px] rounded-full bg-border-dark animate-bob" />
-                    <span className="w-[6px] h-[6px] rounded-full bg-border-dark animate-bob [animation-delay:0.15s]" />
-                    <span className="w-[6px] h-[6px] rounded-full bg-border-dark animate-bob [animation-delay:0.3s]" />
-                  </div>
-                </div>
-              )}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "30px 0" }}>
+            <div style={{ maxWidth: 700, margin: "0 auto", padding: "0 40px", display: "flex", flexDirection: "column", gap: 20 }}>
+              {messages.map((m, i) => (
+                <MessageBlock key={i} m={m} job={job} initials={initials} />
+              ))}
             </div>
           </div>
 
-          {canAnswer && (
-            <div className="shrink-0 border-t border-border bg-paper px-10 pt-[14px] pb-[22px]">
-              <div className="max-w-[680px] mx-auto">
-                <div className="flex items-center gap-2 mb-[10px]">
-                  <span className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted">
-                    Suggested angle
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {MOCK_QS[qIdx].chips.map((c) => (
-                    <Chip key={c} onClick={() => answerMock(MOCK_QS[qIdx].sample)}>
-                      {c}
-                    </Chip>
-                  ))}
-                </div>
-                <div className="flex items-center gap-[10px] bg-white border border-border-dark rounded-xl pl-4 pr-[5px] py-[5px]">
-                  <button className="border-none bg-transparent cursor-pointer flex items-center text-ink-light shrink-0 hover:text-brown">
-                    <Mic className="w-[18px] h-[18px]" strokeWidth={1.7} />
-                  </button>
-                  <span className="flex-1 font-body text-[14px] text-ink-muted">
-                    Type your answer, or speak it…
-                  </span>
-                  <button
-                    onClick={sendMock}
-                    className="cursor-pointer border-none bg-brown w-[34px] h-[34px] rounded-[9px] flex items-center justify-center shrink-0 hover:bg-brown-light transition-colors"
-                  >
-                    <Send className="w-4 h-4 text-paper" strokeWidth={2} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {isComplete && (
-            <div className="shrink-0 border-t border-border bg-white px-10 py-[18px]">
-              <div className="max-w-[680px] mx-auto w-full flex items-center gap-4">
-                <svg
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#4C7A3F"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="shrink-0"
-                  aria-hidden
-                >
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <path d="M22 4L12 14.01l-3-3" />
-                </svg>
-                <div className="flex-1 font-body text-[14px] text-ink">
-                  Session complete. You&apos;re noticeably sharper on impact
-                  metrics — bring that into the real round.
-                </div>
-                <Button onClick={restartMock} variant="secondary" size="sm">
-                  Run it again
-                </Button>
-                <Button onClick={backHome} size="sm">
-                  Done
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="w-[300px] shrink-0 border-l border-border bg-cream overflow-y-auto px-6 py-7">
-          <div className="font-display font-bold text-[11px] tracking-[1.3px] uppercase text-ink-light mb-4">
-            Live read
-          </div>
-          <div className="flex flex-col gap-[18px] mb-7">
-            {scoreData.map((sc) => (
-              <div key={sc.label}>
-                <div className="flex items-center justify-between mb-[7px]">
-                  <span className="font-body font-medium text-[13px] text-ink">
-                    {sc.label}
-                  </span>
-                  <span
-                    className="font-mono text-[11px] font-medium"
-                    style={{ color: sc.color }}
-                  >
-                    {sc.pct}%
-                  </span>
-                </div>
-                <div className="h-[7px] rounded-full bg-border overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-[width] duration-500 ease-out"
-                    style={{ width: `${sc.pct}%`, background: sc.color }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ flexShrink: 0, borderTop: `1px solid ${M.border}`, background: M.surface, padding: "16px 40px 24px" }}>
-          <div style={{ maxWidth: 760, margin: "0 auto" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-end",
-                gap: 10,
-                background: M.surface,
-                border: `1px solid ${M.borderStrong}`,
-                borderRadius: 10,
-                padding: "10px 10px 10px 14px",
-              }}
-            >
-              <textarea
-                value={pendingAnswer}
-                onChange={(e) => setPendingAnswer(e.target.value)}
-                onKeyDown={(e) => {
-                  // Cmd/Ctrl+Enter sends. Plain Enter inserts a newline — answering
-                  // an interview question is rarely one short line, so don't punish
-                  // the user for hitting Enter mid-thought.
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    onSend();
-                  }
-                }}
-                placeholder="Type your answer…   ⌘↵ to send"
-                rows={3}
+          <div style={{ flexShrink: 0, borderTop: "1px solid #EDE8DF", background: "#FAF8F6", padding: "14px 40px 22px" }}>
+            <div style={{ maxWidth: 700, margin: "0 auto" }}>
+              <div
                 style={{
-                  flex: 1,
-                  border: "none",
-                  outline: "none",
-                  resize: "none",
-                  fontFamily: "Inter",
-                  fontSize: 14,
-                  lineHeight: 1.55,
-                  color: M.ink,
-                  padding: "4px 0",
-                  background: "transparent",
-                  minHeight: 60,
-                  maxHeight: 200,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  background: "#FFFFFF",
+                  border: "1px solid #D6CEC0",
+                  borderRadius: 12,
+                  padding: "5px 5px 5px 16px",
                 }}
-              />
-              <button onClick={onSend} style={sendBtnStyle()} aria-label="Send answer">
-                <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={M.surface} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" />
-                </svg>
-              </button>
+              >
+                <input
+                  value={pendingAnswer}
+                  onChange={(e) => setPendingAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      onSend();
+                    }
+                  }}
+                  placeholder="Type your answer, or speak it…"
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    outline: "none",
+                    fontFamily: "Inter",
+                    fontSize: 14,
+                    color: "#2B2822",
+                    padding: "9px 0",
+                    background: "transparent",
+                  }}
+                />
+                <button onClick={onSend} style={sendBtnStyle()}>
+                  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#FAF8F6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" />
+                  </svg>
+                </button>
+              </div>
             </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            width: 300,
+            flexShrink: 0,
+            borderLeft: "1px solid #EDE8DF",
+            background: "#FBF8F3",
+            overflowY: "auto",
+            padding: "28px 24px",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: 12 }}>THIS MODE</div>
+          <div className="ds-card" style={{ padding: 14, marginBottom: 26 }}>
+            <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: "#2B2822", marginBottom: 4 }}>
+              {mode.name}
+            </div>
+            <div className="ds-mono-10" style={{ color: "#A23A2E" }}>
+              {modeDescriptor(mode)}
+            </div>
+          </div>
+          <div className="ds-label" style={{ marginBottom: 13 }}>TOPICS</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 24 }}>
+            {MOCK_PROGRESS_LABELS.map((label, i) => {
+              const done = i < progressIdx;
+              const active = i === progressIdx;
+              return (
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 5,
+                      background: done ? "#5D3000" : active ? "#F5EDE3" : "#EDE8DF",
+                      border: active ? "1px solid #E8DCCA" : "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {done && (
+                      <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="#FAF8F6" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                    )}
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: "Inter",
+                      fontSize: 13,
+                      color: done ? "#2B2822" : active ? "#2B2822" : "#A39F99",
+                      fontWeight: done ? 500 : 400,
+                    }}
+                  >
+                    {label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div
+            style={{
+              background: "#FFFBF4",
+              border: "1px solid #E8DCCA",
+              borderRadius: 10,
+              padding: "12px 13px",
+              fontFamily: "Inter",
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: "#6B6560",
+            }}
+          >
+            No scores here. After each answer you get the interviewer&apos;s read — what they heard, and how to say it better.
           </div>
         </div>
       </div>
@@ -582,32 +846,22 @@ function MessageBlock({
   job: { mono: string };
   initials: string;
 }) {
-  // Mono section labels render in mute gray here so accent stays scarce.
-  const monoLabel = (text: string, color = M.muted): React.CSSProperties => ({
-    fontFamily: "JetBrains Mono",
-    fontSize: 10,
-    letterSpacing: 1,
-    color,
-    marginBottom: 6,
-    textTransform: "uppercase",
-  });
-
   if (m.role === "interviewer") {
     return (
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+      <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
         <div
           style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            background: M.ink,
-            color: M.surface,
+            width: 34,
+            height: 34,
+            borderRadius: 9,
+            background: "#2B2822",
+            color: "#FAF8F6",
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontFamily: "Inter",
-            fontWeight: 600,
+            fontFamily: "Space Grotesk",
+            fontWeight: 700,
             fontSize: 13,
           }}
         >
@@ -615,20 +869,20 @@ function MessageBlock({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           {m.label && (
-            <div style={monoLabel(m.label === "FOLLOW-UP" ? M.accent : M.muted)}>
+            <div className="ds-mono-9" style={{ color: m.labelColor ?? "#A66A00", marginBottom: 6 }}>
               {m.label}
             </div>
           )}
           <div
             style={{
-              background: M.surface,
-              border: `1px solid ${M.border}`,
-              borderRadius: 10,
-              padding: "14px 16px",
+              background: "#FFFFFF",
+              border: "1px solid #EDE8DF",
+              borderRadius: 13,
+              padding: "13px 16px",
               fontFamily: "Inter",
-              fontSize: 16,
+              fontSize: 14.5,
               lineHeight: 1.55,
-              color: M.ink,
+              color: "#2B2822",
             }}
           >
             {m.text}
@@ -639,14 +893,14 @@ function MessageBlock({
   }
   if (m.role === "user") {
     return (
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", gap: 11, alignItems: "flex-start", justifyContent: "flex-end" }}>
         <div
           style={{
-            maxWidth: 540,
-            background: M.ink,
-            color: M.surface,
-            borderRadius: 10,
-            padding: "14px 16px",
+            maxWidth: 480,
+            background: "#5D3000",
+            color: "#FAF8F6",
+            borderRadius: 13,
+            padding: "13px 16px",
             fontFamily: "Inter",
             fontSize: 14,
             lineHeight: 1.55,
@@ -658,19 +912,18 @@ function MessageBlock({
         </div>
         <div
           style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            background: M.surfaceAlt,
-            color: M.ink,
+            width: 34,
+            height: 34,
+            borderRadius: 9,
+            background: "#E8DCCA",
+            color: "#5D3000",
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontFamily: "Inter",
-            fontWeight: 600,
-            fontSize: 12,
-            border: `1px solid ${M.border}`,
+            fontFamily: "Space Grotesk",
+            fontWeight: 700,
+            fontSize: 13,
           }}
         >
           {initials}
@@ -683,56 +936,53 @@ function MessageBlock({
     return (
       <div
         style={{
-          marginLeft: 44,
-          maxWidth: 600,
-          background: M.surface,
-          border: `1px solid ${M.border}`,
-          borderRadius: 10,
+          marginLeft: 46,
+          maxWidth: 560,
+          background: "#FFFFFF",
+          border: "1px solid #E8DCCA",
+          borderRadius: 13,
           overflow: "hidden",
+          boxShadow: "0 1px 2px rgba(0,0,0,.04)",
         }}
       >
         <div
           style={{
-            borderBottom: `1px solid ${M.border}`,
-            padding: "10px 16px",
-            fontFamily: "JetBrains Mono",
-            fontSize: 10.5,
-            letterSpacing: 1,
-            color: M.muted,
+            background: "#FBF8F3",
+            borderBottom: "1px solid #EDE8DF",
+            padding: "9px 15px",
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
           }}
         >
-          WHAT THE INTERVIEWER HEARD
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#A66A00" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+            <circle cx={12} cy={12} r={3} />
+          </svg>
+          <span className="ds-mono-9" style={{ color: "#A66A00" }}>WHAT THE INTERVIEWER HEARD</span>
         </div>
-        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: 15, display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
-            <div style={monoLabel("YOU SAID")}>YOU SAID</div>
-            <div style={{ fontFamily: "Inter", fontSize: 13.5, color: M.body, fontStyle: "italic", lineHeight: 1.55 }}>
+            <div className="ds-mono-9" style={{ color: "#A39F99", marginBottom: 4 }}>YOU SAID</div>
+            <div className="ds-body-sm" style={{ fontSize: 13.5, color: "#6B6560", fontStyle: "italic" }}>
               “{fb.said}”
             </div>
           </div>
-          <div style={{ borderLeft: `2px solid ${M.borderStrong}`, paddingLeft: 14 }}>
-            <div style={monoLabel("WHAT THEY HEARD")}>WHAT THEY HEARD</div>
-            <div style={{ fontFamily: "Inter", fontSize: 14, color: M.ink, lineHeight: 1.55 }}>{fb.heard}</div>
+          <div style={{ background: "#FBF8F3", border: "1px solid #EDE8DF", borderRadius: 9, padding: "11px 13px" }}>
+            <div className="ds-mono-9" style={{ color: "#A66A00", marginBottom: 4 }}>WHAT THEY HEARD</div>
+            <div className="ds-body-sm" style={{ fontSize: 13.5 }}>{fb.heard}</div>
           </div>
-          <div style={{ borderLeft: `2px solid ${M.accent}`, paddingLeft: 14 }}>
-            <div style={monoLabel("TRY INSTEAD")}>TRY INSTEAD</div>
-            <div style={{ fontFamily: "Inter", fontSize: 14, color: M.ink, lineHeight: 1.55 }}>{fb.rephrase}</div>
+          <div style={{ background: "#EBF3E5", border: "1px solid #cfe3c2", borderRadius: 9, padding: "11px 13px" }}>
+            <div className="ds-mono-9" style={{ color: "#4C7A3F", marginBottom: 4 }}>TRY INSTEAD</div>
+            <div className="ds-body-sm" style={{ fontSize: 13.5, color: "#2d4a25" }}>{fb.rephrase}</div>
           </div>
           {fb.stuck && (
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-start", borderTop: `1px solid ${M.border}`, paddingTop: 14 }}>
-              <span
-                style={{
-                  flexShrink: 0,
-                  marginTop: 2,
-                  fontFamily: "JetBrains Mono",
-                  fontSize: 10,
-                  letterSpacing: 1,
-                  color: M.danger,
-                }}
-              >
-                STUCK
-              </span>
-              <div style={{ fontFamily: "Inter", fontSize: 13, color: M.body, lineHeight: 1.55 }}>{fb.stuck}</div>
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", borderTop: "1px solid #EDE8DF", paddingTop: 11 }}>
+              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#A23A2E" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}>
+                <path d="M12 9v4M12 17h.01" />
+                <circle cx={12} cy={12} r={10} />
+              </svg>
+              <div className="ds-body-sm" style={{ fontSize: 13, color: "#7a3b32" }}>{fb.stuck}</div>
             </div>
           )}
         </div>
@@ -743,46 +993,21 @@ function MessageBlock({
     return (
       <div
         style={{
-          marginLeft: 44,
-          maxWidth: 560,
-          background: M.surface,
-          border: `1px solid ${M.border}`,
-          borderLeft: `3px solid ${M.accent}`,
-          borderRadius: 8,
-          padding: "12px 16px",
+          marginLeft: 46,
+          maxWidth: 520,
+          background: "#FFFBF4",
+          border: "1px solid #E8DCCA",
+          borderRadius: 11,
+          padding: "13px 16px",
         }}
       >
-        <div
-          style={{
-            fontFamily: "JetBrains Mono",
-            fontSize: 10,
-            letterSpacing: 1,
-            color: M.muted,
-            marginBottom: 5,
-          }}
-        >
-          COACH
-        </div>
-        <div style={{ fontFamily: "Inter", fontSize: 14, color: M.ink, lineHeight: 1.55 }}>{m.text}</div>
+        <div className="ds-mono-9" style={{ color: "#A66A00", marginBottom: 5 }}>COACH</div>
+        <div className="ds-body-sm" style={{ fontSize: 13.5, color: "#3a352e" }}>{m.text}</div>
       </div>
     );
   }
   return null;
 }
-
-// Per-topic "interviewer heard" lines for the debrief. One distinct sentence
-// per topic — the previous version repeated the same string 5 times, which
-// is the "假数据感强" the user called out. Kept inline (not from MOCK_QS)
-// because these are debrief-specific framings, not the practice questions
-// themselves. Replace with real translate_feedback() output once the
-// interview_agent landing PR ships.
-const DEBRIEF_HEARD: string[] = [
-  "Confident framing, but they're listening for the decision you made — not the outcome.",
-  "Clear on what happened. The trade-off you weighed against could be named earlier.",
-  "Honest about the tension. Naming the metric you optimized for would land harder.",
-  "Strong narrative. The follow-up will probe what you'd do differently — be ready.",
-  "Closed well. One concrete number in the first sentence would have anchored it.",
-];
 
 function Debrief({
   job,
@@ -800,130 +1025,100 @@ function Debrief({
       style={{
         flex: 1,
         overflowY: "auto",
-        padding: "48px 32px 80px",
-        background: M.paper,
+        padding: "40px 32px 64px",
+        background: "radial-gradient(120% 80% at 50% 0%, #FFFDFB 0%, #FAF8F6 60%)",
       }}
     >
       <div style={{ maxWidth: 680, margin: "0 auto" }} className="animate-fade-up">
-        <div
-          style={{
-            fontFamily: "JetBrains Mono",
-            fontSize: 11,
-            letterSpacing: 1,
-            color: M.muted,
-            textTransform: "uppercase",
-            marginBottom: 18,
-          }}
-        >
-          Session complete
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#4C7A3F" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <path d="M22 4L12 14.01l-3-3" />
+          </svg>
+          <span className="ds-mono-11" style={{ color: "#4C7A3F" }}>SESSION COMPLETE</span>
         </div>
-        <h1
-          style={{
-            fontFamily: "Inter",
-            fontWeight: 600,
-            fontSize: 32,
-            lineHeight: 1.15,
-            letterSpacing: -0.5,
-            color: M.ink,
-            margin: "0 0 12px",
-          }}
-        >
-          Your interview card.
-        </h1>
-        <p style={{ fontFamily: "Inter", fontSize: 15, lineHeight: 1.55, color: M.body, margin: "0 0 32px" }}>
+        <h1 className="ds-h1" style={{ margin: "0 0 10px" }}>Your interview card.</h1>
+        <p className="ds-body-md" style={{ fontSize: 15, color: "#6B6560", margin: "0 0 22px" }}>
           How each answer read from the other side of the table — and what to carry into the real round.
         </p>
 
-        {/* Topic list. No score tags — each row is a distinct read. */}
-        <div
-          style={{
-            background: M.surface,
-            border: `1px solid ${M.border}`,
-            borderRadius: 10,
-            overflow: "hidden",
-            marginBottom: 28,
-          }}
-        >
+        <div className="ds-card" style={{ overflow: "hidden", marginBottom: 18 }}>
           {MOCK_PROGRESS_LABELS.map((topic, i) => {
-            const isLast = i === MOCK_PROGRESS_LABELS.length - 1;
-            const heard = DEBRIEF_HEARD[i] ?? DEBRIEF_HEARD[DEBRIEF_HEARD.length - 1];
+            const tags = [
+              { label: "Sharp", color: "#4C7A3F", bg: "#EBF3E5" },
+              { label: "Solid", color: "#5D3000", bg: "#F5EDE3" },
+              { label: "Watch", color: "#A66A00", bg: "#F8ECD6" },
+              { label: "Solid", color: "#5D3000", bg: "#F5EDE3" },
+              { label: "Sharp", color: "#4C7A3F", bg: "#EBF3E5" },
+            ];
+            const t = tags[i] ?? tags[0];
             return (
               <div
                 key={topic}
                 style={{
-                  padding: "16px 18px",
-                  borderBottom: isLast ? "none" : `1px solid ${M.border}`,
+                  padding: "15px 18px",
+                  borderBottom: i === MOCK_PROGRESS_LABELS.length - 1 ? "none" : "1px solid #F1ECE3",
                   display: "flex",
-                  gap: 16,
+                  gap: 14,
                   alignItems: "flex-start",
                 }}
               >
-                <div
-                  style={{
-                    fontFamily: "JetBrains Mono",
-                    fontSize: 11,
-                    color: M.muted,
-                    width: 22,
-                    flexShrink: 0,
-                    paddingTop: 2,
-                  }}
-                >
-                  {String(i + 1).padStart(2, "0")}
-                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: M.ink, marginBottom: 4 }}>
+                  <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: "#2B2822", marginBottom: 3 }}>
                     {topic}
                   </div>
-                  <div style={{ fontFamily: "Inter", fontSize: 13.5, lineHeight: 1.55, color: M.body }}>
-                    {heard}
+                  <div className="ds-body-sm" style={{ fontSize: 13, color: "#6B6560" }}>
+                    Read as confident; could land the decision earlier.
                   </div>
                 </div>
+                <span
+                  style={{
+                    fontFamily: "JetBrains Mono",
+                    fontSize: 10,
+                    letterSpacing: 0.5,
+                    textTransform: "uppercase",
+                    color: t.color,
+                    background: t.bg,
+                    padding: "3px 9px",
+                    borderRadius: 5,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {t.label}
+                </span>
               </div>
             );
           })}
         </div>
 
-        {/* Close-the-loop — neutral card, accent only on icon. */}
-        <div
-          style={{
-            background: M.surface,
-            border: `1px solid ${M.border}`,
-            borderRadius: 10,
-            padding: "18px 20px",
-            marginBottom: 16,
-          }}
-        >
-          <div
-            style={{
-              fontFamily: "JetBrains Mono",
-              fontSize: 10.5,
-              letterSpacing: 1,
-              color: M.muted,
-              marginBottom: 10,
-            }}
-          >
-            CLOSE THE LOOP
+        <div style={{ background: "#F5EDE3", border: "1px solid #E8DCCA", borderRadius: 13, padding: "18px 20px", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#5D3000" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 3v18h18" />
+              <path d="M7 14l4-4 3 3 5-6" />
+            </svg>
+            <span className="ds-mono-10" style={{ color: "#5D3000" }}>CLOSE THE LOOP</span>
           </div>
-          <div style={{ fontFamily: "Inter", fontSize: 14, lineHeight: 1.6, color: M.body, marginBottom: 14 }}>
+          <div className="ds-body-sm" style={{ fontSize: 14, lineHeight: 1.6, color: "#3a352e", marginBottom: 13 }}>
             After the real {job.co} screen, come back and log what they actually asked. Vantage learns your real weak spots — not generic advice.
           </div>
           <button
             style={{
               cursor: "pointer",
-              border: `1px solid ${M.borderStrong}`,
-              background: M.surface,
-              color: M.ink,
+              border: "1px solid #D6CEC0",
+              background: "#FFFFFF",
+              color: "#2B2822",
               fontFamily: "Inter",
-              fontWeight: 500,
+              fontWeight: 600,
               fontSize: 13,
-              padding: "9px 14px",
-              borderRadius: 8,
+              padding: "10px 16px",
+              borderRadius: 9,
               display: "inline-flex",
               alignItems: "center",
               gap: 7,
             }}
           >
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
             </svg>
@@ -931,37 +1126,29 @@ function Debrief({
           </button>
         </div>
 
-        {/* Weak-spots focus — white surface with accent left rail, matching
-            the translation card's TRY INSTEAD treatment from LiveStage. */}
         <div
           style={{
-            background: M.surface,
-            border: `1px solid ${M.border}`,
-            borderLeft: `3px solid ${M.accent}`,
-            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            background: "#221E18",
+            borderRadius: 13,
             padding: "16px 20px",
-            marginBottom: 28,
+            marginBottom: 22,
           }}
         >
-          <div
-            style={{
-              fontFamily: "JetBrains Mono",
-              fontSize: 10.5,
-              letterSpacing: 1,
-              color: M.muted,
-              marginBottom: 8,
-            }}
-          >
-            NEXT SESSION OPENS ON
-          </div>
-          <div style={{ fontFamily: "Inter", fontSize: 15, lineHeight: 1.55, color: M.ink }}>
-            <b style={{ fontWeight: 600 }}>{focusNext}</b>
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#e8a317" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+          </svg>
+          <div style={{ flex: 1, fontFamily: "Inter", fontSize: 14, lineHeight: 1.5, color: "#e6ddd0" }}>
+            Next time, we&apos;ll open on your weak spots:{" "}
+            <b style={{ color: "#FAF8F6", fontWeight: 600 }}>{focusNext}</b>.
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 12 }}>
           <button onClick={onRestart} style={secondaryBtnStyle()}>Run it again</button>
-          <button onClick={onDone} style={primaryBtnStyle({ marginTop: 0, flex: 1.4 })}>Done</button>
+          <button onClick={onDone} style={primaryBtnStyle({ flex: 1.4 })}>Done</button>
         </div>
       </div>
     </div>
@@ -978,8 +1165,8 @@ function ghostBtnStyle(): React.CSSProperties {
     gap: 6,
     fontFamily: "Inter",
     fontWeight: 500,
-    fontSize: 13,
-    color: M.body,
+    fontSize: 14,
+    color: "#6B6560",
     padding: "6px 4px",
     marginBottom: 18,
   };
@@ -989,32 +1176,32 @@ function modeCardStyle(selected: boolean): React.CSSProperties {
   return {
     cursor: "pointer",
     textAlign: "left",
-    background: M.surface,
-    border: `1px solid ${selected ? M.borderInk : M.border}`,
-    borderRadius: 10,
-    padding: "16px 18px",
-    transition: "border-color .12s ease",
-    outline: "none",
+    background: selected ? "#FFFDFB" : "#FFFFFF",
+    border: `1px solid ${selected ? "#5D3000" : "#EDE8DF"}`,
+    borderRadius: 14,
+    padding: 18,
+    boxShadow: "0 1px 2px rgba(0,0,0,.04)",
+    transition: "all .14s",
   };
 }
 
 function primaryBtnStyle(extra: React.CSSProperties = {}): React.CSSProperties {
   return {
     width: "100%",
-    marginTop: 28,
+    marginTop: 20,
     cursor: "pointer",
     border: "none",
-    background: M.ink,
-    color: M.surface,
+    background: "#5D3000",
+    color: "#FAF8F6",
     fontFamily: "Inter",
-    fontWeight: 500,
-    fontSize: 14,
-    padding: "12px 16px",
-    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: 16,
+    padding: 15,
+    borderRadius: 12,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: 9,
     ...extra,
   };
 }
@@ -1023,14 +1210,14 @@ function secondaryBtnStyle(): React.CSSProperties {
   return {
     flex: 1,
     cursor: "pointer",
-    border: `1px solid ${M.borderStrong}`,
-    background: M.surface,
-    color: M.ink,
+    border: "1px solid #D6CEC0",
+    background: "#FFFFFF",
+    color: "#2B2822",
     fontFamily: "Inter",
-    fontWeight: 500,
+    fontWeight: 600,
     fontSize: 14,
-    padding: "12px 16px",
-    borderRadius: 8,
+    padding: 14,
+    borderRadius: 11,
   };
 }
 
@@ -1041,7 +1228,7 @@ function iconBtnStyleInk(): React.CSSProperties {
     background: "transparent",
     display: "flex",
     alignItems: "center",
-    color: M.body,
+    color: "#6B6560",
     padding: 4,
   };
 }
@@ -1050,190 +1237,13 @@ function sendBtnStyle(): React.CSSProperties {
   return {
     cursor: "pointer",
     border: "none",
-    background: M.ink,
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+    background: "#5D3000",
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   };
-}
-
-// Rough wall-clock estimate by intel strategy. Used in the HITL confirm so
-// the user sees what they're committing to before the timer starts.
-function estimatedDurationMin(intel: IntelStrategy): number {
-  switch (intel) {
-    case "none":
-      return 10;
-    case "jd_based":
-      return 15;
-    case "crowdsourced":
-      return 20;
-    case "recruiter_specific":
-      return 25;
-  }
-}
-
-function StartConfirmModal({
-  mode,
-  questionCount,
-  onCancel,
-  onConfirm,
-}: {
-  mode: BuiltInMode;
-  questionCount: number;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const mins = estimatedDurationMin(mode.intel);
-  // Esc to cancel — same affordance as native dialogs. We intentionally do
-  // NOT add Enter to confirm here: starting a 10–25 min session should be
-  // deliberate, never accidental.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mock-start-title"
-      onClick={onCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(10, 10, 10, 0.5)",
-        backdropFilter: "blur(2px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 60,
-        padding: 24,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="animate-fade-up"
-        style={{
-          background: M.surface,
-          border: `1px solid ${M.border}`,
-          borderRadius: 12,
-          padding: 28,
-          maxWidth: 440,
-          width: "100%",
-          boxShadow: "0 20px 40px rgba(0,0,0,0.12)",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "JetBrains Mono",
-            fontSize: 10.5,
-            color: M.muted,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            marginBottom: 10,
-          }}
-        >
-          Ready to start?
-        </div>
-        <h2
-          id="mock-start-title"
-          style={{
-            fontFamily: "Inter",
-            fontWeight: 600,
-            fontSize: 20,
-            lineHeight: 1.3,
-            color: M.ink,
-            margin: "0 0 12px",
-            letterSpacing: -0.3,
-          }}
-        >
-          {mode.name} — about {mins} min, {questionCount} questions.
-        </h2>
-        <p
-          style={{
-            fontFamily: "Inter",
-            fontSize: 14,
-            lineHeight: 1.55,
-            color: M.body,
-            margin: "0 0 10px",
-          }}
-        >
-          {mode.tagline}
-        </p>
-        <p
-          style={{
-            fontFamily: "Inter",
-            fontSize: 13,
-            lineHeight: 1.55,
-            color: M.muted,
-            margin: "0 0 24px",
-          }}
-        >
-          Once you start, the timer runs. You can exit at any time — your answers won&apos;t be saved if you cancel.
-        </p>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button
-            type="button"
-            onClick={onCancel}
-            style={{
-              flex: 1,
-              cursor: "pointer",
-              border: `1px solid ${M.border}`,
-              background: M.surface,
-              color: M.ink,
-              fontFamily: "Inter",
-              fontWeight: 500,
-              fontSize: 14,
-              padding: "11px 14px",
-              borderRadius: 8,
-            }}
-          >
-            Not yet
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            autoFocus
-            style={{
-              flex: 1.4,
-              cursor: "pointer",
-              border: "none",
-              background: M.ink,
-              color: M.surface,
-              fontFamily: "Inter",
-              fontWeight: 500,
-              fontSize: 14,
-              padding: "11px 14px",
-              borderRadius: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}
-          >
-            Start the session
-            <svg
-              width={15}
-              height={15}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke={M.surface}
-              strokeWidth={1.8}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }

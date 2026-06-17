@@ -14,16 +14,6 @@ export type DockState = "closed" | "docked" | "full";
 export type DockMode = "greeting" | "chat" | "build";
 export type AgentEventState = "running" | "done" | "failed";
 
-// Composer attachments — file uploaded BEFORE the send fires, so the prompt
-// can reference it by id. We carry name/size for the chip UI and the
-// file_id so the future ask-stream contract can pass it server-side.
-export interface DockAttachment {
-  id: string;          // file id returned by POST /api/files
-  name: string;        // original filename, for chip + accessibility label
-  sizeBytes: number;
-  kind: "pdf" | "docx" | "text";
-}
-
 // Each task card the dock shows during an agent run. The agent name
 // matches LangGraph node names ("resume_agent", "jobmatch_agent", …)
 // so we can map straight from astream_events into the card list.
@@ -57,7 +47,6 @@ interface DockStateShape {
   messages: DockMessage[];
   agentEvents: Record<string, AgentEvent>;
   input: string;
-  attachments: DockAttachment[];
   threadId: string | null;
   streaming: boolean;
   abortController: AbortController | null;
@@ -73,9 +62,6 @@ interface DockStateShape {
   setMode: (m: DockMode) => void;
   pushMessage: (m: Omit<DockMessage, "id"> & { id?: string }) => string;
   updateAgentEvent: (e: AgentEvent) => void;
-  addAttachment: (a: DockAttachment) => void;
-  removeAttachment: (id: string) => void;
-  clearAttachments: () => void;
   cancelStream: () => void;
   setStreaming: (v: boolean) => void;
   reset: () => void;
@@ -112,7 +98,6 @@ export const useDock = create<DockStateShape>((set, get) => ({
   messages: [],
   agentEvents: {},
   input: "",
-  attachments: [],
   threadId: null,
   streaming: false,
   abortController: null,
@@ -159,11 +144,6 @@ export const useDock = create<DockStateShape>((set, get) => ({
   },
   updateAgentEvent: (e) =>
     set((s) => ({ agentEvents: { ...s.agentEvents, [e.id]: e } })),
-  addAttachment: (a) =>
-    set((s) => ({ attachments: [...s.attachments.filter((x) => x.id !== a.id), a] })),
-  removeAttachment: (id) =>
-    set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
-  clearAttachments: () => set({ attachments: [] }),
   cancelStream: () => {
     const c = get().abortController;
     if (c) c.abort();
@@ -175,7 +155,6 @@ export const useDock = create<DockStateShape>((set, get) => ({
       messages: [],
       agentEvents: {},
       input: "",
-      attachments: [],
       mode: "greeting",
       streaming: false,
       abortController: null,
@@ -188,26 +167,18 @@ export const useDock = create<DockStateShape>((set, get) => ({
 // localStorage so the dock still works pre-login.
 export function bootDockThread(userId: string | null) {
   const cur = useDock.getState();
-  // A real user_id always wins. We may be called twice: first on first
-  // paint before auth resolves (userId null → anon thread), then again
-  // once currentUser lands. The second call must UPGRADE the anon thread
-  // to the canonical ask_vantage:{userId} — so don't short-circuit on an
-  // existing thread when it's still the anon one. (Guard against
-  // clobbering an already-correct user thread, and never downgrade a
-  // user thread back to anon when userId is null.)
-  if (userId) {
-    const id = `ask_vantage:${userId}`;
-    if (cur.threadId === id) return; // already canonical
-    if (typeof window !== "undefined")
-      window.localStorage.setItem(PERSISTED_THREAD_KEY, id);
-    useDock.getState().setThreadId(id);
-    return;
-  }
   if (cur.threadId) return;
   const persisted =
     typeof window !== "undefined"
       ? window.localStorage.getItem(PERSISTED_THREAD_KEY)
       : null;
+  if (userId) {
+    const id = `ask_vantage:${userId}`;
+    if (typeof window !== "undefined")
+      window.localStorage.setItem(PERSISTED_THREAD_KEY, id);
+    useDock.getState().setThreadId(id);
+    return;
+  }
   if (persisted) {
     useDock.getState().setThreadId(persisted);
     return;
