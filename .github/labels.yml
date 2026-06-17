@@ -1,0 +1,114 @@
+# Purpose: source of truth for repo labels, synced via EndBug/label-sync.
+# When to edit: when a new scope/agent emerges, or a new state is needed.
+# Color rules:
+#   type   - blue family
+#   scope  - green family
+#   agent  - purple family
+#   status - yellow/orange family
+#   ai     - teal family
+#   prio   - red family
+
+# ── Type ─────────────────────────────────────────────
+- name: bug
+  color: "d73a4a"
+  description: Something is not working
+- name: feat
+  color: "0e8a16"
+  description: New user-facing capability
+- name: refactor
+  color: "1d76db"
+  description: Code change with no behavior change
+- name: docs
+  color: "0075ca"
+  description: Documentation only
+- name: chore
+  color: "cfd3d7"
+  description: Tooling, deps, housekeeping
+- name: perf
+  color: "fbca04"
+  description: Performance improvement
+- name: security
+  color: "b60205"
+  description: Security-related
+- name: test
+  color: "5319e7"
+  description: Test additions/changes
+- name: prompt-issue
+  color: "8b5cf6"
+  description: Prompt drift / eval regression / hallucination
+
+# ── Scope ────────────────────────────────────────────
+- name: scope:api
+  color: "c2e0c6"
+- name: scope:agents
+  color: "c2e0c6"
+- name: scope:web
+  color: "c2e0c6"
+- name: scope:extension
+  color: "c2e0c6"
+- name: scope:infra
+  color: "c2e0c6"
+- name: scope:eval
+  color: "c2e0c6"
+- name: scope:prompts
+  color: "c2e0c6"
+- name: deps
+  color: "ededed"
+
+# ── Agent ────────────────────────────────────────────
+- name: agent:resume
+  color: "d4c5f9"
+- name: agent:jobmatch
+  color: "d4c5f9"
+- name: agent:interview
+  color: "d4c5f9"
+- name: agent:appprep
+  color: "d4c5f9"
+- name: agent:trend
+  color: "d4c5f9"
+- name: agent:coordinator
+  color: "d4c5f9"
+
+# ── Status ───────────────────────────────────────────
+- name: needs-review
+  color: "fbca04"
+- name: needs-security-review
+  color: "ff9f1c"
+- name: blocked
+  color: "e99695"
+- name: good-first-issue
+  color: "7057ff"
+- name: help-wanted
+  color: "008672"
+- name: wontfix
+  color: "ffffff"
+- name: duplicate
+  color: "cfd3d7"
+
+# ── AI collaboration ─────────────────────────────────
+- name: ai-generated
+  color: "20c997"
+  description: Authored primarily by an AI assistant
+- name: ai-reviewed
+  color: "17a2b8"
+  description: Reviewed by an AI assistant (not a substitute for human review)
+- name: claude:implement
+  color: "06b6d4"
+  description: Trigger Claude Code Action to implement this issue
+- name: claude:review
+  color: "0891b2"
+  description: Trigger Claude Code Action to review this PR
+
+# ── Priority ─────────────────────────────────────────
+- name: P0
+  color: "b60205"
+  description: Drop everything
+- name: P1
+  color: "d93f0b"
+  description: This sprint
+- name: P2
+  color: "fbca04"
+  description: Soon
+- name: P3
+  color: "fef2c0"
+  description: Eventually

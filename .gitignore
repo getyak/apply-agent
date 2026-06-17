@@ -27,3 +27,65 @@ npm-debug.log*
 .cache/
 coverage/
 *.tsbuildinfo
+
+# data
+data/
+*.duckdb
+*.duckdb.wal
+
+# docker volumes (if using bind mounts)
+infra/postgres/data/
+infra/redis/data/
+infra/minio/data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# bun / pnpm / next / extension build artifacts
+.bun/
+.turbo/
+apps/extension/.output/
+apps/extension/.wxt/
+.vercel/
+
+# LangGraph / Observability
+.langgraph_api/
+.langgraph_cache/
+langfuse-data/
+*.langgraph.db
+
+# Eval / Tooling
+.promptfoo/
+eval/output/
+eval/.cache/
+
+# Claude Code project-level (settings.local is personal; cache is ledgers)
+.claude/settings.local.json
+.claude/cache/
+
+# screenshots (testing artifacts)
+screen-*.png
+final-*.png
+vantage-*.png
+*.screenshot.png
+
+# Playwright MCP cache
+.playwright-mcp/
+
+# TODO (ephemeral)
+TODO.md
+
+# env (ensure .env.example is allowed)
+.env.*
+!.env.example
+!.env.example.*

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": true,
+  "separate-pull-requests": true,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactor" },
+    { "type": "docs", "section": "Documentation", "hidden": false },
+    { "type": "chore", "section": "Chores", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "ci", "section": "CI", "hidden": true }
+  ],
+  "packages": {
+    "apps/web": {
+      "release-type": "node",
+      "package-name": "@relay/web",
+      "component": "web"
+    },
+    "apps/extension": {
+      "release-type": "node",
+      "package-name": "@relay/extension",
+      "component": "extension"
+    },
+    "api": {
+      "release-type": "node",
+      "package-name": "@relay/api",
+      "component": "api"
+    },
+    "agents": {
+      "release-type": "python",
+      "package-name": "relay-agents",
+      "component": "agents"
+    },
+    "infra": {
+      "release-type": "simple",
+      "package-name": "relay-infra",
+      "component": "infra"
+    }
+  },
+  "plugins": ["sentence-case"]
+}

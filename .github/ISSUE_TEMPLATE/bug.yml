@@ -1,0 +1,92 @@
+# Purpose: capture enough context to reproduce + locate in observability.
+# When to edit: when a class of bug needs more structured input.
+
+name: Bug report
+description: Something does not work as expected
+title: "bug: "
+labels: ["bug", "needs-review"]
+assignees: ["cubxxw"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please include observability artifacts where possible.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Actual vs expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent (if applicable)?
+      options:
+        - n/a (UI / API / infra)
+        - resume_agent
+        - jobmatch_agent
+        - interview_agent
+        - appprep_agent
+        - trend_agent
+        - coordinator
+    validations:
+      required: true
+
+  - type: input
+    id: trace
+    attributes:
+      label: Langfuse trace URL
+      description: Paste the trace link if this involves an LLM call
+      placeholder: https://cloud.langfuse.com/trace/...
+
+  - type: input
+    id: cost
+    attributes:
+      label: Cost of failing call (USD cents, if known)
+      placeholder: "0.45"
+
+  - type: dropdown
+    id: hitl
+    attributes:
+      label: Did this involve a HITL interrupt?
+      options:
+        - "No"
+        - "Yes — interrupt fired correctly"
+        - "Yes — interrupt failed to fire"
+        - "Yes — resume failed"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      render: shell
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "local / staging / prod, OS, browser version"
+
+  - type: checkboxes
+    id: critical
+    attributes:
+      label: Touches critical surface?
+      options:
+        - label: User data integrity (resumes, applications)
+        - label: Credentials / privacy
+        - label: Cost runaway (>$1 per call)
+        - label: Job platform ToS risk

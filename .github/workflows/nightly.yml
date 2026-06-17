@@ -1,0 +1,158 @@
+# ============================================================================
+# 每日 02:00 UTC · drift canary + red-team full + migration rollback dry-run
+# 触发：cron + 手动 workflow_dispatch
+# Secrets：OPENROUTER_API_KEY（必需）+ FEISHU_WEBHOOK（可选告警）
+# 安全模式：未配 OPENROUTER_API_KEY 时 LLM 相关 job 跳过；migration 部分仍跑
+# ============================================================================
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 02:00 UTC = 10:00 北京
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-secret:
+    name: Check OPENROUTER_API_KEY availability
+    runs-on: ubuntu-latest
+    outputs:
+      has_key: ${{ steps.probe.outputs.has_key }}
+    steps:
+      - id: probe
+        env:
+          KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENROUTER_API_KEY not configured; drift/redteam jobs will skip."
+          fi
+
+  drift-canary:
+    name: Prompt drift canary
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install -g promptfoo@latest
+      - name: Run 20 golden inputs × 5 agents
+        working-directory: eval/canary
+        run: promptfoo eval -c canary.yaml --output /tmp/canary.json
+      - name: Check drift threshold
+        id: check
+        run: |
+          PASS_RATE=$(jq '[.results.results[].success] | (map(select(.)) | length) / length' /tmp/canary.json)
+          echo "pass_rate=$PASS_RATE" >> $GITHUB_OUTPUT
+          awk -v r="$PASS_RATE" 'BEGIN { exit !(r >= 0.85) }'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canary-${{ github.run_id }}
+          path: /tmp/canary.json
+
+  redteam-full:
+    name: Red-team full suite
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install -g promptfoo@latest
+      - name: Strict red-team
+        working-directory: eval
+        run: promptfoo redteam run --strict --output /tmp/redteam-full.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: redteam-full-${{ github.run_id }}
+          path: /tmp/redteam-full.json
+
+  migration-rollback-dry-run:
+    name: Migration rollback dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: relay
+          POSTGRES_PASSWORD: relay
+          POSTGRES_DB: relay_staging
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U relay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5433
+      PGUSER: relay
+      PGPASSWORD: relay
+      PGDATABASE: relay_staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forward all
+        run: |
+          for f in infra/postgres/migrations/*.sql; do
+            [[ "$f" == *.down.sql ]] && continue
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Rollback all (reverse order)
+        run: |
+          for f in $(ls infra/postgres/migrations/*.down.sql 2>/dev/null | sort -r); do
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Re-apply all
+        run: |
+          for f in infra/postgres/migrations/*.sql; do
+            [[ "$f" == *.down.sql ]] && continue
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+  notify:
+    name: Notify on failure
+    needs: [drift-canary, redteam-full, migration-rollback-dry-run]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Feishu webhook
+        if: env.FEISHU_WEBHOOK != ''
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          curl -X POST "$FEISHU_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "msg_type":"text",
+              "content":{"text":"🚨 Relay nightly failed · run ${{ github.run_id }}\nhttps://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+            }'
+      - name: Open tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Nightly failed · ${new Date().toISOString().slice(0,10)}`,
+              body: `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              labels: ['nightly-failure'],
+            });

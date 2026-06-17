@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-paper: #FAF8F6;
+  --color-ink: #2B2822;
+  --color-ink-light: #6B6560;
+  --color-ink-muted: #A39F99;
+  --color-brown: #5D3000;
+  --color-brown-light: #7A3F00;
+  --color-amber: #A66A00;
+  --color-gold: #e8a317;
+  --color-gold-light: #f0b53a;
+  --color-gold-bg: #F8ECD6;
+  --color-cream: #F5EDE3;
+  --color-cream-border: #E8DCCA;
+  --color-border: #EDE8DF;
+  --color-border-dark: #D6CEC0;
+  --color-green: #4C7A3F;
+  --color-green-bg: #EBF3E5;
+  --color-dark: #221E18;
+  --color-dark-card: #2c2519;
+  --color-dark-border: #4a3f2e;
+  --color-dark-text: #a89e8f;
+  --color-dark-muted: #8a8073;
+  --color-dark-gold: #d9a45f;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+:root {
+  --background: #FAF8F6;
+  --foreground: #2B2822;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: #E8DCCA;
+  color: #2B2822;
+}
+
+::-webkit-scrollbar { width: 12px; }
+::-webkit-scrollbar-thumb {
+  background: #E2DACB;
+  border-radius: 8px;
+  border: 3px solid #FAF8F6;
+}
+::-webkit-scrollbar-thumb:hover { background: #D6CEC0; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes step-in {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shimmer {
+  0% { background-position: -300px 0; }
+  100% { background-position: 600px 0; }
+}
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.92); }
+  60% { transform: scale(1.02); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes bob {
+  0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+@keyframes check-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes bar-fill {
+  from { width: 0; }
+}
+
+.animate-fade-up { animation: fade-up 0.6s ease-out both; }
+.animate-fade-up-delay { animation: fade-up 0.7s ease-out 0.1s both; }
+.animate-step-in { animation: step-in 0.5s ease-out both; }
+.animate-pulse-dot { animation: pulse-dot 2s infinite; }
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
+.animate-shimmer { animation: shimmer 1.3s linear infinite; background-size: 600px 100%; }
+.animate-pop { animation: pop-in 0.4s ease-out; }
+.animate-spin { animation: spin 0.7s linear infinite; }
+.animate-bob { animation: bob 1s infinite; }
+.animate-check { animation: check-in 0.3s ease-out; }

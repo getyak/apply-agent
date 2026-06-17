@@ -19,7 +19,7 @@
 │  Auth · Notification · Audit · LLM Router · Workers      │
 ├─────────────────────────────────────────────────────────┤
 │  DATA + EXTERNAL                                         │
-│  PostgreSQL · Redis · DuckDB · Claude API · Job Boards   │
+│  PostgreSQL · Redis · DuckDB · OpenRouter API · Job Boards│
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -39,13 +39,13 @@
 ### Agent Layer
 5 个单一职责的 agent,详见 [Agent 架构](agent-architecture.md):
 
-| Agent | 职责 | 主用模型 |
-|-------|------|---------|
-| ResumeAgent | 解析/优化/定制/分析简历 | Sonnet + Haiku |
-| JobMatchAgent | 抓取/解析/匹配/通知职位 | Haiku + Embeddings |
-| InterviewAgent | 生成问题/评估/采集面试 | Opus + Sonnet |
-| AppPrepAgent | 求职信/表单/投递包 | Sonnet + 扩展 |
-| TrendAgent | ETL/技能提取/趋势/报告 | Haiku + DuckDB |
+| Agent | 职责 | 主用模型 (via OpenRouter) |
+|-------|------|--------------------------|
+| ResumeAgent | 解析/优化/定制/分析简历 | GLM-4.7(优化/定制) + V4 Flash(解析) |
+| JobMatchAgent | 抓取/解析/匹配/通知职位 | V4 Flash + Embeddings |
+| InterviewAgent | 生成问题/评估/采集面试 | V4 Pro(深度评估) + GLM-4.7(生成) |
+| AppPrepAgent | 求职信/表单/投递包 | GLM-4.7 + 浏览器扩展 |
+| TrendAgent | ETL/技能提取/趋势/报告 | V4 Flash + DuckDB |
 
 ### Shared Services
 - **Auth**(Supabase Auth):JWT、session
@@ -58,7 +58,7 @@
 - **PostgreSQL**(Supabase):用户、简历、投递、面试主数据
 - **Redis**:缓存、session、队列、限流
 - **DuckDB**:分析型查询(趋势、技能时序)
-- **Claude API**:Opus / Sonnet / Haiku,function calling
+- **OpenRouter API**:DeepSeek V4 Pro / GLM-4.7 / V4 Flash,function calling
 - **Job Boards**:Greenhouse / Lever / Ashby public API
 
 ## 核心数据流
@@ -90,4 +90,4 @@
 2. **可组合** — agent 可互相调用形成复杂 workflow;prompt 独立演化。
 3. **可观测** — 每次调用都 logged + traced。
 4. **成本与性能意识** — 每次 LLM 调用都有预算和监控;缓存是一等公民。
-5. **优雅降级** — Claude 故障显示缓存结果;job board 限流则排队重试;成本飙升则降级模型。
+5. **优雅降级** — LLM 故障显示缓存结果;job board 限流则排队重试;成本飙升则降级模型(V4 Pro → V3.2 → V4 Flash)。

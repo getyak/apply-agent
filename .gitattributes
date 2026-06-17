@@ -1,0 +1,50 @@
+# Purpose: normalize line endings + correct GitHub language stats.
+# When to edit: when a new file type misreports in repo language bar.
+
+# ── Default: auto-detect + normalize to LF on commit ────────────────
+*               text=auto eol=lf
+
+# ── Language hints (linguist) ───────────────────────────────────────
+# SQL migrations should count toward language stats and be detectable.
+infra/postgres/migrations/*.sql   linguist-detectable=true linguist-language=SQL
+infra/postgres/seed/*.sql         linguist-detectable=true linguist-language=SQL
+
+# Docs/assets should not skew language stats.
+docs/**                           linguist-documentation=true
+docs/assets/**                    linguist-vendored=true
+*.md                              linguist-detectable=true
+
+# Generated / vendored.
+**/dist/**                        linguist-generated=true
+**/build/**                       linguist-generated=true
+**/.next/**                       linguist-generated=true
+**/node_modules/**                linguist-vendored=true
+**/__pycache__/**                 linguist-generated=true
+**/*.lock                         linguist-generated=true
+bun.lockb                         binary linguist-generated=true
+uv.lock                           linguist-generated=true
+
+# ── Binary files (no diff, no merge) ────────────────────────────────
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.tar    binary
+*.ico    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+
+# ── Force LF for shell + scripts (even on Windows checkouts) ────────
+*.sh     text eol=lf
+*.bash   text eol=lf
+Makefile text eol=lf
+
+# ── Force CRLF for Windows-only scripts (if any later) ──────────────
+*.bat    text eol=crlf
+*.cmd    text eol=crlf

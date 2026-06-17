@@ -61,9 +61,27 @@ POST /api/tailor-resume in: base 简历 + JD     → out: 定制简历
 
 **成本模型**:每次投递总 LLM 成本 ~$0.003,100 投递/月 = $0.30/用户,订阅 $15 毛利 ~98%。可选 BYO key 让成本归零。
 
+### 方案 B+:Playwright MCP Chrome Extension — 方案 B 的进化 ⭐
+
+调研发现（[github.com/microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp)，3-0 验证确认）：Playwright MCP 支持通过 Chrome Extension **连接用户已有浏览器的 tab**，直接利用已登录 session。这意味着方案 B 的扩展不需要自己实现 DOM 操作——可以通过 MCP 协议让服务端 agent 远程"看到"并操作用户浏览器中的表单。
+
+```
+方案 B+ 架构:
+服务端 agent (LangGraph) ←── MCP 协议 ──→ Playwright MCP Chrome Extension
+                                           │
+                                           ├── 连接用户已登录的 ATS tab
+                                           ├── accessibility snapshot 读取表单结构
+                                           ├── 填充字段（用户可见，实时）
+                                           └── 用户亲自点 Submit
+```
+
+优势：agent 直接获得结构化的 accessibility snapshot（而非靠 content script 猜 DOM），对陌生 ATS 的适应性大幅提升。
+
 ### 方案 C:桌面 App + CDP — 最强但最重(Phase 3)
 
-桌面 app(Tauri/Electron)通过 Chrome DevTools Protocol 连接用户**已登录的真实 Chrome**,用 browser-use / Stagehand 做多步自主导航。
+桌面 app(Tauri/Electron)通过 Chrome DevTools Protocol 连接用户**已登录的真实 Chrome**。
+
+**调研更新**：browser-use 已从 Playwright 迁移到原生 CDP（[来源](https://browser-use.com/posts/playwright-to-cdp)，3-0 确认），消除中继层延迟。Stagehand v3 提供模型无关 Agent Mode + 自动缓存 + 自愈执行层（2-1 确认）。Phase 3 可选 browser-use 或 Stagehand 作为 CDP 层。
 
 - 能力最强:跨页自主导航 + 批量 + 定时;可用本地 Ollama 模型零成本
 - 代价:需下载安装(信任门槛高)、跨平台维护重、批量投递仍有账号风险
@@ -75,9 +93,10 @@ POST /api/tailor-resume in: base 简历 + JD     → out: 定制简历
 
 ```
 Phase 1 (2-3周):  扩展 autofill (方案 A) — 验证价值,快速上架
-Phase 2 (4-6周):  + 云端 LLM (方案 B) — 护城河,主战场
+Phase 2 (4-6周):  + 云端 LLM (方案 B/B+) — 护城河,主战场
+                  B+: Playwright MCP Extension 让 agent 直接操作用户浏览器
                   + 面试准备 + 趋势 + 数据飞轮
-Phase 3 (可选):   桌面 app (方案 C) — power user,批量定时
+Phase 3 (可选):   桌面 app (方案 C) — browser-use/Stagehand + CDP
 ```
 
 ## 隐私模型

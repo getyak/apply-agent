@@ -1,0 +1,17 @@
+{
+  "_comment_1": "Copy this file to .claude/settings.local.json (gitignored). Personal overrides only.",
+  "_comment_2": "Use this for: looser allow-list during exploration, personal MCP tokens, model preferences.",
+  "_comment_3": "NEVER put real secrets here — use .env. settings.local.json can be read by hooks; .env stays out.",
+
+  "permissions": {
+    "allow": [
+      "Bash(curl localhost:*)",
+      "Bash(http localhost:*)"
+    ]
+  },
+
+  "env": {
+    "RELAY_PREFERRED_MODEL": "z-ai/glm-4.7",
+    "RELAY_DAILY_COST_BUDGET_USD": "10.00"
+  }
+}

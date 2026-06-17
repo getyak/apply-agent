@@ -1,0 +1,45 @@
+# Purpose: enforce review on high-risk paths.
+# When to edit: when team grows, when new critical surfaces are introduced
+# (new migrations dir, new agent guards, new browser entry points).
+# Syntax: https://docs.github.com/repositories/managing-your-repositories-settings-and-customization/customizing-your-repository/about-code-owners
+
+# ─── Default owner (catch-all) ──────────────────────────────────────
+*                                       @cubxxw
+
+# ─── Database migrations ────────────────────────────────────────────
+# Reason: irreversible schema changes; every migration must have a down,
+# every migration touches user data. Never auto-merge.
+/infra/postgres/migrations/             @cubxxw
+/infra/postgres/seed/                   @cubxxw
+
+# ─── Agent execution kernel (guards, harness) ───────────────────────
+# Reason: token/cost/error budget logic — bug here = runaway LLM bill.
+/agents/harness/                        @cubxxw
+/agents/harness/guards.py               @cubxxw
+/agents/harness/permissions.py          @cubxxw
+/agents/harness/checkpointer.py         @cubxxw
+
+# ─── Browser extension (Manifest V3) ────────────────────────────────
+# Reason: manifest changes affect Chrome Web Store review + permission scope.
+/apps/extension/manifest.json           @cubxxw
+/apps/extension/src/background/         @cubxxw
+/apps/extension/src/content/            @cubxxw
+
+# ─── Architecture & product docs ────────────────────────────────────
+# Reason: these define the "why" — must stay in sync with code.
+/docs/architecture/                     @cubxxw
+/docs/vision.md                         @cubxxw
+/docs/product-spec.md                   @cubxxw
+/CLAUDE.md                              @cubxxw
+
+# ─── Secrets, env, CI ───────────────────────────────────────────────
+# Reason: leak risk + deployment blast radius.
+/.env.example                           @cubxxw
+/.github/                               @cubxxw
+/infra/docker-compose*.yml              @cubxxw
+
+# ─── Eval harness ───────────────────────────────────────────────────
+# Reason: eval changes silently shift quality bars; must be reviewed.
+/eval/                                  @cubxxw
+/eval/datasets/                         @cubxxw
+/eval/scorers/                          @cubxxw

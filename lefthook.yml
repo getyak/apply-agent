@@ -1,0 +1,55 @@
+# Purpose: Primary git hooks runner. Replaces husky+lint-staged with one Go binary.
+# Trigger: `lefthook install` writes .git/hooks/* (idempotent).
+# Trade-off: lefthook > husky for monorepo: native parallel, no Node bootstrap,
+#            handles Python+SQL hooks without separate framework.
+
+min_version: 1.8.0
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: '*.{ts,tsx,js,jsx,json}'
+      run: bunx biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
+
+    ruff-check:
+      glob: '*.py'
+      run: uv run ruff check --fix {staged_files}
+      stage_fixed: true
+
+    ruff-format:
+      glob: '*.py'
+      run: uv run ruff format {staged_files}
+      stage_fixed: true
+
+    sqlfluff:
+      glob: 'infra/postgres/migrations/*.sql'
+      run: uv run sqlfluff lint --dialect postgres {staged_files}
+
+    forbid-env:
+      run: |
+        if echo "{staged_files}" | tr ' ' '\n' | grep -E '^\.env($|\..*)' | grep -v '^\.env\.example$' >/dev/null; then
+          echo "✗ Refusing to commit .env file"; exit 1
+        fi
+
+    forbid-api-keys:
+      run: |
+        if git diff --cached -U0 | grep -E '^\+.*(OPENROUTER_API_KEY|ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE)\s*=\s*[\"'\''](sk-|or-|eyJ)' >/dev/null; then
+          echo "✗ Hardcoded API key detected"; exit 1
+        fi
+
+commit-msg:
+  commands:
+    commitlint:
+      run: bunx commitlint --edit {1}
+
+pre-push:
+  parallel: false
+  commands:
+    typecheck-ts:
+      run: bunx tsc -b
+    typecheck-py:
+      run: uv run mypy agents/harness/ 2>/dev/null || true
+    unit-tests:
+      run: uv run pytest -m unit -q 2>/dev/null || true

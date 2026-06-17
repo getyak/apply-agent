@@ -1,0 +1,314 @@
+# ============================================================================
+# Relay 主 CI · paths-filter 矩阵分流
+# 触发：PR open/sync、push 到 main
+# Secrets：无（公开 actions only）
+# Cache keys：
+#   - bun-${{ hashFiles('**/bun.lockb') }}
+#   - uv-${{ hashFiles('agents/uv.lock') }}
+#   - pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+#   - nextjs-${{ hashFiles('apps/web/**/*.[jt]s', 'apps/web/**/*.[jt]sx') }}
+# ============================================================================
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# 同一 PR 后续 push 自动取消旧 run，省 free-tier minutes
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write  # 用于失败时贴 comment
+
+jobs:
+  # ---- 第 1 步：检测改动范围，决定要跑哪些 job ----
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      agents: ${{ steps.filter.outputs.agents }}
+      web: ${{ steps.filter.outputs.web }}
+      extension: ${{ steps.filter.outputs.extension }}
+      infra: ${{ steps.filter.outputs.infra }}
+      eval: ${{ steps.filter.outputs.eval }}
+      prompts: ${{ steps.filter.outputs.prompts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'api/**'
+              - 'package.json'
+              - 'bun.lockb'
+            agents:
+              - 'agents/**'
+              - 'agents/pyproject.toml'
+              - 'agents/uv.lock'
+            web:
+              - 'apps/web/**'
+              - 'pnpm-lock.yaml'
+            extension:
+              - 'apps/extension/**'
+            infra:
+              - 'infra/**'
+            eval:
+              - 'eval/**'
+            prompts:
+              - 'agents/prompts/**'
+
+  # ---- API job (Hono + Bun) ----
+  api:
+    name: API (Hono/Bun)
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install
+        working-directory: api
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        working-directory: api
+        run: bun run lint
+
+      - name: Typecheck
+        working-directory: api
+        run: bun run typecheck
+
+      - name: Test
+        working-directory: api
+        run: bun test --coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage-${{ github.run_id }}
+          path: api/coverage/
+          retention-days: 7
+
+  # ---- Agents job (Python + LangGraph + FastAPI) ----
+  agents:
+    name: Agents (Python/LangGraph)
+    needs: changes
+    if: needs.changes.outputs.agents == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: relay
+          POSTGRES_PASSWORD: relay
+          POSTGRES_DB: relay_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U relay"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      minio:
+        image: minio/minio:latest
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: relay
+          MINIO_ROOT_PASSWORD: relay-test-secret
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://relay:relay@localhost:5433/relay_test
+      REDIS_URL: redis://localhost:6380
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+      OPENROUTER_API_KEY: dummy-for-unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: agents/uv.lock
+
+      - name: Setup Python
+        run: uv python install 3.12
+        working-directory: agents
+
+      - name: Install
+        working-directory: agents
+        run: uv sync --frozen --all-extras
+
+      - name: Apply migrations
+        run: |
+          for f in infra/postgres/migrations/*.sql; do
+            PGPASSWORD=relay psql -h localhost -p 5433 -U relay -d relay_test -f "$f"
+          done
+
+      - name: Ruff (lint)
+        working-directory: agents
+        run: uv run ruff check .
+
+      - name: Ruff (format check)
+        working-directory: agents
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        working-directory: agents
+        run: uv run mypy .
+
+      - name: Pytest
+        working-directory: agents
+        run: uv run pytest --cov=. --cov-report=xml --cov-report=term -m "not e2e"
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-coverage-${{ github.run_id }}
+          path: agents/coverage.xml
+          retention-days: 7
+
+      - name: Upload pytest report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-pytest-${{ github.run_id }}
+          path: agents/.pytest_cache/
+          retention-days: 3
+
+  # ---- Web job (Next.js) ----
+  web:
+    name: Web (Next.js)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('apps/web/pnpm-lock.yaml') }}-${{ hashFiles('apps/web/**/*.[jt]s', 'apps/web/**/*.[jt]sx') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('apps/web/pnpm-lock.yaml') }}-
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: apps/web
+        run: pnpm lint
+
+      - name: Typecheck
+        working-directory: apps/web
+        run: pnpm typecheck
+
+      - name: Build
+        working-directory: apps/web
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+  # ---- Extension job (MV3) ----
+  extension:
+    name: Extension (MV3)
+    needs: changes
+    if: needs.changes.outputs.extension == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: apps/extension
+        run: pnpm lint
+
+      - name: Manifest static check
+        working-directory: apps/extension
+        run: |
+          node -e "
+            const m = require('./manifest.json');
+            if (m.manifest_version !== 3) { console.error('manifest_version must be 3'); process.exit(1); }
+            if (m.permissions?.includes('<all_urls>')) { console.error('<all_urls> not allowed'); process.exit(1); }
+            const csp = m.content_security_policy?.extension_pages || '';
+            if (/unsafe-eval|unsafe-inline/.test(csp)) { console.error('unsafe CSP'); process.exit(1); }
+            console.log('manifest OK');
+          "
+
+      - name: Build
+        working-directory: apps/extension
+        run: pnpm build
+
+  # ---- 汇总 gate（branch protection 只需要 require 这一个 check）----
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [api, agents, web, extension]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "$results" | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")'

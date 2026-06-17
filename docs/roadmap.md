@@ -21,7 +21,7 @@
 |----|------|------|
 | 1–2 | 基础架构 | Supabase + Next.js + auth + 简历数据模型 |
 | 3 | 简历管理 | 上传解析 + 编辑 + 版本控制 |
-| 4 | AI 优化 | Claude 集成 + 优化 flow + diff |
+| 4 | AI 优化 | OpenRouter LLM 集成(GLM-4.7) + 优化 flow + diff |
 | 5 | JD 定制 | JD 输入 + 定制简历 + 预览 |
 | 6–7 | 面试模拟 | 问题生成 + 评估 + 会话保存 |
 | 8 | 浏览器扩展(方案 A) | 检测 + 本地填充 + 审核 UI |
@@ -45,8 +45,8 @@
 
 | 方向 | 内容 |
 |------|------|
-| 桌面 App(方案 C) | CDP 连接真实浏览器,批量/定时(power user,严格 opt-in) |
-| 多 provider LLM | Claude + Gemini + 本地 Ollama |
+| 桌面 App(方案 C) | browser-use/Stagehand + CDP 连接真实浏览器,批量/定时(power user,严格 opt-in) |
+| 多 provider LLM | OpenRouter 已接入(DeepSeek/GLM) + Gemini + 本地 Ollama |
 | Polyglot 存储 | PostgreSQL + ClickHouse + ElasticSearch + pgvector |
 | ML 能力 | 面试表现预测、简历质量打分、推荐引擎 |
 | 新功能 | 薪资谈判助手、公司文化匹配、真人教练 marketplace |
@@ -65,10 +65,11 @@
 ```
 Frontend:  Next.js 15 + Shadcn/ui + TailwindCSS
 Extension: Manifest V3 + TypeScript
-Backend:   Node.js (Bun) / FastAPI
-DB:        Supabase (PostgreSQL) + Redis + DuckDB
-LLM:       Claude API (Opus/Sonnet/Haiku) + 可选 Ollama
-Browser:   Playwright (Phase 3 桌面 app)
+API:       TypeScript (Hono/Bun)
+Agents:    Python (FastAPI + LangGraph)
+DB:        PostgreSQL (pgvector) + Redis + DuckDB + MinIO
+LLM:       OpenRouter (DeepSeek V4 Pro / GLM-4.7 / V4 Flash)
+Browser:   browser-use (CDP, 服务端) + Playwright MCP (客户端)
 Deploy:    Vercel + Railway/Fly + GitHub Actions
 ```
 

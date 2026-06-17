@@ -1,0 +1,126 @@
+# ============================================================================
+# main 自动部署
+# 触发：push to main + 改动 api/agents/infra
+# Scope：API (Hono) + Agents (FastAPI) → Railway
+#        Web (Next.js) 由 Vercel GitHub 集成自处理，不在此 workflow
+# Secrets：RAILWAY_TOKEN（必需）+ FEISHU_WEBHOOK（可选）
+# 安全模式：未配 RAILWAY_TOKEN 时整个 workflow no-op；build/push 不触发
+# 注：Railway 暂未原生支持 GH OIDC；id-token: write 已预留待 Railway 支持后迁移
+# ============================================================================
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - 'agents/**'
+      - 'infra/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-secret:
+    name: Check RAILWAY_TOKEN availability
+    runs-on: ubuntu-latest
+    outputs:
+      has_key: ${{ steps.probe.outputs.has_key }}
+    steps:
+      - id: probe
+        env:
+          KEY: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RAILWAY_TOKEN not configured; deploy will be skipped (set in repo secrets when Railway project is ready)."
+          fi
+
+  build-and-push:
+    name: Build & Push images
+    needs: check-secret
+    if: needs.check-secret.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        service: [api, agents]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy:
+    name: Deploy to Railway
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: curl -fsSL https://railway.app/install.sh | sh
+      - name: Capture previous deployment id
+        id: prev
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          PREV=$(railway status --json 2>/dev/null | jq -r '.deployments[0].id' 2>/dev/null || echo '')
+          echo "id=$PREV" >> $GITHUB_OUTPUT
+      - name: Deploy API
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service api --detach
+      - name: Deploy Agents
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service agents --detach
+      - name: Wait for healthy
+        run: sleep 30
+      - name: Smoke test
+        run: |
+          set -e
+          API_URL="${{ vars.API_BASE_URL }}"
+          AGENTS_URL="${{ vars.AGENTS_BASE_URL }}"
+          curl -fsS "$API_URL/health" | jq -e '.status=="ok"'
+          curl -fsS "$AGENTS_URL/health" | jq -e '.status=="ok"'
+      - name: Rollback on failure
+        if: failure() && steps.prev.outputs.id != ''
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "::warning::Smoke test failed, rolling back to ${{ steps.prev.outputs.id }}"
+          railway redeploy --deployment ${{ steps.prev.outputs.id }} --yes
+      - name: Notify failure
+        if: failure() && env.FEISHU_WEBHOOK != ''
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          curl -X POST "$FEISHU_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d '{"msg_type":"text","content":{"text":"🚨 Deploy ${{ github.sha }} failed, rolled back"}}'

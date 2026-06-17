@@ -1,0 +1,78 @@
+# Purpose: force thinking about cost, agent ownership, HITL before coding.
+
+name: Feature request
+description: Propose a new capability
+title: "feat: "
+labels: ["feat", "needs-review"]
+assignees: ["cubxxw"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user pain does this solve? Quote evidence if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent will own this?
+      options:
+        - resume_agent
+        - jobmatch_agent
+        - interview_agent
+        - appprep_agent
+        - trend_agent
+        - coordinator
+        - new agent (justify below)
+        - n/a (UI / infra only)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: llm-cost
+    attributes:
+      label: Estimated incremental LLM cost per user-action
+      options:
+        - "$0 (no LLM call)"
+        - "< $0.001 (V4 Flash only)"
+        - "$0.001 – $0.01 (GLM-4.7)"
+        - "$0.01 – $0.10 (V4 Pro)"
+        - "> $0.10 (needs justification)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hitl
+    attributes:
+      label: Needs a new HITL checkpoint?
+      options:
+        - "No"
+        - "Yes — NOTIFY tier"
+        - "Yes — APPROVE tier (requires interrupt)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Principle compliance
+      options:
+        - label: Does not fabricate resume content
+        - label: Does not store user credentials for job platforms
+        - label: Does not bypass CAPTCHA / anti-bot
+        - label: Client-side execution for any submission
+        - label: User reviews before any irreversible action

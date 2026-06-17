@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Relay project-level Claude Code settings. Committed to git. See .claude/settings.local.json.template for personal overrides.",
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(bun *)",
+      "Bash(bunx *)",
+      "Bash(npm run *)",
+      "Bash(uv run *)",
+      "Bash(uv pip *)",
+      "Bash(uv sync *)",
+      "Bash(python -m pytest *)",
+      "Bash(docker compose *)",
+      "Bash(docker ps)",
+      "Bash(docker logs *)",
+      "Bash(psql -h localhost -p 5433 *)",
+      "Bash(redis-cli -p 6380 *)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh run *)",
+      "Bash(gh search *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(promptfoo eval *)",
+      "Bash(deepeval test *)",
+      "WebFetch(domain:openrouter.ai)",
+      "WebFetch(domain:langfuse.com)",
+      "WebFetch(domain:langchain-ai.github.io)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~/*)",
+      "Bash(rm -rf ./*)",
+      "Bash(rm -rf *)",
+      "Bash(touch .env)",
+      "Bash(touch .env.*)",
+      "Bash(echo * > .env*)",
+      "Bash(cat * > .env*)",
+      "Bash(docker volume rm relay-*)",
+      "Bash(docker volume rm *relay*)",
+      "Bash(git push --force origin main)",
+      "Bash(git push -f origin main)",
+      "Bash(git reset --hard *)",
+      "Bash(git push --force *)",
+      "Bash(psql * -c \"DROP *)",
+      "Bash(psql * -c 'DROP *)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ]
+  },
+  "env": {
+    "_required_in_dotenv": [
+      "OPENROUTER_API_KEY",
+      "OPENROUTER_BASE_URL",
+      "DATABASE_URL",
+      "REDIS_URL",
+      "LANGFUSE_PUBLIC_KEY",
+      "LANGFUSE_SECRET_KEY",
+      "LANGFUSE_HOST"
+    ],
+    "RELAY_DAILY_COST_BUDGET_USD": "5.00"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-bash-protected-paths.sh" }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-write-migration-check.sh" }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-llm-call-cost-warn.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-prompt-check.sh" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-context-loader.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-commit-lint.sh" }
+        ]
+      }
+    ]
+  }
+}

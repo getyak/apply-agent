@@ -1,0 +1,31 @@
+# ============================================================================
+# release-please · 语义化版本 + CHANGELOG
+# 触发：push to main
+# Secrets：使用 GITHUB_TOKEN（无需额外）
+# 注：等到第一个子包准备 alpha 时再开启 branch protection 让此 workflow required；
+#     现在 push to main 时它会创建 release PR，第一次会创建 v0.0.1 起跳。
+# ============================================================================
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: .github/release-please-config.json
+          manifest-file: .release-please-manifest.json
