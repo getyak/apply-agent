@@ -87,12 +87,28 @@ function formatAttachmentsFooter(atts: DockAttachment[]): string {
   return `\n\n[Attached files]\n${lines.join("\n")}`;
 }
 
+// Surface identifies which conversation panel is asking. See
+// vantage-ui-mapping.md §2.6 for the channel split. Default to "dock"
+// when omitted — keeps the lifetime conversation behavior intact for the
+// 99% of caller sites that don't know about surfaces.
+export type AskSurface = "dock" | "resume_studio" | "mock_studio" | "applications";
+
+export interface SendAskOptions {
+  surface?: AskSurface;
+  // threadIdOverride lets a per-surface caller (e.g. the resume studio
+  // vibe chat with its `resume_studio:{user_id}:{root_id}` thread) bypass
+  // the dock's thread without poking at useDock internals. When unset,
+  // we read useDock.threadId (the lifetime ask_vantage thread).
+  threadIdOverride?: string;
+}
+
 export async function sendAsk(
   prompt: string,
   attachments: DockAttachment[] = [],
+  opts: SendAskOptions = {},
 ): Promise<void> {
   const dock = useDock.getState();
-  const threadId = dock.threadId;
+  const threadId = opts.threadIdOverride ?? dock.threadId;
   if (!prompt.trim() || !threadId) return;
 
   // Cancel any in-flight stream first so a new question replaces the old.
@@ -258,7 +274,11 @@ export async function sendAsk(
         Accept: "application/x-ndjson",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ prompt: wirePrompt, thread_id: threadId }),
+      body: JSON.stringify({
+        prompt: wirePrompt,
+        thread_id: threadId,
+        ...(opts.surface ? { surface: opts.surface } : {}),
+      }),
       signal: controller.signal,
     });
 

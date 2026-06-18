@@ -80,29 +80,57 @@ ask_target_role → ask_recent_role → ask_top_3_wins → draft_v1 → hitl_rev
 
 ---
 
-## 2. Résumé(文档 + 版本时间轴)
+## 2. Résumé(vibe chat + 文档 + 版本时间轴)
+
+> **设计变更（2026-06-18）**：早期版本把简历改动**全部**收口到 Ask Vantage dock，Résumé view 只是渲染面。实战发现这条路径在简历微操作（改这条 bullet、加这一项、缩这一段）下交互成本太高——dock 是为跨场景全局对话设计的，被迫携带"当前在哪份简历的第几节"这种沉重 context。Résumé view 现在自带一个**当前文档作用域**的 vibe chat 面板，与 dock 各司其职（见 §2.6）。
 
 ### 2.1 形态
 
 ```
-v1 ─ v2 ─ v3 ─ v4 ─ v5 ─ v6 ─ v7 (current)
-              │
-              └── "Sharpen for Stripe" (tailored)
-
-[Live résumé document] — 编辑器
-[Diff vs v6] — AI 生成段标珊瑚橙,需用户过目
-[Upload new résumé] [Compare] [Export]
+┌────────────────────────────────────────────────────────────┐
+│  Resume Studio · /app/studio/resume                         │
+│  ┌──────────────┬───────────────────────────────────────┐  │
+│  │  Vibe chat    │  Document + Timeline                  │  │
+│  │  (380px)      │  (flex 1)                             │  │
+│  │               │                                       │  │
+│  │  AI 推荐 chips │  v1─v2─v3─v4─v5─v6─v7(current)        │  │
+│  │  ┌──────────┐ │           │                           │  │
+│  │  │ 优化建议  │ │           └── "Sharpen for Stripe"     │  │
+│  │  │ 职业规划  │ │                                       │  │
+│  │  │ JD 微调   │ │  [Live résumé document]               │  │
+│  │  │ 职业推荐  │ │  [Diff vs v6] — gold-highlighted      │  │
+│  │  └──────────┘ │  [Upload new] [Compare] [Export]      │  │
+│  │               │                                       │  │
+│  │  对话历史      │                                       │  │
+│  │  ────────     │                                       │  │
+│  │  > Tighten my│                                        │  │
+│  │    impact... │                                        │  │
+│  │  ✓ saved v8  │                                        │  │
+│  │               │                                       │  │
+│  │  [输入框 + ⌘↵]│                                       │  │
+│  └──────────────┴───────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
 ```
 
-**这里没有 chat input**。改简历必须去左侧 dock 说。
+**4 个推荐 chip（vibe chat 的"起点候选"）**:
+
+| Chip | 触发的 agent 路径 | 输出落点 |
+|------|------------------|---------|
+| **优化建议** | `resume_agent.analyze` → top 3 弱项 + 改进建议 | 对话区列出，用户挑一条→ `resume_agent.optimize_bullet` |
+| **JD 微调** | 解析剪贴板/输入的 JD → `resume_agent.customize(jd, base)` | 时间轴长出新 tailored 版本 |
+| **职业规划** | `resume_agent.analyze` 提取已有 trajectory + `trend_agent.skill_gap` | 对话区给"下一站建议 + 缺什么技能" |
+| **职业推荐** | `jobmatch_agent.find_matches(profile=current_resume)` top 5 | 对话区列匹配岗位 + 一键跳 /app/jobs |
 
 ### 2.2 数据流
 
 ```
-用户 dock 里说 "Sharpen for Stripe"
+用户在 Resume vibe chat 里说 "Sharpen for Stripe"  (或点 JD 微调 chip)
    │
    ▼
-ask_vantage_router → intent="tailor_resume", args={job: "stripe-..."}
+POST /api/ask/stream  (与 dock 同一通道,但带 surface=resume_studio + active_resume_id)
+   │
+   ▼
+ask_vantage_router → intent="tailor_resume", args={job: "stripe-...", base: v6.id}
    │
    ▼
 resume_agent.customize(jd_id=stripe_jd_id, base_id=v6.id)
@@ -116,8 +144,12 @@ INSERT INTO resumes (version=7, parent_version=v6.id, tailored_for_job=stripe.id
 event_bus.publish("resume:updated", {user_id, version: 7})
    │
    ▼
-WebSocket → 前端时间轴长出 v7 (current),dock 出 result card "v7 saved · Open résumé"
+SSE event back to vibe chat 面板 → 对话区出 "v7 saved · Open" 卡片
+                                  → 时间轴长出 v7 (current)
+                                  → 右侧文档自动切到 v7
 ```
+
+**关键**: vibe chat 复用 dock 用的 `/api/ask/stream` 通道，**不新增 endpoint**。仅在请求头加 `X-Relay-Surface: resume_studio` 让 router 知道这是文档作用域对话（chip 路径上下文携带 `active_resume_id`）。后端 thread_id 用 `resume_studio:{user_id}:{resume_root_id}`（每条简历支系一个独立 thread，不污染 dock 的 lifetime thread）。
 
 ### 2.3 Fabrication Guard(vision.md 红线)
 
@@ -138,6 +170,26 @@ WebSocket → 前端时间轴长出 v7 (current),dock 出 result card "v7 saved 
 ### 2.5 与 client-side-delivery 的衔接
 
 Tailored 版本必须**镜像到 `chrome.storage.local`**,扩展投递时从本地读,服务端只保留最新一份用于 audit。这是客户端执行链路的最后一公里。
+
+### 2.6 Studio vibe chat ↔ Ask Vantage dock 职责切分
+
+两条对话通道并存，**用 surface 区分**，不互相替代：
+
+| | Ask Vantage dock | Resume Studio vibe chat |
+|---|------------------|------------------------|
+| **作用域** | 跨所有页面、终身 | 当前简历支系（v6→v7→v8 同一棵树） |
+| **thread_id** | `ask_vantage:{user_id}`（lifetime，§1.2） | `resume_studio:{user_id}:{resume_root_id}`（每条简历独立） |
+| **携带 context** | 用户全局画像 + 上次说了什么 | + active_resume_id + 当前 viewing version |
+| **典型话术** | "找一些 React 高级岗" / "今日趋势" | "把这条 bullet 改紧一点" / "给我做个 Stripe 版" |
+| **结果落点** | dock 内 agent task card | vibe chat 对话区 + 时间轴 + 文档自动切版 |
+| **UI 位置** | 左侧 372px 持久 dock（live mock 时收起到 54px） | Resume Studio 页内左侧 380px |
+| **何时收起** | 用户主动 / mock live | 用户拖拽边界栏可折叠到 0 |
+
+**为什么不合并**：尝试过把所有对话都收口到 dock，结果是用户每问"这条 bullet 怎么改"都得带"我现在在第几版简历的 experience.items[2].highlights[0]"——dock 不该承担这种 surface 状态。Studio vibe chat 默认知道你在看哪份简历，问题变成纯语义。
+
+**关键不重复**：vibe chat **不重新实现** SSE 流、不新建 endpoint、不新建 LangGraph workflow——它复用 dock 的 `/api/ask/stream` + `ask_vantage_router`，只是请求头加 `X-Relay-Surface: resume_studio`，前端拿到的 SSE 事件用 surface 字段路由到对应面板渲染。
+
+**前端复用**：vibe chat 面板内部消化的"用户消息 + thinking 卡 + agent task card + result 卡"渲染逻辑与 dock 同源，抽到 `web/src/components/ask-vantage/conversation.tsx` 共享，避免两份 UI 漂移。
 
 ---
 
