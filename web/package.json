@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; next dev --webpack",
+    "dev:turbo": "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY; next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "smoke:hydration": "node ../scripts/web-hydration-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.20.0",

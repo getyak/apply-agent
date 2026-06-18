@@ -1,33 +1,103 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { auth as authApi, setToken, getToken } from "@/lib/api";
 import { Button, Field, Input } from "@/components/ui";
 
+// Next 16 requires components that read URL search params to be wrapped in a
+// Suspense boundary so the rest of the page can be prerendered. Without it,
+// `next build` fails the /auth route with "useSearchParams() should be wrapped
+// in a suspense boundary". The fallback mirrors the same brand frame the inner
+// component shows while verifying the session.
+function AuthFallback() {
+  return (
+    <div className="min-h-screen bg-paper flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
+          VANTAGE
+        </div>
+        <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
+          Loading…
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function AuthPage() {
+  return (
+    <Suspense fallback={<AuthFallback />}>
+      <AuthPageInner />
+    </Suspense>
+  );
+}
+
+function AuthPageInner() {
   const router = useRouter();
-  const [isLogin, setIsLogin] = useState(true);
+  const search = useSearchParams();
+  const sessionNotice = useMemo(() => {
+    const reason = search?.get("reason");
+    if (reason === "session_expired")
+      return "Your session has expired. Please sign in again.";
+    if (reason === "session_timeout")
+      return "Couldn't reach the server. Please try signing in again.";
+    return null;
+  }, [search]);
+  // Landing CTAs hand off plan / mode / intent via query so the auth page can
+  // open in the right state and remember the user's pricing choice on signup.
+  const planLabel = useMemo(() => {
+    const plan = search?.get("plan");
+    if (plan === "pro") return "Continue to start your 7-day Pro trial.";
+    if (plan === "max") return "Continue to go Max.";
+    if (plan === "free") return "Continue to start free.";
+    return null;
+  }, [search]);
+  const initialMode = useMemo(() => {
+    const mode = search?.get("mode");
+    // mode=login → sign-in form; mode=signup or any plan/intent → sign-up form.
+    if (mode === "signup") return false;
+    if (mode === "login") return true;
+    if (search?.get("plan") || search?.get("intent")) return false;
+    return true;
+  }, [search]);
+  const [isLogin, setIsLogin] = useState(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   // Forward guard: if already signed in, skip the form and go straight to the app.
-  const [checking, setChecking] = useState(true);
+  // Default to false so SSR renders the form directly; if hydration silently fails
+  // (e.g. dev HMR ws drops), the user still has a working form. Only flip to true
+  // *after* we observe a token and start verifying it.
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     const token = getToken();
-    if (!token) {
-      queueMicrotask(() => setChecking(false));
-      return;
-    }
+    if (!token) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setChecking(true);
+    });
+    const timeout = setTimeout(() => {
+      if (!cancelled) setChecking(false);
+    }, 5000);
     authApi
       .me()
-      .then(() => router.replace("/app"))
-      .catch(() => queueMicrotask(() => setChecking(false)));
+      .then(() => {
+        if (!cancelled) router.replace("/app");
+      })
+      .catch(() => {
+        if (!cancelled) setChecking(false);
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
   }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -53,9 +123,14 @@ export default function AuthPage() {
   if (checking) {
     return (
       <div className="min-h-screen bg-paper flex items-center justify-center">
-        <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
-          Loading…
-        </p>
+        <div className="flex flex-col items-center gap-3">
+          <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
+            VANTAGE
+          </div>
+          <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
+            Verifying your session…
+          </p>
+        </div>
       </div>
     );
   }
@@ -80,6 +155,23 @@ export default function AuthPage() {
             {isLogin ? "Sign in to your workspace." : "It takes under a minute."}
           </p>
         </div>
+
+        {sessionNotice && (
+          <p
+            role="status"
+            className="mb-4 font-body text-[13px] text-amber bg-gold-bg border border-cream-border rounded-[10px] px-3 py-2 text-center"
+          >
+            {sessionNotice}
+          </p>
+        )}
+        {planLabel && !sessionNotice && (
+          <p
+            role="status"
+            className="mb-4 font-body text-[13px] text-brown bg-cream border border-cream-border rounded-[10px] px-3 py-2 text-center"
+          >
+            {planLabel}
+          </p>
+        )}
 
         <form
           onSubmit={handleSubmit}

@@ -1,19 +1,85 @@
 "use client";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+// API origin resolution lives in one place (api-base.ts) so the JSON client
+// here and the SSE client in ask-stream.ts can never drift onto different
+// bases / different env var names again.
+import { API_BASE } from "./api-base";
+
+// Token name is shared with web/src/middleware.ts; keep them in sync.
+export const TOKEN_COOKIE = "vantage_token";
+// 30 days — same horizon the API issues JWTs for.
+const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 30;
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("vantage_token");
+  return localStorage.getItem(TOKEN_COOKIE);
+}
+
+function writeCookie(token: string) {
+  if (typeof document === "undefined") return;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  // The middleware reads this cookie at the edge for /app/* guards. We mirror
+  // it from localStorage because the API client and historical code paths
+  // still use localStorage; cookies are not httpOnly because the JS layer
+  // also needs to read them — security parity, not regression.
+  document.cookie =
+    `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax${secure}`;
+}
+
+function clearCookie() {
+  if (typeof document === "undefined") return;
+  document.cookie = `${TOKEN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
 export function setToken(token: string) {
-  localStorage.setItem("vantage_token", token);
+  // Wipe any chat session that survived from a previous user logging in on
+  // the same browser. Without this, a fresh login resumes the previous
+  // user's Ask Vantage thread (their thread_id, their history) — silent
+  // cross-account leakage. The thread is intentionally lifelong per user
+  // (vantage-ui-mapping.md §1.2), so we only clear on the transition
+  // boundary, not on every refresh.
+  clearChatSessionId();
+  localStorage.setItem(TOKEN_COOKIE, token);
+  writeCookie(token);
 }
 
 export function clearToken() {
-  localStorage.removeItem("vantage_token");
+  localStorage.removeItem(TOKEN_COOKIE);
+  clearCookie();
+  // Sign-out paths (proxy reason=session_expired, settings → delete account,
+  // layout me() failure) all funnel through here. Tying the chat session to
+  // the token lifecycle means an orphan thread can't outlive the auth
+  // boundary that produced it. signOut() in store.ts also calls
+  // clearChatSessionId() directly for clarity — both calls are idempotent.
+  clearChatSessionId();
 }
+
+// The Ask Vantage conversation is lifelong per user (vantage-ui-mapping.md §1.2):
+// one session id we must survive reloads, otherwise each message after a refresh
+// forks a brand-new session and fragments history. Mirror the token pattern but
+// localStorage-only — the edge middleware never needs this, so no cookie.
+const CHAT_SESSION_KEY = "vantage_chat_session";
+
+export function getChatSessionId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(CHAT_SESSION_KEY);
+}
+
+export function setChatSessionId(sessionId: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CHAT_SESSION_KEY, sessionId);
+}
+
+export function clearChatSessionId() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(CHAT_SESSION_KEY);
+}
+
+// Default per-request ceiling. 15 s comfortably covers OpenRouter-backed
+// LLM endpoints (parse / customize) but caps the offline / DNS-stall case
+// so users don't watch a spinner for 30 s before getting any feedback.
+// Callers can opt out with `signal` in options.
+const DEFAULT_TIMEOUT_MS = 15000;
 
 export async function api<T = unknown>(
   path: string,
@@ -28,10 +94,46 @@ export async function api<T = unknown>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  // Compose caller's AbortSignal with our timeout so either source can
+  // cancel — needed because /api/ask/stream and other long-lived requests
+  // bring their own controller.
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let signal = options.signal;
+  if (!signal) {
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    signal = controller.signal;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal,
+    });
+  } catch (err) {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    // fetch() rejects with TypeError on transport failure (offline, DNS,
+    // CORS preflight rejection) and AbortError on our timeout. Both surface
+    // as ApiError(status=0) with a hint that points the user at the right
+    // remedy instead of the raw "Failed to fetch" browser string.
+    const aborted = err instanceof DOMException && err.name === "AbortError";
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new ApiError(0, "You appear to be offline. Reconnect and try again.");
+    }
+    if (aborted) {
+      throw new ApiError(
+        0,
+        "The request took longer than expected. Check your connection and try again.",
+      );
+    }
+    throw new ApiError(
+      0,
+      "Couldn't reach the server. Check your connection or try again in a moment.",
+    );
+  }
+  if (timeoutId !== null) clearTimeout(timeoutId);
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -39,6 +141,13 @@ export async function api<T = unknown>(
   }
 
   return res.json();
+}
+
+/** True when an error came from fetch's transport layer (offline, DNS,
+ *  CORS preflight, our 15s timeout) rather than an HTTP status. UI can
+ *  use this to decide between "retry" and "fix your input" affordances. */
+export function isNetworkError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 0;
 }
 
 /**
@@ -91,6 +200,10 @@ export interface UserPreferences {
   minSalary?: number;
   locations?: string[];
   remote?: boolean;
+  /** Opt-in to anonymised question-pool donation (vantage-ui-mapping.md
+   *  §3.5). false / undefined means we never write to
+   *  interview_question_pool from this user. */
+  crowdsourceOptIn?: boolean;
 }
 
 export interface UserRecord {

@@ -220,7 +220,7 @@ export default function HeroConsole() {
                   </div>
                 </div>
                 <a
-                  href="#"
+                  href="/auth?intent=start"
                   className="no-underline font-body font-semibold text-[13px] text-dark bg-gold px-[15px] py-[9px] rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap hover:bg-gold-light transition-colors"
                 >
                   Enter

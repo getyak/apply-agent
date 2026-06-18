@@ -4,7 +4,7 @@ import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useVantage } from "@/lib/store";
 import { firstNameOf, fullGreeting, formatToday } from "@/lib/dates";
-import { Check, Send, Zap, CheckCircle2 } from "lucide-react";
+import { Check, Send, Zap, CheckCircle2, Mic } from "lucide-react";
 
 const SUGGESTIONS = [
   { label: "Find new roles that fit me", id: "find" },
@@ -23,13 +23,18 @@ export function ChatView() {
   const sendRealChat = useVantage((s) => s.sendRealChat);
   const chatMessages = useVantage((s) => s.chatMessages);
   const chatLoading = useVantage((s) => s.chatLoading);
+  const chatHydrating = useVantage((s) => s.chatHydrating);
   const currentUser = useVantage((s) => s.currentUser);
   const parsedResume = useVantage((s) => s.parsedResume);
   const loadCurrentUser = useVantage((s) => s.loadCurrentUser);
+  const hydrateChat = useVantage((s) => s.hydrateChat);
   const hasLog = chatLog.length > 0 || chatMessages.length > 0;
 
   useEffect(() => {
     if (!currentUser) loadCurrentUser();
+    // Replay any persisted conversation so it survives a reload (no-op if there
+    // is no stored session or it's already loaded).
+    hydrateChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -41,7 +46,16 @@ export function ChatView() {
   return (
     <div className="h-screen flex flex-col">
       <div className="flex-1 overflow-y-auto">
-        {!hasLog && (
+        {chatHydrating && !hasLog && (
+          <div className="max-w-[720px] mx-auto px-10 pt-[84px] flex items-center gap-[10px]">
+            <div className="w-4 h-4 rounded-full border-2 border-[#F0E4D2] border-t-amber animate-spin shrink-0" />
+            <span className="font-body text-[15px] text-ink-light animate-pulse">
+              Loading your conversation…
+            </span>
+          </div>
+        )}
+
+        {!hasLog && !chatHydrating && (
           <div className="max-w-[720px] mx-auto px-10 pt-[84px] pb-[30px] animate-fade-up">
             <div className="font-mono text-[11px] tracking-[1px] uppercase text-ink-muted mb-3">
               {headerDate}
@@ -190,6 +204,8 @@ export function ChatView() {
               ))}
             </div>
           )}
+          {/* Claude-Code-style composer: trailing edge shows mic when empty,
+              send when there's content. Both Enter and ⌘↵/Ctrl↵ submit. */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -202,15 +218,38 @@ export function ChatView() {
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  if (chatInput.trim()) sendRealChat();
+                  else sendChat();
+                }
+              }}
               placeholder="Ask anything, or launch a task…"
               className="flex-1 font-body text-[15px] text-ink bg-transparent border-none outline-none placeholder:text-ink-muted"
             />
-            <button
-              type="submit"
-              className="cursor-pointer border-none bg-brown w-[38px] h-[38px] rounded-[10px] flex items-center justify-center shrink-0 hover:bg-brown-light transition-colors"
-            >
-              <Send className="w-[17px] h-[17px] text-paper" strokeWidth={2} />
-            </button>
+            <span className="font-mono text-[9px] tracking-[0.6px] uppercase text-ink-muted whitespace-nowrap mr-1 select-none">
+              ⌘↵ SEND
+            </span>
+            {chatInput.trim().length > 0 ? (
+              <button
+                type="submit"
+                aria-label="Send"
+                title="Send (⌘↵)"
+                className="cursor-pointer border-none bg-brown w-[38px] h-[38px] rounded-[10px] flex items-center justify-center shrink-0 hover:bg-brown-light transition-colors"
+              >
+                <Send className="w-[17px] h-[17px] text-paper" strokeWidth={2} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-label="Voice input"
+                title="Voice input (coming soon)"
+                className="cursor-pointer border border-border bg-white text-ink-light w-[38px] h-[38px] rounded-[10px] flex items-center justify-center shrink-0 hover:border-brown hover:text-brown transition-colors"
+              >
+                <Mic className="w-[17px] h-[17px]" strokeWidth={2} />
+              </button>
+            )}
           </form>
         </div>
       </div>

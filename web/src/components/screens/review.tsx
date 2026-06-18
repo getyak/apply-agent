@@ -200,7 +200,7 @@ export function ReviewScreen() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-paper">
+    <div className="h-full flex flex-col bg-paper">
       {TopBar}
 
       <div className="flex-1 flex min-h-0">

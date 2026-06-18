@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   MessageSquare,
@@ -12,15 +12,18 @@ import {
   Check,
   Settings,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useVantage } from "@/lib/store";
 import { initialsOf } from "@/lib/dates";
 import { statusVisual } from "@/lib/status";
 
-type NavId = "chat" | "today" | "apps" | "interviews" | "builder" | "mock" | "settings";
+// Ask Vantage is intentionally NOT in this nav anymore — the persistent dock
+// (mounted by AppLayout) is its sole surface, per vantage-ui-mapping.md §1.
+type NavId = "today" | "apps" | "interviews" | "builder" | "mock" | "settings";
 
 const ROUTES: Record<NavId, string> = {
-  chat: "/app/chat",
   today: "/app/today",
   apps: "/app/applications",
   interviews: "/app/applications",
@@ -28,6 +31,8 @@ const ROUTES: Record<NavId, string> = {
   mock: "/app/studio/mock",
   settings: "/app/settings",
 };
+
+const COLLAPSED_KEY = "vantage.sidebar.collapsed";
 
 export function Sidebar() {
   const router = useRouter();
@@ -41,10 +46,32 @@ export function Sidebar() {
   const loadCurrentUser = useVantage((s) => s.loadCurrentUser);
   const signOut = useVantage((s) => s.signOut);
 
+  // Collapsed = 74px icon-only rail. Width persisted to localStorage so the
+  // user's preference survives reloads. Default to expanded so first-time
+  // users see the full nav vocabulary.
+  const [collapsed, setCollapsed] = useState(false);
+
   useEffect(() => {
     if (!currentUser) loadCurrentUser();
+    if (typeof window !== "undefined") {
+      const raw = window.localStorage.getItem(COLLAPSED_KEY);
+      // Hydrating client preference from localStorage on mount is the
+      // canonical "sync external system → state" effect; the cascading-render
+      // lint is a false positive here because this only fires once.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (raw === "1") setCollapsed(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((v) => {
+      const next = !v;
+      if (typeof window !== "undefined")
+        window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
 
   // Counts driven by the real applications list, so the badge stops drifting
   // away from what the user sees on the kanban board.
@@ -54,7 +81,6 @@ export function Sidebar() {
 
   const active = (id: NavId): boolean => {
     if (id === "interviews") return false;
-    if (id === "chat") return pathname === "/app/chat";
     if (id === "today") return pathname === "/app/today";
     if (id === "apps") return pathname === "/app/applications";
     if (id === "builder") return pathname === "/app/studio/resume";
@@ -68,7 +94,6 @@ export function Sidebar() {
   // the URL so refresh and back/forward both work as expected.
   const go = (id: NavId) => {
     setScreen("app");
-    if (id === "chat") setNav("chat");
     if (id === "today") setNav("today");
     if (id === "apps" || id === "interviews") setNav("apps");
     if (id === "settings") setNav("settings");
@@ -77,7 +102,9 @@ export function Sidebar() {
   };
 
   const navItem = (isActive: boolean) =>
-    `flex items-center gap-[10px] px-[10px] py-[9px] rounded-[9px] cursor-pointer text-[14px] font-medium transition-colors ${
+    `flex items-center gap-[10px] ${
+      collapsed ? "justify-center px-0" : "px-[10px]"
+    } py-[9px] rounded-[9px] cursor-pointer text-[14px] font-medium transition-colors ${
       isActive
         ? "bg-cream text-brown font-semibold"
         : "text-ink-light hover:bg-[#F8F5F0] hover:text-ink"
@@ -104,103 +131,174 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-[248px] shrink-0 bg-white border-r border-border flex flex-col py-[22px] px-4">
-      <div className="flex items-center gap-[9px] px-[10px] pb-[26px]">
-        <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
+    <aside
+      className={`${
+        collapsed ? "w-[74px] px-2" : "w-[248px] px-4"
+      } shrink-0 bg-white border-r border-border flex flex-col py-[22px] transition-[width] duration-150`}
+    >
+      <div
+        className={`flex items-center ${
+          collapsed ? "justify-center" : "gap-[9px] px-[10px]"
+        } pb-[20px]`}
+      >
+        <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center shrink-0">
           <Check className="w-[14px] h-[14px] text-paper" strokeWidth={2.2} />
         </div>
-        <span className="font-display font-bold text-[15px] tracking-[2.5px] text-brown">
-          VANTAGE
-        </span>
+        {!collapsed && (
+          <span className="font-display font-bold text-[15px] tracking-[2.5px] text-brown">
+            VANTAGE
+          </span>
+        )}
       </div>
 
-      <div className="font-display font-bold text-[10px] tracking-[1.5px] uppercase text-ink-muted px-[10px] pb-2">
-        Workspace
-      </div>
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className={`flex items-center ${
+          collapsed ? "justify-center" : "justify-end px-[10px]"
+        } py-[6px] mb-2 text-ink-muted hover:text-brown transition-colors cursor-pointer`}
+      >
+        {collapsed ? (
+          <PanelLeftOpen className="w-[16px] h-[16px]" strokeWidth={1.7} />
+        ) : (
+          <PanelLeftClose className="w-[16px] h-[16px]" strokeWidth={1.7} />
+        )}
+      </button>
+
+      {!collapsed && (
+        <div className="font-display font-bold text-[10px] tracking-[1.5px] uppercase text-ink-muted px-[10px] pb-2">
+          Workspace
+        </div>
+      )}
       <nav className="flex flex-col gap-[2px]">
-        <div data-tour="ask" className={navItem(active("chat"))} onClick={() => go("chat")}>
-          <MessageSquare className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Ask Vantage</span>
+        <div
+          data-tour="today"
+          className={navItem(active("today"))}
+          onClick={() => go("today")}
+          title={collapsed ? "Today" : undefined}
+        >
+          <Home className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          {!collapsed && <span>Today</span>}
         </div>
-        <div data-tour="today" className={navItem(active("today"))} onClick={() => go("today")}>
-          <Home className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Today</span>
+        <div
+          data-tour="apps"
+          className={navItem(active("apps"))}
+          onClick={() => go("apps")}
+          title={collapsed ? "Applications" : undefined}
+        >
+          <LayoutGrid className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          {!collapsed && (
+            <>
+              <span>Applications</span>
+              <span className="ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
+                {totalApps}
+              </span>
+            </>
+          )}
         </div>
-        <div data-tour="apps" className={navItem(active("apps"))} onClick={() => go("apps")}>
-          <LayoutGrid className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Applications</span>
-          <span className="ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
-            {totalApps}
-          </span>
-        </div>
-        <div className={navItem(false)} onClick={() => go("interviews")}>
-          <Calendar className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Interviews</span>
-          {interviewingCount > 0 && (
-            <span className="ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
-              {interviewingCount}
-            </span>
+        <div
+          className={navItem(false)}
+          onClick={() => go("interviews")}
+          title={collapsed ? "Interviews" : undefined}
+        >
+          <Calendar className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          {!collapsed && (
+            <>
+              <span>Interviews</span>
+              {interviewingCount > 0 && (
+                <span className="ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
+                  {interviewingCount}
+                </span>
+              )}
+            </>
           )}
         </div>
       </nav>
 
-      <div className="font-display font-bold text-[10px] tracking-[1.5px] uppercase text-ink-muted px-[10px] pt-6 pb-2 flex items-center gap-[7px]">
-        <Sparkles className="w-3 h-3 text-amber" strokeWidth={1.8} />
-        AI Studio
-      </div>
-      <nav className="flex flex-col gap-[2px]">
-        <div className={navItem(active("builder"))} onClick={() => go("builder")}>
-          <FileText className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Résumé studio</span>
+      {!collapsed ? (
+        <div className="font-display font-bold text-[10px] tracking-[1.5px] uppercase text-ink-muted px-[10px] pt-6 pb-2 flex items-center gap-[7px]">
+          <Sparkles className="w-3 h-3 text-amber" strokeWidth={1.8} />
+          AI Studio
         </div>
-        <div className={navItem(active("mock"))} onClick={() => go("mock")}>
-          <MessageSquare className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Mock interview</span>
+      ) : (
+        <div className="h-[10px]" />
+      )}
+      <nav className="flex flex-col gap-[2px]">
+        <div
+          className={navItem(active("builder"))}
+          onClick={() => go("builder")}
+          title={collapsed ? "Résumé studio" : undefined}
+        >
+          <FileText className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          {!collapsed && <span>Résumé studio</span>}
+        </div>
+        <div
+          className={navItem(active("mock"))}
+          onClick={() => go("mock")}
+          title={collapsed ? "Mock interview" : undefined}
+        >
+          <MessageSquare className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          {!collapsed && <span>Mock interview</span>}
         </div>
       </nav>
 
       <div className="mt-auto" />
 
       <nav className="flex flex-col gap-[2px] mb-3">
-        <div className={navItem(active("settings"))} onClick={() => go("settings")}>
-          <Settings className="w-[18px] h-[18px]" strokeWidth={1.7} />
-          <span>Settings</span>
+        <div
+          className={navItem(active("settings"))}
+          onClick={() => go("settings")}
+          title={collapsed ? "Settings" : undefined}
+        >
+          <Settings className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          {!collapsed && <span>Settings</span>}
         </div>
       </nav>
 
-      <div className="bg-[#FBF8F3] border border-border rounded-xl p-[14px] mb-3">
-        <div className="flex items-center justify-between mb-[9px]">
-          <span className="font-mono text-[10px] tracking-[0.6px] uppercase text-ink-light">
-            Auto-applies
-          </span>
-          <span className="font-mono text-[10px] tracking-[0.6px] text-brown">
-            14 / 40
-          </span>
+      {!collapsed && (
+        <div className="bg-[#FBF8F3] border border-border rounded-xl p-[14px] mb-3">
+          <div className="flex items-center justify-between mb-[9px]">
+            <span className="font-mono text-[10px] tracking-[0.6px] uppercase text-ink-light">
+              Auto-applies
+            </span>
+            <span className="font-mono text-[10px] tracking-[0.6px] text-brown">
+              14 / 40
+            </span>
+          </div>
+          <div className="h-[6px] rounded-full bg-border overflow-hidden">
+            <div className="h-full rounded-full bg-brown" style={{ width: "35%" }} />
+          </div>
+          <div className="font-body text-[11px] text-ink-muted mt-[9px]">
+            Resets in 14 days ·{" "}
+            <span className="text-brown font-semibold cursor-pointer">Upgrade</span>
+          </div>
         </div>
-        <div className="h-[6px] rounded-full bg-border overflow-hidden">
-          <div className="h-full rounded-full bg-brown" style={{ width: "35%" }} />
-        </div>
-        <div className="font-body text-[11px] text-ink-muted mt-[9px]">
-          Resets in 14 days ·{" "}
-          <span className="text-brown font-semibold cursor-pointer">Upgrade</span>
-        </div>
-      </div>
+      )}
 
-      <div className="flex items-center gap-[10px] px-2 py-[6px]">
+      <div
+        className={`flex items-center ${
+          collapsed ? "flex-col gap-[8px] py-2" : "gap-[10px] px-2 py-[6px]"
+        }`}
+      >
         <div
           className="w-[34px] h-[34px] rounded-[9px] bg-brown flex items-center justify-center font-display font-bold text-[14px] text-paper shrink-0"
           aria-hidden="true"
+          title={collapsed ? displayName : undefined}
         >
           {initials}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="font-body font-semibold text-[13px] text-ink truncate">
-            {displayName}
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <div className="font-body font-semibold text-[13px] text-ink truncate">
+              {displayName}
+            </div>
+            {subline ? (
+              <div className="font-body text-[11px] text-ink-muted truncate">{subline}</div>
+            ) : null}
           </div>
-          {subline ? (
-            <div className="font-body text-[11px] text-ink-muted truncate">{subline}</div>
-          ) : null}
-        </div>
+        )}
         {currentUser && (
           <button
             type="button"

@@ -37,7 +37,7 @@ export default function PricingSection() {
     "cursor-pointer border-none font-body font-semibold text-[13px] px-[18px] py-[9px] rounded-full transition-all";
 
   return (
-    <section id="pricing" className="max-w-[1140px] mx-auto px-8 py-[84px]">
+    <section id="pricing" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
       <div className="text-center mb-3.5">
         <span className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber">
           Pricing
@@ -62,7 +62,7 @@ export default function PricingSection() {
           </button>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-[22px] items-start">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-[22px] items-start">
         <div className="bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
           <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-ink-light mb-2">Free</div>
           <div className="font-body text-[13.5px] text-ink-muted mb-5">Try the full loop</div>
@@ -70,7 +70,7 @@ export default function PricingSection() {
             <span className="font-display font-bold text-[42px] text-ink">$0</span>
             <span className="font-body text-sm text-ink-muted">/ forever</span>
           </div>
-          <a href="#" className="block text-center no-underline font-body font-semibold text-sm text-ink bg-white border border-border-dark py-3 rounded-[10px] mb-6 hover:border-brown transition-colors">Get started</a>
+          <a href="/auth?plan=free" className="block text-center no-underline font-body font-semibold text-sm text-ink bg-white border border-border-dark py-3 rounded-[10px] mb-6 hover:border-brown transition-colors">Get started</a>
           <div className="flex flex-col gap-3">
             {FREE_FEATURES.map((f) => (
               <div key={f} className="flex gap-2.5 font-body text-sm text-[#3a352e]">
@@ -88,7 +88,7 @@ export default function PricingSection() {
             <span className="font-display font-bold text-[42px] text-[#FAF8F6]">${proPrice}</span>
             <span className="font-body text-sm text-[#9a9082]">{period}</span>
           </div>
-          <a href="#" className="block text-center no-underline font-body font-semibold text-sm text-dark bg-gold py-3 rounded-[10px] mb-6 hover:bg-gold-light transition-colors">Start 7-day trial</a>
+          <a href="/auth?plan=pro" className="block text-center no-underline font-body font-semibold text-sm text-dark bg-gold py-3 rounded-[10px] mb-6 hover:bg-gold-light transition-colors">Start 7-day trial</a>
           <div className="flex flex-col gap-3">
             {PRO_FEATURES.map((f) => (
               <div key={f} className="flex gap-2.5 font-body text-sm text-[#e6ddd0]">
@@ -105,7 +105,7 @@ export default function PricingSection() {
             <span className="font-display font-bold text-[42px] text-ink">${maxPrice}</span>
             <span className="font-body text-sm text-ink-muted">{period}</span>
           </div>
-          <a href="#" className="block text-center no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown py-3 rounded-[10px] mb-6 hover:bg-brown-light transition-colors">Go Max</a>
+          <a href="/auth?plan=max" className="block text-center no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown py-3 rounded-[10px] mb-6 hover:bg-brown-light transition-colors">Go Max</a>
           <div className="flex flex-col gap-3">
             {MAX_FEATURES.map((f) => (
               <div key={f} className="flex gap-2.5 font-body text-sm text-[#3a352e]">

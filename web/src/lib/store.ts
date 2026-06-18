@@ -9,6 +9,9 @@ import {
   auth as authApi,
   ApiError,
   clearToken,
+  getChatSessionId,
+  setChatSessionId,
+  clearChatSessionId,
 } from "./api";
 
 export type Screen = "onboarding" | "app" | "review" | "extension" | "builder" | "mock";
@@ -317,6 +320,8 @@ interface VantageState {
   chatMessages: ChatMessage[];
   chatSessionId: string | null;
   chatLoading: boolean;
+  // True while we replay a persisted session's history from the DB on mount.
+  chatHydrating: boolean;
   applied: Applied[];
 
   apiJobs: ApiJob[];
@@ -388,6 +393,7 @@ interface VantageState {
   sendChat: () => void;
   setChatInput: (v: string) => void;
   sendRealChat: () => void;
+  hydrateChat: () => Promise<void>;
   createResume: (content: object) => Promise<void>;
   loadJobs: () => Promise<void>;
   loadApplications: () => Promise<void>;
@@ -417,8 +423,11 @@ export const useVantage = create<VantageState>((set, get) => ({
   chatLog: [],
   chatInput: "",
   chatMessages: [],
-  chatSessionId: null,
+  // Restore the lifelong session id at store init so a page reload keeps
+  // appending to the same conversation instead of forking a new one.
+  chatSessionId: getChatSessionId(),
   chatLoading: false,
+  chatHydrating: false,
   applied: [
     { mono: "Fg", co: "Figma", role: "Product Designer", when: "2d ago" },
     { mono: "Ab", co: "Airbnb", role: "Senior Product Designer", when: "4d ago" },
@@ -743,6 +752,9 @@ export const useVantage = create<VantageState>((set, get) => ({
     });
     try {
       const res = await chatApi.send(msg, s.chatSessionId || undefined);
+      // Persist the (possibly newly created) session id so a reload resumes the
+      // same conversation rather than starting a fresh one.
+      setChatSessionId(res.sessionId);
       set((prev) => ({
         chatSessionId: res.sessionId,
         chatMessages: [...prev.chatMessages, { role: "assistant", content: res.reply.content, agent: res.reply.metadata.agent }],
@@ -753,6 +765,35 @@ export const useVantage = create<VantageState>((set, get) => ({
         chatMessages: [...prev.chatMessages, { role: "assistant", content: "Sorry, I couldn't process that request. Please try again." }],
         chatLoading: false,
       }));
+    }
+  },
+
+  // Replay a persisted conversation from the DB on mount so it survives reloads.
+  // No-op when there's no stored session or it's already loaded. A 404 means the
+  // session was deleted server-side — clear the stale id and start clean.
+  hydrateChat: async () => {
+    const s = get();
+    const sid = s.chatSessionId;
+    if (!sid || s.chatMessages.length > 0 || s.chatHydrating) return;
+    set({ chatHydrating: true });
+    try {
+      const res = await chatApi.messages(sid);
+      const messages: ChatMessage[] = res.messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+      set({ chatMessages: messages, chatHydrating: false });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        clearChatSessionId();
+        set({ chatSessionId: null, chatMessages: [], chatHydrating: false });
+        return;
+      }
+      // Transient failure (offline/timeout): keep the stored id, just stop the
+      // spinner. A later send still targets the right session.
+      set({ chatHydrating: false });
     }
   },
 
@@ -847,6 +888,9 @@ export const useVantage = create<VantageState>((set, get) => ({
   // tour state — those are per-browser, not per-session.
   signOut: () => {
     clearToken();
+    // Drop the persisted chat session too, or the next user to log in on this
+    // browser would resume the previous user's conversation.
+    clearChatSessionId();
     set({
       currentUser: null,
       currentResumeId: null,
@@ -855,6 +899,7 @@ export const useVantage = create<VantageState>((set, get) => ({
       trendSnapshot: null,
       chatMessages: [],
       chatSessionId: null,
+      chatHydrating: false,
       screen: "onboarding",
     });
   },

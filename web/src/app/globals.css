@@ -17,6 +17,12 @@
   --color-border-dark: #D6CEC0;
   --color-green: #4C7A3F;
   --color-green-bg: #EBF3E5;
+  /* Coral — semantic colour for AI-generated/added segments. Per
+     docs/architecture/vantage-ui-mapping.md §2: "Diff vs v6 — AI 生成段
+     标珊瑚橙，需用户过目." */
+  --color-coral: #C9462E;
+  --color-coral-bg: #FCE9E1;
+  --color-coral-border: #F4C8B5;
   --color-dark: #221E18;
   --color-dark-card: #2c2519;
   --color-dark-border: #4a3f2e;

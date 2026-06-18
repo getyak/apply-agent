@@ -69,7 +69,7 @@ export function BuilderScreen() {
   const showPlaceholderBullets = realBullets.length === 0;
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-paper animate-fade-in">
+    <div className="h-full w-full flex overflow-hidden bg-paper animate-fade-in">
       <div className="w-[480px] shrink-0 border-r border-border flex flex-col bg-paper">
         <div className="h-[60px] shrink-0 border-b border-border bg-paper/85 backdrop-blur-xl flex items-center px-[22px] gap-3">
           <button
@@ -180,7 +180,7 @@ export function BuilderScreen() {
         </div>
       </div>
 
-      <div className="flex-1 min-w-0 overflow-y-auto h-screen py-10">
+      <div className="flex-1 min-w-0 overflow-y-auto h-full py-10">
         <div className="max-w-[620px] mx-auto px-10">
           <div className="flex items-center justify-between mb-4">
             <span className="font-mono text-[10px] tracking-[0.8px] uppercase text-ink-muted">
