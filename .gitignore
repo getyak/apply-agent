@@ -78,6 +78,17 @@ screen-*.png
 final-*.png
 vantage-*.png
 *.screenshot.png
+# loose dev/debug screenshots dumped at repo root
+/[0-9][0-9]-*.png
+/repro-*.png
+/resume-*.png
+/ui[0-9]-*.png
+/verify-*.png
+/verifier-*.png
+
+# AI automation test fixtures (local-only)
+test-fixtures/
+test-run-*/
 
 # Playwright MCP cache
 .playwright-mcp/
