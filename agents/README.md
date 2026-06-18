@@ -48,14 +48,21 @@ Prereqs: PG 5433 + Redis 6380 up (`make up` at repo root). Then:
 
 ```bash
 cd agents
-uv sync                     # one-time
+uv python install 3.12      # pin 3.12 (system python3 may be 3.10, < required 3.11)
+uv sync --all-extras        # one-time — creates .venv from uv.lock, installs editable pkg + dev deps
 uv run uvicorn agents.api.server:app --reload --port 8001
 ```
+
+> `uv sync` builds the `agents` package editable from `uv.lock`. The flat-layout
+> subdirs (`api/`, `nodes/`, `harness/`, `coordinator/`, `events/`, `tools/`) are
+> declared explicitly in `pyproject.toml` `[tool.setuptools]` and import as
+> `agents.<sub>`. After changing `pyproject.toml` deps, run `uv lock` to refresh
+> `uv.lock` (CI uses `uv sync --frozen` and will fail if the lock is stale).
 
 Env vars:
 - `OPENROUTER_API_KEY` — required
 - `OPENROUTER_BASE_URL` — defaults to https://openrouter.ai/api/v1
-- `RELAY_PG_DSN` — postgresql://relay:relay@localhost:5433/relay
+- `RELAY_PG_DSN` — optional; if unset, the agents fall back to `DATABASE_URL` then `POSTGRES_URL`. Derive the value from `DATABASE_URL` in the root `.env` (PG on 5433); do not hardcode a password here.
 - `RELAY_REDIS_URL` — redis://localhost:6380/0
 - `LOCAL_DEV=1` — accept the demo user when X-User-Id is missing
 - `RELAY_LLM_KILLSWITCH=1` — emergency stop (skip all LLM calls)
