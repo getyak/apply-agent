@@ -61,9 +61,15 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
       body: JSON.stringify({ message: prompt }),
     });
   } catch (err) {
+    // Most common cause in dev/CI: the Python LangGraph host isn't
+    // running. The dock catches `code` and renders the `hint` verbatim
+    // instead of "Upstream error", so the user knows it's a setup
+    // issue, not a product bug.
     return c.json(
       {
         error: "agent_unreachable",
+        code: "AGENT_UNREACHABLE",
+        hint: "Vantage's reasoning engine is offline. Try again in a moment — if this persists, check that the agents host is running.",
         detail: err instanceof Error ? err.message : String(err),
       },
       503,
@@ -72,8 +78,18 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
 
   if (!upstream.ok || !upstream.body) {
     const detail = await upstream.text().catch(() => "");
+    console.warn(
+      "[ask] upstream not ok:",
+      { target, status: upstream.status, hasBody: !!upstream.body, detail: detail.slice(0, 200) },
+    );
     return c.json(
-      { error: "agent_failed", status: upstream.status, detail },
+      {
+        error: "agent_failed",
+        code: "AGENT_FAILED",
+        hint: "Vantage's reasoning engine returned an error. We're looking into it.",
+        status: upstream.status,
+        detail,
+      },
       502,
     );
   }

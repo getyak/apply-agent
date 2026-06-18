@@ -22,7 +22,7 @@ import type {
   ParseResume,
   ParseResumeAsync,
 } from "../schemas";
-import type { JsonResume } from "../resume-parse";
+import type { JsonResume, ParseResult } from "../resume-parse";
 import type { AppEnv } from "../types";
 
 const app = new Hono<AppEnv>();
@@ -87,38 +87,72 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
     parsed = await parseResumeText(text);
   } catch (err) {
     if (err instanceof LLMUnavailableError) {
-      // 502: the structuring step depends on an upstream model that's down or
-      // unconfigured. The client shows "parsing unavailable", not a fake result.
+      // The only case parseResumeText still throws is "raw text empty" — that
+      // means the upload route should have rejected this earlier. Treat as 502.
       throw new UpstreamError("Resume parsing is unavailable", err.message);
     }
     throw err;
   }
 
   if (!save) {
-    return c.json({ resume: parsed.resume, saved: false, meta: parsed.meta });
+    return c.json({
+      resume: parsed.resume,
+      saved: false,
+      warnings: parsed.warnings,
+      usedFallback: parsed.usedFallback,
+      meta: parsed.meta,
+    });
   }
 
-  // Persist as the next version (base resume) via the shared helper so the
-  // optimistic-lock version sequence stays consistent with the async path.
-  const row = await saveBaseResume(userId, parsed.resume);
-  return c.json({ resume: row, saved: true, meta: parsed.meta }, 201);
+  const row = await saveBaseResume(userId, parsed);
+  return c.json(
+    {
+      resume: row,
+      saved: true,
+      warnings: parsed.warnings,
+      usedFallback: parsed.usedFallback,
+      meta: parsed.meta,
+    },
+    201,
+  );
 });
 
-/** Persist a parsed resume as the user's next base version (shared by the
- *  synchronous and async paths). */
-async function saveBaseResume(userId: string, resume: JsonResume) {
-  const versionResult = await query(
-    "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM resumes WHERE user_id = $1",
-    [userId],
+/**
+ * Persist a parsed resume as the user's base. Re-uploads OVERWRITE the existing
+ * base row instead of creating a new version: the raw text is the source of
+ * truth and we don't want a bad AI parse to bury the user's good v2 behind a
+ * broken v3. Tailored resumes (is_base=false, tailored_for_job=…) are
+ * untouched — version sequencing still matters for them.
+ *
+ * Storage shape: { raw, parsed, warnings, parsedAt }. The raw text is the spine
+ * — if AI ever choked we can re-parse later without asking the user to re-upload.
+ */
+async function saveBaseResume(userId: string, parsed: ParseResult) {
+  const content = {
+    raw: parsed.raw,
+    parsed: parsed.resume,
+    warnings: parsed.warnings,
+    parsedAt: new Date().toISOString(),
+  };
+
+  // Try to overwrite the existing base row first.
+  const updateResult = await query(
+    `UPDATE resumes
+       SET content = $1, version = version + 1
+       WHERE user_id = $2 AND is_base = true
+       RETURNING id, user_id, content, version, is_base, created_at`,
+    [JSON.stringify(content), userId],
   );
-  const nextVersion = versionResult.rows[0].next_version;
-  const result = await query(
+  if (updateResult.rows.length > 0) return updateResult.rows[0];
+
+  // No base yet — create version 1.
+  const insert = await query(
     `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-     VALUES ($1, $2, $3, true, NOW())
+     VALUES ($1, $2, 1, true, NOW())
      RETURNING id, user_id, content, version, is_base, created_at`,
-    [userId, JSON.stringify(resume), nextVersion],
+    [userId, JSON.stringify(content)],
   );
-  return result.rows[0];
+  return insert.rows[0];
 }
 
 /** Shape returned to the client when a parse job finishes. */
@@ -126,6 +160,8 @@ interface ParseJobResult {
   resume: JsonResume;
   saved: boolean;
   resumeId?: string;
+  warnings: string[];
+  usedFallback: boolean;
   meta: { model: string; costCents: number };
 }
 
@@ -151,11 +187,20 @@ app.post("/parse-async", validateBody(ParseResumeAsyncSchema), async (c) => {
     let saved = false;
     let resumeId: string | undefined;
     if (save) {
-      const row = await saveBaseResume(userId, parsed.resume);
+      // Always persist — even when AI parsing failed, the raw text is the user's
+      // v1 base. Warnings ride along so the UI can prompt the user to fill gaps.
+      const row = await saveBaseResume(userId, parsed);
       saved = true;
       resumeId = row.id as string;
     }
-    return { resume: parsed.resume, saved, resumeId, meta: parsed.meta };
+    return {
+      resume: parsed.resume,
+      saved,
+      resumeId,
+      warnings: parsed.warnings,
+      usedFallback: parsed.usedFallback,
+      meta: parsed.meta,
+    };
   });
 
   return c.json({ job }, 202);
@@ -199,13 +244,28 @@ app.get("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
   const resume = await requireOwnership("resumes", id, userId);
-  return c.json({ resume });
+  return c.json({ resume: unwrapResumeRow(resume) });
 });
 
 app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id")!; // present by route definition
   const { content, expectedVersion } = c.get("validatedBody") as UpdateResume;
+
+  // Hand-edits flow through this route. Preserve the wrapper shape if the row
+  // already has one (raw text + warnings shouldn't be silently dropped when a
+  // user tweaks a field), otherwise write the JsonResume verbatim.
+  const existing = await query<{ content: unknown }>(
+    "SELECT content FROM resumes WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
+  const wrapped = isWrappedResume(existing.rows[0]?.content)
+    ? {
+        ...(existing.rows[0].content as Record<string, unknown>),
+        parsed: content,
+        parsedAt: new Date().toISOString(),
+      }
+    : content;
 
   const result = await query(
     `UPDATE resumes SET content = $1, version = version + 1
