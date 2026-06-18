@@ -1,10 +1,16 @@
 // Ask Vantage SSE client.
 //
-// Connects to POST /api/ask/stream and translates LangGraph
-// astream_events frames into UI mutations on the dock store.
-// We can't use the native EventSource because it's GET-only and
-// can't send the bearer token; we do fetch + ReadableStream so we
-// can send Authorization headers and abort cleanly.
+// Two layers:
+//   1. runAskStream — low-level. Pulls from POST /api/ask/stream, parses
+//      NDJSON frames, runs an idle watchdog, calls back into whatever state
+//      pool the caller manages. Knows nothing about useDock or React.
+//   2. sendAsk — dock wrapper. Wires runAskStream's callbacks into useDock
+//      and is the only caller that mutates the dock's message list /
+//      agentEvents / streaming flag.
+//
+// The Resume Studio vibe chat (vantage-ui-mapping.md §2.6) drives
+// runAskStream directly with local-component callbacks so its messages
+// live in component state, not the dock.
 //
 // Frame contract (line-delimited JSON, one frame per line):
 //   { "kind": "text",        "delta": "..." }
@@ -87,6 +93,8 @@ function formatAttachmentsFooter(atts: DockAttachment[]): string {
   return `\n\n[Attached files]\n${lines.join("\n")}`;
 }
 
+// ─── Surface ───────────────────────────────────────────────────────────
+
 // Surface identifies which conversation panel is asking. See
 // vantage-ui-mapping.md §2.6 for the channel split. Default to "dock"
 // when omitted — keeps the lifetime conversation behavior intact for the
@@ -101,6 +109,183 @@ export interface SendAskOptions {
   // we read useDock.threadId (the lifetime ask_vantage thread).
   threadIdOverride?: string;
 }
+
+// ─── Low-level runner ──────────────────────────────────────────────────
+
+export interface AskStreamCallbacks {
+  // Streaming text delta for the current assistant turn.
+  onAssistantDelta: (delta: string) => void;
+  // Agent task card lifecycle.
+  onAgentStart: (agent: string, label: string) => void;
+  onAgentDone: (agent: string, statusText: string) => void;
+  onAgentFailed: (agent: string, statusText: string) => void;
+  // Final result card. `route` is pre-validated as same-origin relative;
+  // the caller decides whether to render a button that navigates there.
+  onResult: (result: {
+    title: string;
+    sub: string;
+    action: string;
+    route?: string;
+  }) => void;
+  // Stream terminated normally.
+  onDone: () => void;
+  // Stream failed mid-flight. `kind` lets the caller distinguish a clean
+  // upstream "error" frame from a transport timeout/disconnect so it can
+  // surface different copy.
+  onError: (kind: "frame" | "timeout" | "disconnect", message: string) => void;
+}
+
+export interface RunAskStreamArgs {
+  prompt: string;
+  threadId: string;
+  surface?: AskSurface;
+  abortController: AbortController;
+  callbacks: AskStreamCallbacks;
+}
+
+/**
+ * Pulls one SSE conversation turn from POST /api/ask/stream and dispatches
+ * decoded frames through the supplied callbacks. State-pool agnostic — the
+ * caller decides where messages, agent cards, and the streaming flag live.
+ */
+export async function runAskStream({
+  prompt,
+  threadId,
+  surface,
+  abortController,
+  callbacks,
+}: RunAskStreamArgs): Promise<void> {
+  const cb = callbacks;
+
+  const handleFrame = (frame: StreamFrame): "continue" | "stop" => {
+    switch (frame.kind) {
+      case "text":
+        cb.onAssistantDelta(frame.delta);
+        return "continue";
+      case "agent_start":
+        cb.onAgentStart(frame.agent, frame.label);
+        return "continue";
+      case "agent_done":
+        cb.onAgentDone(frame.agent, frame.statusText);
+        return "continue";
+      case "agent_failed":
+        cb.onAgentFailed(frame.agent, frame.statusText);
+        return "continue";
+      case "result":
+        cb.onResult({
+          title: frame.title,
+          sub: frame.sub,
+          action: frame.action,
+          route: frame.route && isSafeRoute(frame.route) ? frame.route : undefined,
+        });
+        return "continue";
+      case "done":
+        cb.onDone();
+        return "stop";
+      case "error":
+        cb.onError("frame", frame.message);
+        return "stop";
+      default:
+        return "continue";
+    }
+  };
+
+  const parseLine = (line: string): StreamFrame | null => {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    try {
+      return JSON.parse(trimmed) as StreamFrame;
+    } catch {
+      return null;
+    }
+  };
+
+  // Idle watchdog: abort the whole stream if no chunk arrives within
+  // STREAM_IDLE_TIMEOUT_MS. Reset on every received chunk so slow-but-
+  // progressing streams survive. `timedOut` lets us surface a distinct
+  // user-facing message instead of treating it as a generic disconnect.
+  let timedOut = false;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = null;
+  };
+  const armIdle = () => {
+    clearIdle();
+    idleTimer = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  try {
+    const token = getToken();
+    armIdle();
+    const res = await fetch(endpoint(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/x-ndjson",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        prompt,
+        thread_id: threadId,
+        ...(surface ? { surface } : {}),
+      }),
+      signal: abortController.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`/api/ask/stream returned ${res.status}`);
+    }
+
+    reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      armIdle(); // progressing — reset the watchdog
+      buf += decoder.decode(value, { stream: true });
+
+      let nl = buf.indexOf("\n");
+      while (nl >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        nl = buf.indexOf("\n");
+        const frame = parseLine(line);
+        if (!frame) continue;
+        if (handleFrame(frame) === "stop") return;
+      }
+    }
+
+    // Stream ended without a trailing newline: flush any buffered final
+    // frame so the last message isn't silently dropped.
+    const tail = buf.trim();
+    if (tail) {
+      const frame = parseLine(tail);
+      if (frame && handleFrame(frame) === "stop") return;
+    }
+  } catch (err) {
+    const aborted = err instanceof DOMException && err.name === "AbortError";
+    if (timedOut) {
+      cb.onError("timeout", "Vantage stream timed out. Try again.");
+    } else if (!aborted) {
+      const msg = err instanceof Error ? err.message : String(err);
+      cb.onError("disconnect", `Lost connection to Vantage. ${msg}`);
+    }
+  } finally {
+    clearIdle();
+    // Release the underlying ReadableStream regardless of how we exited.
+    if (reader) reader.cancel().catch(() => {});
+  }
+}
+
+// ─── Dock wrapper ──────────────────────────────────────────────────────
 
 export async function sendAsk(
   prompt: string,
@@ -156,175 +341,77 @@ export async function sendAsk(
     }));
   };
 
-  const onAgentStart = (agent: string, label: string) => {
-    const id = `ev-${agent}-${Date.now()}-${groupAgentIds.length}`;
-    const ev: AgentEvent = {
-      id,
-      agent,
-      label: label || `${AGENT_LABELS[agent] ?? agent.toUpperCase()} · running`,
-      state: "running",
-      statusText: "running",
-      ts: Date.now(),
-    };
-    dock.updateAgentEvent(ev);
-    groupAgentIds.push(id);
-    useDock.setState((s) => ({
-      messages: s.messages.map((m) =>
-        m.id === agentGroupMsgId ? { ...m, agents: [...groupAgentIds] } : m,
-      ),
-    }));
-  };
-
-  const finishAgent = (
-    agent: string,
-    state: "done" | "failed",
-    statusText: string,
-  ) => {
-    const events = useDock.getState().agentEvents;
-    const target = groupAgentIds
-      .map((id) => events[id])
-      .filter(Boolean)
-      .reverse()
-      .find((e) => e.agent === agent && e.state === "running");
-    if (!target) return;
-    dock.updateAgentEvent({ ...target, state, statusText });
-  };
-
-  // Dispatch a single decoded NDJSON frame. Returns "stop" when the
-  // stream should terminate (done/error), otherwise "continue". Shared
-  // by the read loop and the trailing-frame flush below.
-  const handleFrame = (frame: StreamFrame): "continue" | "stop" => {
-    switch (frame.kind) {
-      case "text":
-        updateAssistant(frame.delta);
-        return "continue";
-      case "agent_start":
-        onAgentStart(frame.agent, frame.label);
-        return "continue";
-      case "agent_done":
-        finishAgent(frame.agent, "done", frame.statusText);
-        return "continue";
-      case "agent_failed":
-        finishAgent(frame.agent, "failed", frame.statusText);
-        return "continue";
-      case "result":
+  await runAskStream({
+    prompt: wirePrompt,
+    threadId,
+    surface: opts.surface,
+    abortController: controller,
+    callbacks: {
+      onAssistantDelta: updateAssistant,
+      onAgentStart: (agent, label) => {
+        const id = `ev-${agent}-${Date.now()}-${groupAgentIds.length}`;
+        const ev: AgentEvent = {
+          id,
+          agent,
+          label: label || `${AGENT_LABELS[agent] ?? agent.toUpperCase()} · running`,
+          state: "running",
+          statusText: "running",
+          ts: Date.now(),
+        };
+        dock.updateAgentEvent(ev);
+        groupAgentIds.push(id);
+        useDock.setState((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === agentGroupMsgId ? { ...m, agents: [...groupAgentIds] } : m,
+          ),
+        }));
+      },
+      onAgentDone: (agent, statusText) => {
+        const events = useDock.getState().agentEvents;
+        const target = groupAgentIds
+          .map((id) => events[id])
+          .filter(Boolean)
+          .reverse()
+          .find((e) => e.agent === agent && e.state === "running");
+        if (!target) return;
+        dock.updateAgentEvent({ ...target, state: "done", statusText });
+      },
+      onAgentFailed: (agent, statusText) => {
+        const events = useDock.getState().agentEvents;
+        const target = groupAgentIds
+          .map((id) => events[id])
+          .filter(Boolean)
+          .reverse()
+          .find((e) => e.agent === agent && e.state === "running");
+        if (!target) return;
+        dock.updateAgentEvent({ ...target, state: "failed", statusText });
+      },
+      onResult: ({ title, sub, action, route }) => {
         dock.pushMessage({
           kind: "result",
-          title: frame.title,
-          sub: frame.sub,
-          action: frame.action,
-          onAction:
-            frame.route && isSafeRoute(frame.route)
-              ? () => {
-                  if (typeof window !== "undefined" && frame.route)
-                    window.location.assign(frame.route);
-                }
-              : undefined,
+          title,
+          sub,
+          action,
+          onAction: route
+            ? () => {
+                if (typeof window !== "undefined") window.location.assign(route);
+              }
+            : undefined,
         });
-        return "continue";
-      case "done":
-        clearOwnedStreamState();
-        return "stop";
-      case "error":
-        updateAssistant(`\n\n_Something went wrong: ${frame.message}_`);
-        clearOwnedStreamState();
-        return "stop";
-      default:
-        return "continue";
-    }
-  };
-
-  const parseLine = (line: string): StreamFrame | null => {
-    const trimmed = line.trim();
-    if (!trimmed) return null;
-    try {
-      return JSON.parse(trimmed) as StreamFrame;
-    } catch {
-      return null;
-    }
-  };
-
-  // Idle watchdog: abort the whole stream if no chunk arrives within
-  // STREAM_IDLE_TIMEOUT_MS. Reset on every received chunk so slow-but-
-  // progressing streams survive. `timedOut` lets us surface a distinct
-  // user-facing message instead of treating it as a generic disconnect.
-  let timedOut = false;
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const clearIdle = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = null;
-  };
-  const armIdle = () => {
-    clearIdle();
-    idleTimer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, STREAM_IDLE_TIMEOUT_MS);
-  };
-
-  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-
-  try {
-    const token = getToken();
-    armIdle();
-    const res = await fetch(endpoint(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/x-ndjson",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({
-        prompt: wirePrompt,
-        thread_id: threadId,
-        ...(opts.surface ? { surface: opts.surface } : {}),
-      }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok || !res.body) {
-      throw new Error(`/api/ask/stream returned ${res.status}`);
-    }
-
-    reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      armIdle(); // progressing — reset the watchdog
-      buf += decoder.decode(value, { stream: true });
-
-      let nl = buf.indexOf("\n");
-      while (nl >= 0) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        nl = buf.indexOf("\n");
-        const frame = parseLine(line);
-        if (!frame) continue;
-        if (handleFrame(frame) === "stop") return;
-      }
-    }
-
-    // Stream ended without a trailing newline: flush any buffered final
-    // frame so the last message isn't silently dropped.
-    const tail = buf.trim();
-    if (tail) {
-      const frame = parseLine(tail);
-      if (frame && handleFrame(frame) === "stop") return;
-    }
-  } catch (err) {
-    const aborted = err instanceof DOMException && err.name === "AbortError";
-    if (timedOut) {
-      updateAssistant("\n\n_Vantage stream timed out. Try again._");
-    } else if (!aborted) {
-      updateAssistant("\n\n_Lost connection to Vantage. Try again._");
-    }
-  } finally {
-    clearIdle();
-    // Release the underlying ReadableStream regardless of how we exited.
-    if (reader) reader.cancel().catch(() => {});
-    clearOwnedStreamState();
-  }
+      onDone: () => {
+        clearOwnedStreamState();
+      },
+      onError: (kind, message) => {
+        if (kind === "frame") {
+          updateAssistant(`\n\n_Something went wrong: ${message}_`);
+        } else if (kind === "timeout") {
+          updateAssistant("\n\n_Vantage stream timed out. Try again._");
+        } else {
+          updateAssistant("\n\n_Lost connection to Vantage. Try again._");
+        }
+        clearOwnedStreamState();
+      },
+    },
+  });
 }
