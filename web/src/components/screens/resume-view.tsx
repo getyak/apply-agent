@@ -1,10 +1,13 @@
 "use client";
 
-// Résumé view — document + version timeline, NO chat input.
-// Per docs/architecture/vantage-ui-mapping.md §2:
-//   "All résumé edits route through Ask Vantage; this view is the
-//    document face plus a version rail."
-// Vantage.dc.html lines 392–583 are the visual contract.
+// Résumé view — vibe chat (left) + document + version timeline (right).
+// Per docs/architecture/vantage-ui-mapping.md §2 (rev. 2026-06-18):
+//   Resume Studio carries its own document-scoped vibe chat. The Ask
+//   Vantage dock remains the cross-surface lifetime conversation; the
+//   vibe chat is per-résumé-branch and shares the /api/ask/stream
+//   plumbing via runAskStream + useConversationStream.
+// Vantage.dc.html lines 392–583 are the visual contract for the
+// document pane.
 //
 // We mount it under /app/studio/resume. The Builder overlay (the old
 // chat-driven "build from scratch" flow) remains separately reachable.
@@ -13,6 +16,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { resumes as resumesApi } from "@/lib/api";
 import { useDock } from "@/lib/ask-vantage-store";
 import { useVantage } from "@/lib/store";
+import { useConversationStream } from "@/lib/use-conversation-stream";
+import {
+  VibeChatPanel,
+  type VibeChip,
+} from "@/components/studio/vibe-chat-panel";
 
 type VersionRow = {
   id: string;
@@ -104,6 +112,7 @@ function VantageMark({ size = 14 }: { size?: number }) {
 
 export function ResumeView() {
   const currentResumeId = useVantage((s) => s.currentResumeId);
+  const currentUser = useVantage((s) => s.currentUser);
   // Async parse pipeline state — owned by the global store so the workspace
   // banner and this view stay in lockstep (one source of truth for "what
   // file are we parsing right now").
@@ -115,6 +124,7 @@ export function ResumeView() {
   const parseError = useVantage((s) => s.parseError);
   const dismissParseBanner = useVantage((s) => s.dismissParseBanner);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [vibeInput, setVibeInput] = useState("");
 
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -291,6 +301,158 @@ export function ResumeView() {
     URL.revokeObjectURL(url);
   }
 
+  // ─── Vibe chat (vantage-ui-mapping.md §2.6) ────────────────────────────
+  //
+  // The thread id is per-master-résumé, so every tailored variant of the
+  // same master shares the conversation — the user thinks "this résumé",
+  // not "this version".
+  //
+  // resumeRootId resolution: when the user is viewing a tailored variant,
+  // we route to the most-recent master id (matches the existing diff base
+  // logic). For a master, the master's own id is the root. When nothing is
+  // viewable yet (initial load / empty state) the thread is null and the
+  // panel sits inert — clicking a chip is a no-op until the data arrives.
+  const resumeRootId = useMemo(() => {
+    if (!currentVersion) return null;
+    if (currentVersion.isBase) return currentVersion.id;
+    return masterVersions[0]?.id ?? currentVersion.id;
+  }, [currentVersion, masterVersions]);
+
+  const vibeThreadId = useMemo(() => {
+    if (!currentUser || !resumeRootId) return null;
+    return `resume_studio:${currentUser.id}:${resumeRootId}`;
+  }, [currentUser, resumeRootId]);
+
+  const vibeChat = useConversationStream({
+    threadId: vibeThreadId,
+    surface: "resume_studio",
+    resetKey: vibeThreadId,
+  });
+
+  // Chip handlers. Each prepares a focused prompt that primes the
+  // conversation; sending happens through the same vibeChat.send() so
+  // SSE results land in this panel, not the dock.
+  function sendChip(prompt: string) {
+    void vibeChat.send(prompt);
+  }
+
+  const vibeChips: VibeChip[] = useMemo(() => {
+    const disabled = vibeChat.streaming || !vibeThreadId;
+    return [
+      {
+        id: "optimize",
+        label: "优化建议",
+        hint: "Analyze the current résumé and surface the top 3 weakest spots.",
+        disabled,
+        onActivate: () =>
+          sendChip(
+            "Analyze this résumé and tell me the three weakest spots — be specific about which bullet or section, and what to change.",
+          ),
+      },
+      {
+        id: "tailor",
+        label: "JD 微调",
+        hint: "Tailor this résumé for a job description.",
+        disabled,
+        onActivate: () =>
+          sendChip(
+            "I want to tailor this résumé for a specific role. Ask me to paste the JD, then customize the bullets to match — without inventing experience I don't have.",
+          ),
+      },
+      {
+        id: "plan",
+        label: "职业规划",
+        hint: "Read the trajectory and map the next 1–2 moves.",
+        disabled,
+        onActivate: () =>
+          sendChip(
+            "Read my résumé's trajectory and tell me what the next one or two career moves should look like, plus which skills I'd need to close to get there.",
+          ),
+      },
+      {
+        id: "recommend",
+        label: "职业推荐",
+        hint: "Surface jobs that match the current résumé.",
+        disabled,
+        onActivate: () =>
+          sendChip(
+            "Based on this résumé, suggest five roles that would be a strong match right now — and explain in one line why each fits.",
+          ),
+      },
+    ];
+    // sendChip closes over vibeChat which changes per render; we accept
+    // the new identities — chips are cheap to recompute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vibeChat.streaming, vibeThreadId]);
+
+  // withVibeChat wraps every render branch (loading / error / empty / main)
+  // in the left-vibe-chat + right-content two-pane shell so the chat panel
+  // is always present once we know who the user is.
+  function withVibeChat(content: React.ReactNode): React.ReactNode {
+    // While currentUser is still loading we don't have a thread id yet;
+    // render the content full-width rather than flashing a dead panel.
+    if (!currentUser) {
+      return (
+        <div
+          style={{
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            background: "#FAF8F6",
+          }}
+        >
+          {content}
+        </div>
+      );
+    }
+    return (
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          flexDirection: "row",
+          background: "#FAF8F6",
+          minHeight: 0,
+        }}
+      >
+        <VibeChatPanel
+          title={
+            currentVersion?.isBase
+              ? "Sharpen your master résumé"
+              : currentVersion
+                ? "Refine this tailored version"
+                : "Start with your résumé"
+          }
+          subtitle="Scoped to this résumé — picks up your version, your context, every time."
+          chips={vibeChips}
+          messages={vibeChat.messages}
+          agentEvents={vibeChat.agentEvents}
+          streaming={vibeChat.streaming}
+          input={vibeInput}
+          onInputChange={setVibeInput}
+          onSend={() => {
+            const t = vibeInput.trim();
+            if (!t) return;
+            setVibeInput("");
+            void vibeChat.send(t);
+          }}
+          onCancel={() => vibeChat.cancel()}
+        />
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {content}
+        </div>
+      </div>
+    );
+  }
+
   // Hidden file input + parse banner are needed on every render branch
   // (loading / error / empty / main), so we lift them into one shared
   // pre-render block reused by each early return.
@@ -317,19 +479,19 @@ export function ResumeView() {
   );
 
   if (loading) {
-    return (
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#FAF8F6" }}>
+    return withVibeChat(
+      <>
         {sharedChrome}
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <span className="ds-mono-10">LOADING RÉSUMÉ…</span>
         </div>
-      </div>
+      </>,
     );
   }
 
   if (error && versions.length === 0) {
-    return (
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#FAF8F6" }}>
+    return withVibeChat(
+      <>
         {sharedChrome}
         <div style={{ padding: 32 }}>
           <div className="ds-card" style={{ padding: 22, maxWidth: 540 }}>
@@ -339,13 +501,13 @@ export function ResumeView() {
             <p className="ds-body-sm">{error}</p>
           </div>
         </div>
-      </div>
+      </>,
     );
   }
 
   if (versions.length === 0 || !doc) {
-    return (
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#FAF8F6" }}>
+    return withVibeChat(
+      <>
         {sharedChrome}
         <div style={{ padding: 32 }}>
           <div className="ds-card" style={{ padding: 28, maxWidth: 540 }}>
@@ -389,7 +551,7 @@ export function ResumeView() {
             </div>
           </div>
         </div>
-      </div>
+      </>,
     );
   }
 
@@ -398,8 +560,8 @@ export function ResumeView() {
     .filter(Boolean)
     .join(" · ");
 
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#FAF8F6" }}>
+  return withVibeChat(
+    <>
       {sharedChrome}
       <div
         className="ds-backdrop"
@@ -513,7 +675,7 @@ export function ResumeView() {
           }
         />
       </div>
-    </div>
+    </>,
   );
 }
 
