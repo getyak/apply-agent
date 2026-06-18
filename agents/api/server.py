@@ -87,15 +87,24 @@ async def ask_stream(
     payload: AskPayload,
     user_id: UserDep,
     x_relay_thread_id: Annotated[str | None, Header()] = None,
+    x_relay_surface: Annotated[str | None, Header()] = None,
 ) -> StreamingResponse:
     """SSE stream — classifies intent, runs the dispatched agent, emits task cards.
 
-    The dock holds one lifetime conversation per user
-    (vantage-ui-mapping.md § 1.2). The gateway forwards its thread id as
-    ``X-Relay-Thread-Id``; we fall back to the deterministic per-user thread so
-    a missing header (local curl) still has continuity.
+    Two conversation channels share this endpoint (vantage-ui-mapping.md
+    §2.6): the dock (lifetime per-user thread) and the document-scoped vibe
+    chats (resume_studio, mock_studio, applications). The web layer picks
+    the right thread id, sends it as ``X-Relay-Thread-Id``, and labels the
+    surface via ``X-Relay-Surface`` so the router can adjust context loading
+    if it needs to. A missing thread header falls back to the dock thread —
+    matches old curl behaviour.
     """
     thread_id = x_relay_thread_id or ask_vantage_thread_id(str(user_id))
+    # surface is informational today (we trust the gateway's thread id);
+    # logged for observability and reserved for future per-surface context
+    # tuning in the router.
+    surface = (x_relay_surface or "dock").lower()
+    log.info("ask_stream.start", thread_id=thread_id, surface=surface)
 
     async def gen() -> AsyncIterator[str]:
         yield _sse({"event": "thinking", "agent": "coordinator"})

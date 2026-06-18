@@ -21,9 +21,16 @@ import { authMiddleware } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import type { AppEnv } from "../types";
 
+// Surfaces map 1:1 to the document-scoped conversation channels described
+// in vantage-ui-mapping.md §2.6. The dock is the cross-surface lifetime
+// thread; resume_studio is the per-résumé vibe chat. Anything else falls
+// through to the dock channel server-side.
+const SURFACES = ["dock", "resume_studio", "mock_studio", "applications"] as const;
+
 const AskBody = z.object({
   prompt: z.string().min(1).max(8_000),
   thread_id: z.string().min(1).max(200),
+  surface: z.enum(SURFACES).optional(),
 });
 
 const AGENT_HUMAN_LABEL: Record<string, string> = {
@@ -39,7 +46,7 @@ const routes = new Hono<AppEnv>();
 
 routes.use("/stream", authMiddleware);
 routes.post("/stream", validateBody(AskBody), async (c) => {
-  const { prompt, thread_id } = c.get("validatedBody") as z.infer<
+  const { prompt, thread_id, surface } = c.get("validatedBody") as z.infer<
     typeof AskBody
   >;
   const userId = c.get("userId") as string;
@@ -57,6 +64,12 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
         // side doesn't re-verify (and doesn't need the JWT secret).
         "X-Relay-User-Id": userId,
         "X-Relay-Thread-Id": thread_id,
+        // surface identifies which UI panel is asking — dock vs the
+        // per-document vibe chats (resume_studio etc.). Server-side it
+        // changes thread-scoping and lets the router decide what context
+        // to load. Default to "dock" upstream if absent, so older clients
+        // keep working unchanged.
+        ...(surface ? { "X-Relay-Surface": surface } : {}),
       },
       body: JSON.stringify({ message: prompt }),
     });
