@@ -10,6 +10,7 @@ The Ask Vantage dock holds a lifetime thread per user
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,10 +18,9 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from agents.harness.llm import pick_model
-
 
 log = structlog.get_logger("agents.coordinator.router")
 
@@ -146,12 +146,18 @@ async def classify_intent(message: str) -> Intent:
 # ───────────────────────────────────────────────────────────────────────
 
 
-async def dispatch(intent: Intent, user_id: UUID, message: str) -> dict[str, Any]:
+async def dispatch(
+    intent: Intent, user_id: UUID, message: str, thread_id: str | None = None
+) -> dict[str, Any]:
     """Route to the relevant agent. Returns a result dict the API streams back.
 
     Each branch invokes the agent layer's high-level function. The actual
     LangGraph nodes / workflows are constructed lazily so this module doesn't
     pull every agent at import time.
+
+    ``thread_id`` is the lifetime ask_vantage thread for this user
+    (vantage-ui-mapping.md § 1.2). It is threaded into the small-talk reply so
+    the dock has multi-turn memory.
     """
     if intent.intent == "find_jobs":
         return {"agent": "jobmatch_agent", "action": "find_matches", "status": "not_implemented_yet"}
@@ -197,10 +203,24 @@ async def dispatch(intent: Intent, user_id: UUID, message: str) -> dict[str, Any
         return {"agent": "appprep_agent", "action": "review", "status": "not_implemented_yet"}
 
     # 'other' → small-talk fallback (free, V4 Flash).
-    return await _smalltalk_reply(message)
+    return await _smalltalk_reply(message, thread_id=thread_id)
 
 
-async def _smalltalk_reply(message: str) -> dict[str, Any]:
+async def _smalltalk_reply(message: str, thread_id: str | None = None) -> dict[str, Any]:
+    # Load the last few turns of this lifetime thread so the reply has memory
+    # (vantage-ui-mapping.md § 1.2). Best-effort: no history if PG is down.
+    history: list[BaseMessage] = []
+    if thread_id:
+        try:
+            history = await load_recent_turns(thread_id, limit=6)
+        except Exception as exc:  # noqa: BLE001 — boundary, never break the reply
+            # A transient DB problem (auth failure, query error) must degrade to a
+            # context-free reply, not replace the whole reply with an error frame.
+            log.error(
+                "router.load_recent_turns_failed", thread_id=thread_id, error=str(exc)
+            )
+            history = []
+
     model = pick_model("fast", temperature=0.7, max_tokens=200)
     resp = await model.ainvoke(
         [
@@ -212,10 +232,143 @@ async def _smalltalk_reply(message: str) -> dict[str, Any]:
                     "or build a résumé from scratch."
                 )
             ),
+            *history,
             HumanMessage(content=message[:1000]),
         ]
     )
     return {"agent": "coordinator", "action": "reply", "text": str(resp.content)}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Thread persistence — ask_vantage lifetime conversation (PG 007 tables)
+# ───────────────────────────────────────────────────────────────────────
+#
+# The ask_vantage dock holds ONE lifetime conversation per user
+# (vantage-ui-mapping.md § 1.2). We mirror each turn into conversation_messages
+# keyed by a conversation_sessions row whose ``title`` is the thread_id. This is
+# the same pair of tables the TS /api/chat uses (infra/postgres/migrations/007),
+# so history is shared and durable. LangGraph's PostgresSaver still owns the
+# checkpoint state for in-flight workflows; this is the human-readable turn log
+# that powers context-aware small talk.
+
+
+# Env vars that may carry the PG DSN, in resolution order. The agents layer has
+# historically read ``RELAY_PG_DSN`` only, but the root .env ships ``DATABASE_URL``
+# (infra/CLAUDE.md, PG on 5433) — so a normal boot left both persist + history
+# load silently no-op'ing. Falling back across the names that actually exist keeps
+# the dock's multi-turn memory working without requiring an extra env var.
+_PG_DSN_ENV_VARS = ("RELAY_PG_DSN", "DATABASE_URL", "POSTGRES_URL")
+
+
+def _resolve_pg_dsn() -> str | None:
+    """Resolve the Postgres DSN from the first env var that is set.
+
+    Order: ``RELAY_PG_DSN`` → ``DATABASE_URL`` → ``POSTGRES_URL``. Returns None
+    (and logs a warning) when none are set so callers degrade gracefully instead
+    of failing silently. Shared by persist_turn + load_recent_turns so the read
+    and write paths can never drift onto different DSNs.
+    """
+    for name in _PG_DSN_ENV_VARS:
+        dsn = os.environ.get(name)
+        if dsn:
+            return dsn
+    log.warning(
+        "router.pg_dsn_unresolved",
+        tried=_PG_DSN_ENV_VARS,
+        detail="conversation persistence + history load disabled (no PG DSN env var set)",
+    )
+    return None
+
+
+async def load_recent_turns(thread_id: str, limit: int = 6) -> list[BaseMessage]:
+    """Load the last ``limit`` turns of this thread as LangChain messages.
+
+    Best-effort: returns [] if PG is unconfigured/unreachable (dev/tests).
+    """
+    dsn = _resolve_pg_dsn()
+    if not dsn:
+        return []
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT m.role, m.content
+                FROM conversation_messages m
+                JOIN conversation_sessions s ON s.id = m.session_id
+                WHERE s.title = %s
+                ORDER BY m.created_at DESC
+                LIMIT %s
+                """,
+                (thread_id, limit),
+            )
+            rows = await cur.fetchall()
+
+    msgs: list[BaseMessage] = []
+    for r in reversed(rows):  # chronological order for the model
+        content = str(r["content"])
+        if r["role"] == "user":
+            msgs.append(HumanMessage(content=content))
+        else:
+            msgs.append(AIMessage(content=content))
+    return msgs
+
+
+async def persist_turn(
+    thread_id: str, user_id: UUID, user_message: str, assistant_text: str
+) -> None:
+    """Append a (user, assistant) turn to the lifetime thread.
+
+    Upserts the conversation_sessions row (one per thread_id), then inserts both
+    messages. Best-effort: silently no-ops if PG is unconfigured (dev/tests) and
+    logs on real failures so a logging hiccup never breaks the dock response.
+    """
+
+    dsn = _resolve_pg_dsn()
+    if not dsn:
+        return
+    try:
+        import psycopg
+
+        async with await psycopg.AsyncConnection.connect(dsn) as conn:
+            async with conn.cursor() as cur:
+                # One session row per lifetime thread, identified by title.
+                await cur.execute(
+                    "SELECT id FROM conversation_sessions WHERE title = %s LIMIT 1",
+                    (thread_id,),
+                )
+                row = await cur.fetchone()
+                if row:
+                    session_id = row[0]
+                    await cur.execute(
+                        "UPDATE conversation_sessions "
+                        "SET last_active_at = now(), message_count = message_count + 2 "
+                        "WHERE id = %s",
+                        (session_id,),
+                    )
+                else:
+                    await cur.execute(
+                        """
+                        INSERT INTO conversation_sessions
+                            (user_id, session_type, agent_type, title, message_count)
+                        VALUES (%s, 'general', 'coordinator', %s, 2)
+                        RETURNING id
+                        """,
+                        (str(user_id), thread_id),
+                    )
+                    session_id = (await cur.fetchone())[0]  # type: ignore[index]
+
+                await cur.execute(
+                    "INSERT INTO conversation_messages (session_id, role, content) "
+                    "VALUES (%s, 'user', %s), (%s, 'assistant', %s)",
+                    (session_id, user_message[:8000], session_id, assistant_text[:8000]),
+                )
+            await conn.commit()
+    except Exception as exc:  # noqa: BLE001 — boundary, never break the reply
+        log.error("router.persist_turn_failed", thread_id=thread_id, error=str(exc))
 
 
 def _safe_json(content: Any) -> dict[str, Any]:
