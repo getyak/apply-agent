@@ -107,12 +107,36 @@ const STEPS = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  // Next 16 ships dynamic APIs as promises — must await before reading.
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = (await searchParams) ?? {};
+  // The middleware bounces unauthenticated visits to /app/* back here with
+  // ?source=app_redirect so we can explain the redirect instead of leaving
+  // the user wondering why they landed on marketing.
+  const showRedirectNotice = params.source === "app_redirect";
   return (
     <div className="min-h-screen">
+      {showRedirectNotice && (
+        <div
+          role="status"
+          className="w-full bg-cream border-b border-cream-border text-center font-body text-[13px] text-brown px-4 py-2"
+        >
+          Please sign in to open your workspace.
+          <a
+            href="/auth?mode=login"
+            className="ml-2 font-semibold underline hover:no-underline"
+          >
+            Sign in
+          </a>
+        </div>
+      )}
       {/* NAV */}
       <header className="sticky top-0 z-40 backdrop-blur-[20px] bg-paper/82 border-b border-border">
-        <div className="max-w-[1140px] mx-auto px-8 h-[66px] flex items-center gap-3.5">
+        <div className="max-w-[1140px] mx-auto px-4 sm:px-8 h-[66px] flex items-center gap-3.5">
           <div className="flex items-center gap-[9px]">
             <div className="w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -121,21 +145,23 @@ export default function HomePage() {
               VANTAGE
             </span>
           </div>
-          <nav className="ml-[34px] flex items-center gap-7">
+          {/* Anchor nav collapses on mobile — the Sign in + Start free CTAs in
+              the right-hand cluster are the only nav users need below md. */}
+          <nav className="ml-[34px] hidden md:flex items-center gap-7">
             <a href="#how" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">How it works</a>
             <a href="#chat" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">The agents</a>
             <a href="#features" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Features</a>
             <a href="#pricing" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Pricing</a>
           </nav>
           <div className="ml-auto flex items-center gap-4">
-            <a href="#" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
+            <a href="/auth?mode=login" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
             <a href="/auth" className="no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light transition-colors">Start free</a>
           </div>
         </div>
       </header>
 
       {/* HERO */}
-      <section className="max-w-[1140px] mx-auto px-8 pt-[84px] pb-16 grid grid-cols-2 gap-14 items-center">
+      <section className="max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
         <div className="animate-fade-up">
           <div className="inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
             <span className="w-[7px] h-[7px] rounded-full bg-green animate-pulse-dot" />
@@ -174,7 +200,7 @@ export default function HomePage() {
       </section>
 
       {/* ATS strip */}
-      <section className="max-w-[1140px] mx-auto px-8 pt-2 pb-16">
+      <section className="max-w-[1140px] mx-auto px-6 sm:px-8 pt-2 pb-16">
         <div className="flex items-center justify-center gap-[30px] flex-wrap">
           <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-ink-muted">
             Fills forms on
@@ -187,7 +213,7 @@ export default function HomePage() {
 
       {/* HOW IT WORKS */}
       <section id="how" className="bg-white border-y border-border">
-        <div className="max-w-[1140px] mx-auto px-8 py-20">
+        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             The loop
           </div>
@@ -198,7 +224,7 @@ export default function HomePage() {
             One calm loop that gets smarter every time you use it. No
             spray-and-pray. No filling the same form twice.
           </p>
-          <div className="grid grid-cols-5 gap-[18px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-[18px]">
             {STEPS.map((step) => (
               <div key={step.no}>
                 <div className="font-mono text-[11px] tracking-[0.5px] text-border-dark mb-3.5">
@@ -220,7 +246,7 @@ export default function HomePage() {
       </section>
 
       {/* CHAT FIRST */}
-      <section id="chat" className="max-w-[1140px] mx-auto px-8 py-[90px] grid grid-cols-[1fr_1.05fr] gap-[60px] items-center">
+      <section id="chat" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[90px] grid grid-cols-1 md:grid-cols-[1fr_1.05fr] gap-10 md:gap-[60px] items-center">
         <div>
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             Chat is the interface
@@ -316,14 +342,14 @@ export default function HomePage() {
 
       {/* FEATURES */}
       <section id="features" className="bg-white border-t border-border">
-        <div className="max-w-[1140px] mx-auto px-8 py-20">
+        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             What it does
           </div>
           <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
             Six agents. One career context that keeps growing.
           </h2>
-          <div className="grid grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f) => (
               <div
                 key={f.title}
@@ -346,14 +372,14 @@ export default function HomePage() {
 
       {/* DIFFERENTIATORS */}
       <section className="bg-dark">
-        <div className="max-w-[1140px] mx-auto px-8 py-[84px]">
+        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
             Three bets we made
           </div>
           <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
             Built the opposite way to every mass-apply bot.
           </h2>
-          <div className="grid grid-cols-3 gap-[26px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">
             {BETS.map((b) => (
               <div key={b.k} className="border-t border-dark-border pt-[22px]">
                 <div className="font-display font-bold text-[30px] text-gold mb-3.5">
@@ -393,7 +419,7 @@ export default function HomePage() {
 
       {/* FOOTER */}
       <footer className="border-t border-border bg-white">
-        <div className="max-w-[1140px] mx-auto px-8 py-11 flex items-center gap-3.5 flex-wrap">
+        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-11 flex items-center gap-3.5 flex-wrap">
           <div className="flex items-center gap-[9px]">
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -406,9 +432,9 @@ export default function HomePage() {
             Quality over quantity. Your account, never at risk.
           </span>
           <div className="ml-auto flex gap-6">
-            <span className="font-body text-[13px] text-ink-light">Privacy</span>
-            <span className="font-body text-[13px] text-ink-light">Security</span>
-            <span className="font-body text-[13px] text-ink-light">Docs</span>
+            <a href="/legal/privacy" className="no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Privacy</a>
+            <a href="/legal/security" className="no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Security</a>
+            <a href="/legal/docs" className="no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Docs</a>
             <span className="font-mono text-[11px] tracking-[0.4px] text-ink-muted">
               © 2026
             </span>

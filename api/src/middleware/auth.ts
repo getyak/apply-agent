@@ -1,9 +1,9 @@
 import type { Context, Next } from "hono";
 import { jwtVerify, SignJWT } from "jose";
+import { config } from "../config";
 import type { AppEnv } from "../types";
 
-const secret = () =>
-  new TextEncoder().encode(process.env.JWT_SECRET || "dev-secret-change-me");
+const secret = () => new TextEncoder().encode(config.JWT_SECRET);
 
 export async function signToken(userId: string): Promise<string> {
   return new SignJWT({ sub: userId })

@@ -3,9 +3,26 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { query } from "../db";
 import { signToken, authMiddleware } from "../middleware/auth";
+import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
 
 const app = new Hono<AppEnv>();
+
+// Brute-force defense: /login and /register are rate-limited by client IP. We
+// pin the actor to the IP header explicitly (not the default actor key) so a
+// mid-burst successful login can't reset the counter by switching to user:<id>.
+const authLimiter = rateLimit({
+  scope: "auth",
+  limit: 10,
+  windowSeconds: 60,
+  keyFor: (c) => {
+    const ip =
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+      c.req.header("x-real-ip") ||
+      "unknown";
+    return `ip:${ip}`;
+  },
+});
 
 const RegisterSchema = z.object({
   email: z.string().email(),
@@ -18,7 +35,7 @@ const LoginSchema = z.object({
   password: z.string(),
 });
 
-app.post("/register", async (c) => {
+app.post("/register", authLimiter, async (c) => {
   const body = await c.req.json();
   const parsed = RegisterSchema.safeParse(body);
   if (!parsed.success) {
@@ -42,7 +59,7 @@ app.post("/register", async (c) => {
   return c.json({ token, user }, 201);
 });
 
-app.post("/login", async (c) => {
+app.post("/login", authLimiter, async (c) => {
   const body = await c.req.json();
   const parsed = LoginSchema.safeParse(body);
   if (!parsed.success) {

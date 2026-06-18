@@ -1,0 +1,27 @@
+# Gitleaks config for Relay. Extends the built-in default ruleset and adds
+# project-specific rules that mirror lefthook's `forbid-api-keys` pre-commit
+# check (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / SUPABASE_SERVICE_ROLE with
+# sk-/or-/eyJ prefixes). Pre-commit catches before push; this config is what CI
+# (.github/workflows/secrets-scan.yml) uses to catch anything that bypassed the hook.
+
+# Pull in all of gitleaks' default rules, then layer ours on top.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "relay-project-llm-key"
+description = "Hardcoded Relay LLM/service key (OpenRouter / Anthropic / Supabase service role)"
+regex = '''(?i)(OPENROUTER_API_KEY|ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE)\s*[:=]\s*["']?(sk-|or-|eyJ)[A-Za-z0-9_\-\.=]{8,}'''
+tags = ["key", "relay"]
+
+[allowlist]
+description = "Paths that legitimately contain placeholder or fixture-style secrets"
+paths = [
+  '''\.env\.example$''',
+  '''.*\.test\.ts$''',
+  '''.*\.test\.tsx$''',
+  '''infra/postgres/migrations/.*''',
+  '''bun\.lock$''',
+  '''uv\.lock$''',
+  '''\.gitleaks\.toml$''',
+]

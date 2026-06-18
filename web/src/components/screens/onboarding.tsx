@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import {
   Upload,
   MessageSquare,
@@ -7,10 +8,11 @@ import {
   Link,
   FileText,
   ArrowRight,
-  Check,
   Sparkles,
+  AlertCircle,
 } from "lucide-react";
 import { useVantage, type OnboardMethod } from "@/lib/store";
+import { Button } from "@/components/ui";
 
 const METHODS: { key: OnboardMethod; label: string; Icon: typeof Upload }[] = [
   { key: "upload", label: "Upload", Icon: Upload },
@@ -18,16 +20,6 @@ const METHODS: { key: OnboardMethod; label: string; Icon: typeof Upload }[] = [
   { key: "paste", label: "Paste", Icon: ClipboardPaste },
   { key: "link", label: "Link", Icon: Link },
 ];
-
-const SKILLS = [
-  "Design Systems",
-  "User Research",
-  "Prototyping",
-  "Accessibility",
-  "Design Leadership",
-];
-
-const SHIMMER_WIDTHS = ["72%", "90%", "58%", "80%"];
 
 function Logo() {
   return (
@@ -45,13 +37,21 @@ function Logo() {
 function IdleState() {
   const onboardMethod = useVantage((s) => s.onboardMethod);
   const setOnboardMethod = useVantage((s) => s.setOnboardMethod);
-  const startParse = useVantage((s) => s.startParse);
   const startByChat = useVantage((s) => s.startByChat);
+  const parseFile = useVantage((s) => s.parseFile);
+  const parsePastedText = useVantage((s) => s.parsePastedText);
+  const uploadText = useVantage((s) => s.uploadText);
+  const setUploadText = useVantage((s) => s.setUploadText);
+  const parseError = useVantage((s) => s.parseError);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   return (
     <div
       className="flex min-h-screen w-full flex-col items-center justify-center px-6 py-16"
-      style={{ background: "radial-gradient(120% 120% at 50% 0%, #FFFFFF 0%, #FAF8F6 55%, #F5EDE3 100%)" }}
+      style={{
+        background:
+          "radial-gradient(120% 120% at 50% 0%, #FFFFFF 0%, var(--color-paper) 55%, var(--color-cream) 100%)",
+      }}
     >
       <div className="flex w-full max-w-[560px] flex-col items-center text-center">
         <div className="animate-fade-up">
@@ -75,10 +75,12 @@ function IdleState() {
                 key={key}
                 type="button"
                 onClick={() => setOnboardMethod(key)}
+                aria-pressed={active}
                 className={
-                  active
-                    ? "flex items-center gap-2 rounded-full bg-brown px-4 py-2 font-body text-[14px] font-medium text-paper transition-colors"
-                    : "flex items-center gap-2 rounded-full border border-border-dark bg-white px-4 py-2 font-body text-[14px] font-medium text-ink-light transition-colors hover:text-ink"
+                  "rounded-full flex items-center gap-2 px-4 py-2 font-body text-[14px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper " +
+                  (active
+                    ? "bg-brown text-paper border border-transparent"
+                    : "bg-white border border-border-dark text-ink-light hover:text-ink hover:border-brown")
                 }
               >
                 <Icon size={15} strokeWidth={2} />
@@ -90,17 +92,30 @@ function IdleState() {
 
         <div className="animate-fade-up-delay mt-6 w-full">
           {onboardMethod === "upload" && (
-            <button
-              type="button"
-              onClick={startParse}
-              className="group flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border-dark bg-white/60 px-8 py-12 transition-colors hover:border-brown hover:bg-white"
-            >
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cream text-amber">
-                <FileText size={22} strokeWidth={1.75} />
-              </div>
-              <span className="font-display text-[17px] font-medium text-ink">Drop your résumé to begin</span>
-              <span className="font-body text-[13px] text-ink-muted">PDF or DOCX · or click to browse</span>
-            </button>
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) parseFile(f);
+                  e.target.value = ""; // allow re-selecting the same file
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="group flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border-dark bg-white/60 px-8 py-12 transition-colors hover:border-brown hover:bg-white"
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cream text-amber">
+                  <FileText size={22} strokeWidth={1.75} />
+                </div>
+                <span className="font-display text-[17px] font-medium text-ink">Drop your résumé to begin</span>
+                <span className="font-body text-[13px] text-ink-muted">PDF or DOCX · or click to browse</span>
+              </button>
+            </>
           )}
 
           {onboardMethod === "chat" && (
@@ -112,31 +127,36 @@ function IdleState() {
               <p className="max-w-[360px] font-body text-[13px] text-ink-light">
                 Answer a few questions and we&apos;ll draft a strong résumé from scratch.
               </p>
-              <button
+              <Button
                 type="button"
                 onClick={startByChat}
-                className="mt-1 inline-flex items-center gap-2 rounded-full bg-brown px-5 py-2.5 font-body text-[14px] font-medium text-paper transition-opacity hover:opacity-90"
+                size="md"
+                className="mt-1 !rounded-full"
+                trailingIcon={<ArrowRight size={15} strokeWidth={2} />}
               >
                 Start a conversation
-                <ArrowRight size={15} strokeWidth={2} />
-              </button>
+              </Button>
             </div>
           )}
 
           {onboardMethod === "paste" && (
             <div className="flex w-full flex-col gap-4 rounded-2xl border border-border bg-white p-5">
               <textarea
+                value={uploadText}
+                onChange={(e) => setUploadText(e.target.value)}
                 placeholder="Paste your résumé text here…"
                 className="h-40 w-full resize-none rounded-xl border border-border bg-paper px-4 py-3 font-body text-[14px] text-ink outline-none placeholder:text-ink-muted focus:border-border-dark"
               />
-              <button
+              <Button
                 type="button"
-                onClick={startParse}
-                className="self-end inline-flex items-center gap-2 rounded-full bg-brown px-5 py-2.5 font-body text-[14px] font-medium text-paper transition-opacity hover:opacity-90"
+                onClick={() => parsePastedText(uploadText)}
+                disabled={uploadText.trim().length < 20}
+                size="md"
+                className="self-end !rounded-full"
+                trailingIcon={<ArrowRight size={15} strokeWidth={2} />}
               >
                 Parse résumé
-                <ArrowRight size={15} strokeWidth={2} />
-              </button>
+              </Button>
             </div>
           )}
 
@@ -146,18 +166,21 @@ function IdleState() {
                 type="url"
                 placeholder="https://linkedin.com/in/your-profile"
                 className="w-full rounded-xl border border-border bg-paper px-4 py-3 font-body text-[14px] text-ink outline-none placeholder:text-ink-muted focus:border-border-dark"
+                disabled
               />
-              <button
-                type="button"
-                onClick={startParse}
-                className="self-end inline-flex items-center gap-2 rounded-full bg-brown px-5 py-2.5 font-body text-[14px] font-medium text-paper transition-opacity hover:opacity-90"
-              >
-                Import
-                <ArrowRight size={15} strokeWidth={2} />
-              </button>
+              <p className="text-left font-body text-[12px] text-ink-muted">
+                Link import is coming soon — for now, upload a file or paste your résumé text.
+              </p>
             </div>
           )}
         </div>
+
+        {parseError && (
+          <div className="animate-fade-up mt-4 flex w-full items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left">
+            <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0 text-red-500" />
+            <p className="font-body text-[13px] text-red-700">{parseError}</p>
+          </div>
+        )}
 
         <p className="animate-fade-up-delay mt-8 font-mono text-[11px] text-ink-muted">
           Password never stored · your data can stay on your device
@@ -167,92 +190,11 @@ function IdleState() {
   );
 }
 
-function ParsingState() {
-  return (
-    <div className="flex min-h-screen w-full items-center justify-center px-6 py-16">
-      <div className="animate-fade-up w-full max-w-[460px] rounded-2xl border border-border bg-white p-7 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cream text-amber">
-            <FileText size={20} strokeWidth={1.75} />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate font-display text-[15px] font-medium text-ink">Jordan-Avery-Resume.pdf</p>
-            <p className="font-body text-[13px] text-amber">Reading your experience…</p>
-          </div>
-        </div>
-
-        <div className="mt-7 flex flex-col gap-3">
-          {SHIMMER_WIDTHS.map((w, i) => (
-            <div
-              key={i}
-              className="animate-shimmer h-3.5 rounded-full bg-gradient-to-r from-[#F3F0EB] via-[#FAF6F0] to-[#F3F0EB]"
-              style={{ width: w }}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DoneState() {
-  const enterApp = useVantage((s) => s.enterApp);
-
-  return (
-    <div className="flex min-h-screen w-full items-center justify-center px-6 py-16">
-      <div className="animate-pop w-full max-w-[460px] rounded-2xl border border-border bg-white p-7 shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green text-white">
-            <Check size={12} strokeWidth={3} />
-          </div>
-          <span className="font-mono text-[11px] font-medium tracking-[1.5px] text-green">RÉSUMÉ UNDERSTOOD</span>
-        </div>
-
-        <h2 className="mt-4 font-display text-[24px] font-bold text-ink">Jordan Avery</h2>
-        <p className="mt-1 font-body text-[14px] text-ink-light">
-          Senior Product Designer · 7 years · San Francisco
-        </p>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          {SKILLS.map((skill) => (
-            <span
-              key={skill}
-              className="rounded-full border border-cream-border bg-cream px-3 py-1.5 font-body text-[12.5px] font-medium text-amber"
-            >
-              {skill}
-            </span>
-          ))}
-        </div>
-
-        <div className="my-6 h-px w-full bg-border" />
-
-        <div className="flex items-start gap-2.5">
-          <div className="mt-0.5 text-green">
-            <Sparkles size={17} strokeWidth={2} />
-          </div>
-          <p className="font-body text-[14px] leading-relaxed text-ink">
-            <span className="font-semibold text-green">38 matching roles found</span> — 6 are a strong
-            fit, and we&apos;ve started tailoring your applications.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={enterApp}
-          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-brown px-5 py-3 font-body text-[15px] font-medium text-paper transition-opacity hover:opacity-90"
-        >
-          See your matches
-          <ArrowRight size={16} strokeWidth={2} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export function OnboardingScreen() {
-  const parseStage = useVantage((s) => s.parseStage);
-
-  if (parseStage === "parsing") return <ParsingState />;
-  if (parseStage === "done") return <DoneState />;
+  // Parsing is now asynchronous: uploading a résumé takes the user straight
+  // into the workspace (see store.parseFile → _startAsyncParse → enterApp),
+  // where a non-blocking banner reports progress. The onboarding screen only
+  // renders the idle entry; the upload itself is the sole brief wait, and any
+  // upload error is surfaced inline here.
   return <IdleState />;
 }
