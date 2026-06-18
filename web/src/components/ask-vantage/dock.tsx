@@ -10,6 +10,7 @@
 // docs/architecture/vantage-ui-mapping.md §3.6.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import {
   useDock,
   type DockAttachment,
@@ -19,13 +20,34 @@ import { sendAsk } from "@/lib/ask-stream";
 import { useVantage } from "@/lib/store";
 import { files as filesApi } from "@/lib/api";
 
-const SUGGESTIONS = [
+// Cross-surface chips: things you'd ask Vantage no matter which page you're
+// on. The default set — used everywhere except Resume Studio, where the
+// document-scoped vibe panel already owns résumé chips (see
+// docs/architecture/vantage-ui-mapping.md §2.6).
+const SUGGESTIONS_DEFAULT = [
   "Find roles I should look at today",
   "Sharpen my résumé for Stripe",
   "Practise the Stripe recruiter screen",
   "What changed in the market this week?",
   "Build me a cover letter for Linear",
 ] as const;
+
+// Resume Studio variant: the studio's left vibe panel owns "sharpen this
+// résumé / tailor for a JD" — the dock here surfaces other tracks the
+// user might still want without leaving the page.
+const SUGGESTIONS_RESUME_STUDIO = [
+  "Find roles I should look at today",
+  "Practise the Stripe recruiter screen",
+  "What changed in the market this week?",
+  "Build me a cover letter for Linear",
+] as const;
+
+function suggestionsForPath(pathname: string | null): readonly string[] {
+  if (pathname?.startsWith("/app/studio/resume")) {
+    return SUGGESTIONS_RESUME_STUDIO;
+  }
+  return SUGGESTIONS_DEFAULT;
+}
 
 // Agent teams surfaced via "@" mentions — each is a LangGraph node name on
 // the coordinator side (see docs/architecture/agent-architecture.md §2).
@@ -413,6 +435,12 @@ export function AskVantageDock() {
   const toggleDock = useDock((s) => s.toggleDock);
   const hintedCollapse = useDock((s) => s.hintedCollapse);
 
+  // Pathname picks the suggestion set per §2.6: Resume Studio routes drop
+  // the "Sharpen my résumé" chip because the studio's own vibe panel owns
+  // that track.
+  const pathname = usePathname();
+  const suggestions = useMemo(() => suggestionsForPath(pathname), [pathname]);
+
   const currentUser = useVantage((s) => s.currentUser);
   const firstName = useMemo(() => {
     const n = currentUser?.displayName ?? "";
@@ -688,7 +716,13 @@ export function AskVantageDock() {
               gap: 16,
             }}
           >
-            {!hasLog && <Greeting firstName={firstName} streaming={streaming} />}
+            {!hasLog && (
+              <Greeting
+                firstName={firstName}
+                streaming={streaming}
+                suggestions={suggestions}
+              />
+            )}
             {messages.map((m) => (
               <MessageRow key={m.id} m={m} />
             ))}
@@ -728,9 +762,11 @@ export function AskVantageDock() {
 function Greeting({
   firstName,
   streaming,
+  suggestions,
 }: {
   firstName: string;
   streaming: boolean;
+  suggestions: readonly string[];
 }) {
   const today = useMemo(() => {
     const d = new Date();
@@ -753,7 +789,7 @@ function Greeting({
         own.
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {SUGGESTIONS.map((sug) => (
+        {suggestions.map((sug) => (
           <button
             key={sug}
             onClick={() => {

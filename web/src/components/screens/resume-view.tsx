@@ -420,7 +420,7 @@ export function ResumeView() {
             currentVersion?.isBase
               ? "Sharpen your master résumé"
               : currentVersion
-                ? "Refine this tailored version"
+                ? "Refine this résumé"
                 : "Start with your résumé"
           }
           subtitle="Scoped to this résumé — picks up your version, your context, every time."
