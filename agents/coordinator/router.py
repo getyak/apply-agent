@@ -36,6 +36,12 @@ VALID_INTENTS = {
     "build_resume",
     "update_resume",
     "review_application",
+    # Applications kanban — move a row between columns, list the user's
+    # pipeline, or record an outcome. Lives in the agent's surface so a
+    # user can say "move Stripe to interviewing" inside any vibe chat.
+    "list_applications",
+    "move_application",
+    "set_application_outcome",
     "other",
 }
 
@@ -67,11 +73,69 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     (re.compile(r"\bi\s+don[\'']?t\s+have\s+a\s+r[eé]sum[eé]\b", re.I), "build_resume", 0.95),
     (re.compile(r"\b(update|edit|change|fix)\s+(my\s+)?r[eé]sum[eé]\b", re.I), "update_resume", 0.85),
     (re.compile(r"\breview\s+(my\s+)?application\b", re.I), "review_application", 0.85),
+    # Applications kanban.
+    (
+        re.compile(
+            # "move <company> to interviewing", "drag stripe to outcome",
+            # "shift the openai card to interview".
+            r"\b(move|drag|shift|push|bump)\s+(the\s+)?[\w-]+(?:\s+(card|app|application|role))?\s+to\s+(applied|interview|interviewing|outcome|offer|rejected|ghosted|submitted)\b",
+            re.I,
+        ),
+        "move_application",
+        0.90,
+    ),
+    (
+        re.compile(
+            # "mark <company> as interviewing|rejected|offer"
+            r"\bmark\s+(the\s+)?[\w-]+\s+as\s+(applied|interview|interviewing|outcome|offer|rejected|ghosted|submitted|accepted|closed)\b",
+            re.I,
+        ),
+        "move_application",
+        0.90,
+    ),
+    (
+        re.compile(r"\b(show|list)\s+(me\s+)?(my\s+)?(applications|pipeline|kanban)\b", re.I),
+        "list_applications",
+        0.92,
+    ),
+    (
+        re.compile(
+            # "record outcome: signed offer", "note outcome <company> ..."
+            r"\b(record|note|log|set)\s+(the\s+)?outcome\b",
+            re.I,
+        ),
+        "set_application_outcome",
+        0.85,
+    ),
 ]
 
 
 _COMPANY_HINT = re.compile(r"\bfor\s+([A-Z][a-zA-Z0-9&\-]+(?:\s+[A-Z][a-zA-Z0-9&\-]+){0,2})\b")
 _MODE_HINT = re.compile(r"\b(scene\s+recreation|pressure\s+drill|warm[\s-]?up|rapid\s+fire)\b", re.I)
+# Word after "to <X>" or "as <X>" in the move/mark intents — used to derive
+# the target status. We canonicalise interviewing → interview etc. before
+# dispatch so the tool gets one of the values _ALLOWED_STATUSES (see
+# tools/applications.py) accepts.
+_MOVE_TARGET = re.compile(
+    r"\b(?:to|as)\s+(applied|interview|interviewing|outcome|offer|rejected|ghosted|submitted|accepted|closed)\b",
+    re.I,
+)
+# Company hint specific to the move/mark intents. Matches the first capitalised
+# token or the slug after "move <X>". Conservative on purpose — when we can't
+# pull a name we fall through to the LLM layer for clarification.
+_MOVE_COMPANY = re.compile(
+    r"\b(?:move|drag|shift|push|bump|mark)\s+(?:the\s+)?([A-Za-z][\w-]{1,40})\b",
+    re.I,
+)
+
+# Canonical-status mapping for the kanban → status field. The drawer's
+# COLUMN_DEFAULT_STATUS in web/src/components/views/tracker-view.tsx is the
+# same mapping in reverse; keep them in sync.
+_TARGET_TO_STATUS = {
+    "applied": "submitted",
+    "interviewing": "interview",
+    "outcome": "rejected",
+}
 
 
 def cheap_intent_classifier(message: str) -> Intent | None:
@@ -85,7 +149,12 @@ def cheap_intent_classifier(message: str) -> Intent | None:
 
 
 def _extract_args(message: str) -> dict[str, Any]:
-    args: dict[str, Any] = {"company": None, "role": None, "mode_slug": None}
+    args: dict[str, Any] = {
+        "company": None,
+        "role": None,
+        "mode_slug": None,
+        "target_status": None,
+    }
     m = _COMPANY_HINT.search(message)
     if m:
         args["company"] = m.group(1)
@@ -95,6 +164,17 @@ def _extract_args(message: str) -> dict[str, Any]:
         slug = {"scene_recreation": "scene_recreation", "pressure_drill": "pressure_drill",
                 "warmup": "warm_up", "warm_up": "warm_up", "rapid_fire": "rapid_fire"}.get(slug, slug)
         args["mode_slug"] = slug
+    # Applications: pull the move target and any company hint. The company
+    # regex here is looser than _COMPANY_HINT (no leading "for") so we
+    # try it second and only use it when _COMPANY_HINT already missed.
+    m = _MOVE_TARGET.search(message)
+    if m:
+        raw = m.group(1).lower()
+        args["target_status"] = _TARGET_TO_STATUS.get(raw, raw)
+    if not args["company"]:
+        m = _MOVE_COMPANY.search(message)
+        if m:
+            args["company"] = m.group(1)
     return args
 
 
@@ -201,6 +281,55 @@ async def dispatch(
 
     if intent.intent == "review_application":
         return {"agent": "appprep_agent", "action": "review", "status": "not_implemented_yet"}
+
+    if intent.intent == "list_applications":
+        from agents.tools.applications import list_applications
+
+        rows = await list_applications(user_id=user_id)
+        return {
+            "agent": "applications",
+            "action": "list",
+            "count": len(rows),
+            # Trim to the fields the dock surface card uses so we don't blow
+            # past frame size on a 100-row pipeline. Full data is in PG; if
+            # the agent needs more it can ask for a specific row.
+            "items": [
+                {
+                    "id": r.get("id"),
+                    "company": r.get("company"),
+                    "role_title": r.get("role_title"),
+                    "status": r.get("status"),
+                }
+                for r in rows[:25]
+            ],
+        }
+
+    if intent.intent == "move_application":
+        # We don't resolve "Stripe" → an application_id from here — that
+        # requires a name match against application_drafts.company and
+        # potentially user disambiguation when the user has multiple Stripe
+        # applications. Return needs_clarification with what we extracted so
+        # the UI / next-turn prompt can ask the right question. Once the
+        # web side wires up "Vantage says: which Stripe row?" we'll add the
+        # lookup here. For now the agent surface is informational + the
+        # web drawer / drag-drop remains the live edit path.
+        return {
+            "agent": "applications",
+            "action": "move",
+            "status": "needs_clarification",
+            "needs": ["application_id"],
+            "company_hint": intent.args.get("company"),
+            "target_status": intent.args.get("target_status"),
+        }
+
+    if intent.intent == "set_application_outcome":
+        return {
+            "agent": "applications",
+            "action": "set_outcome",
+            "status": "needs_clarification",
+            "needs": ["application_id", "outcome"],
+            "company_hint": intent.args.get("company"),
+        }
 
     # 'other' → small-talk fallback (free, V4 Flash).
     return await _smalltalk_reply(message, thread_id=thread_id)

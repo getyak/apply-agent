@@ -279,7 +279,14 @@ export interface ApiApplication {
   company: string;
   role_title: string;
   cover_letter?: string;
-  submitted_at?: string;
+  // Outcome is set once the round closes — offer / rejected / accepted / etc.
+  // Distinct from `status` because the kanban column is decided by status,
+  // while outcome is the final narrative the user records.
+  outcome?: string | null;
+  submitted_at?: string | null;
+  // How the application reached the employer. Set on first submit; never
+  // overwritten silently.
+  submitted_via?: string | null;
   created_at: string;
 }
 
@@ -397,6 +404,15 @@ interface VantageState {
   createResume: (content: object) => Promise<void>;
   loadJobs: () => Promise<void>;
   loadApplications: () => Promise<void>;
+  // Optimistic PATCH for the Applications kanban. Updates the row in
+  // memory first so the drag/drop and detail-drawer edits feel instant;
+  // on a server error the previous row is restored and the caller can
+  // decide whether to surface a toast. `undefined` means "leave alone";
+  // pass an empty string to clear a value server-side.
+  patchApplication: (
+    id: string,
+    patch: { status?: string; outcome?: string; coverLetter?: string },
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   loadTrends: () => Promise<void>;
   loadCurrentUser: () => Promise<void>;
   signOut: () => void;
@@ -841,6 +857,37 @@ export const useVantage = create<VantageState>((set, get) => ({
       set({ apiApplications: rows, apiAppsLoading: false });
     } catch {
       set({ apiAppsLoading: false });
+    }
+  },
+
+  patchApplication: async (id, patch) => {
+    const before = get().apiApplications;
+    const target = before.find((a) => a.id === id);
+    if (!target) return { ok: false, error: "application not found locally" };
+
+    // Optimistic update: apply locally so the kanban repaints immediately.
+    // We only mirror the fields the API returns. Keep the rest of the row
+    // intact so company / role_title / submitted_at / created_at survive.
+    const optimistic: ApiApplication = {
+      ...target,
+      ...(patch.status !== undefined ? { status: patch.status } : {}),
+      ...(patch.outcome !== undefined ? { outcome: patch.outcome } : {}),
+      ...(patch.coverLetter !== undefined ? { cover_letter: patch.coverLetter } : {}),
+    };
+    set({
+      apiApplications: before.map((a) => (a.id === id ? optimistic : a)),
+    });
+
+    try {
+      // Map snake_case → camelCase for the wire (api/src/schemas.ts
+      // UpdateApplicationSchema uses coverLetter). outcome flows through as-is.
+      await applicationsApi.update(id, patch);
+      return { ok: true };
+    } catch (err) {
+      // Roll back to the pre-patch state so the UI never lies about server truth.
+      set({ apiApplications: before });
+      const msg = err instanceof Error ? err.message : "update failed";
+      return { ok: false, error: msg };
     }
   },
 
