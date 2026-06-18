@@ -116,6 +116,12 @@ export const UserPreferencesSchema = z
     minSalary: z.number().int().nonnegative().max(10_000_000).optional(),
     locations: z.array(z.string().min(1).max(100)).max(20).optional(),
     remote: z.boolean().optional(),
+    // Opt-in to the data flywheel (vantage-ui-mapping.md §3.5): after a
+    // real interview is logged, anonymised questions feed
+    // interview_question_pool. Defaults to undefined (= off) — explicit
+    // user choice required, never silently enabled. Storage layer reads
+    // `users.preferences->>'crowdsourceOptIn'` before any pool write.
+    crowdsourceOptIn: z.boolean().optional(),
   })
   .strict();
 

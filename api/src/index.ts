@@ -63,4 +63,11 @@ console.log(`Relay API running on http://localhost:${port}`);
 export default {
   port,
   fetch: app.fetch,
+  // Bun's default idleTimeout is 10s, which kills long-lived streams
+  // mid-flight — the Ask Vantage SSE relay (/api/ask) and any LLM-backed
+  // /api/chat turn routinely exceed 10s, surfacing to the browser as
+  // ERR_INCOMPLETE_CHUNKED_ENCODING ("Lost connection to Vantage").
+  // 255 is Bun's maximum and comfortably covers a slow LLM turn while
+  // still reaping genuinely dead connections.
+  idleTimeout: 255,
 };

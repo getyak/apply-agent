@@ -56,48 +56,157 @@ const PARSE_SYSTEM =
 
 export interface ParseResult {
   resume: JsonResume;
+  /** The raw extracted text we parsed from. ALWAYS preserved so the user's
+   * upload is never lost — even when the LLM choked, the text is the v1 base. */
+  raw: string;
+  /** Per-section issues that the UI surfaces as a "help me fill these in"
+   * banner. Empty array = clean parse. */
+  warnings: string[];
+  /** True when we couldn't get structured JSON out of the LLM and the resume
+   * is empty-shape; the raw text is still saved so the user can keep going. */
+  usedFallback: boolean;
   meta: { model: string; costCents: number };
 }
 
 /**
- * Parse resume text into a JSON Resume object. Throws LLMUnavailableError when
- * the model is unconfigured/unreachable or returns unparseable output, so the
- * caller can surface an honest "parsing unavailable" instead of a fake resume.
+ * Parse resume text into a JSON Resume object. Designed to *never* lose the
+ * user's upload: if the LLM is unavailable, returns unparseable output, or
+ * produces a shape we don't recognise, we still return a ParseResult with the
+ * raw text + warnings so callers can persist a usable v1 base. Callers should
+ * treat `warnings` as user-visible nudges, not errors.
  */
 export async function parseResumeText(
   text: string,
   llm: LLMClient = defaultLlm,
 ): Promise<ParseResult> {
-  if (!llm.available) {
-    throw new LLMUnavailableError(
-      "Resume parsing requires an LLM (no key configured)",
-    );
-  }
-
+  const raw = (text ?? "").trim();
   // Cap input so a pathological upload can't blow the token budget; a resume
   // longer than this is almost certainly padded and the head carries the signal.
-  const clipped = text.slice(0, 12_000);
+  const clipped = raw.slice(0, 12_000);
 
-  const { data, meta } = await llm.chatJSON<JsonResume>(
-    [
-      { role: "system", content: PARSE_SYSTEM },
-      { role: "user", content: `Resume text:\n\n${clipped}` },
-    ],
-    { tier: "fast", temperature: 0.1, maxTokens: 2000 },
-  );
-
-  // Defensive: ensure the result is an object with at least a basics or work
-  // section. A model that returns {} on garbage input shouldn't pass as a parse.
-  const looksValid =
-    data &&
-    typeof data === "object" &&
-    (data.basics !== undefined || Array.isArray(data.work));
-  if (!looksValid) {
-    throw new LLMUnavailableError("Resume parse produced no usable structure");
+  if (!raw) {
+    // We genuinely have nothing to save. This is the only "throw" case left —
+    // the upload route should have rejected an empty file before reaching us.
+    throw new LLMUnavailableError("Resume text is empty");
   }
 
+  // No LLM? Still produce a usable v1 base from the raw text. The user can
+  // edit fields in the UI or have Ask Vantage fill them in over chat.
+  if (!llm.available) {
+    return {
+      resume: emptyResume(),
+      raw,
+      warnings: ["AI parser is offline — your resume text was saved as-is. Use Ask Vantage to fill in structured fields."],
+      usedFallback: true,
+      meta: { model: "none", costCents: 0 },
+    };
+  }
+
+  let data: JsonResume | undefined;
+  let modelMeta = { model: "unknown", costCents: 0 };
+  try {
+    const out = await llm.chatJSON<JsonResume>(
+      [
+        { role: "system", content: PARSE_SYSTEM },
+        { role: "user", content: `Resume text:\n\n${clipped}` },
+      ],
+      { tier: "fast", temperature: 0.1, maxTokens: 2000 },
+    );
+    data = out.data;
+    modelMeta = { model: out.meta.model, costCents: out.meta.costCents };
+  } catch (err) {
+    // Most common in the wild: the model returns mixed reasoning + JSON, or
+    // truncated JSON that even repairJson can't salvage. Don't lose the upload
+    // — surface a warning and let the user keep the raw text.
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      resume: emptyResume(),
+      raw,
+      warnings: [
+        `AI parser failed to read this resume — your text is saved but the fields aren't structured yet. (${detail.slice(0, 140)})`,
+      ],
+      usedFallback: true,
+      meta: modelMeta,
+    };
+  }
+
+  // Even when the LLM "succeeded", some providers drift the shape (e.g. GLM-4.7
+  // occasionally returns work as a string[] instead of an object[]). Normalise
+  // what we can, drop what we can't, and record a warning per field.
+  const { resume, warnings } = sanitiseJsonResume(data);
+
   return {
-    resume: data,
-    meta: { model: meta.model, costCents: meta.costCents },
+    resume,
+    raw,
+    warnings,
+    usedFallback: false,
+    meta: modelMeta,
   };
+}
+
+function emptyResume(): JsonResume {
+  return { basics: {}, work: [], education: [], skills: [], projects: [] };
+}
+
+/**
+ * Field-level salvage: enforce the JsonResume shape, demote bad entries to
+ * warnings instead of throwing. Anything we can't make sense of becomes a
+ * warning the UI can surface to the user.
+ */
+function sanitiseJsonResume(data: JsonResume | undefined): {
+  resume: JsonResume;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  const out: JsonResume = {};
+  if (!data || typeof data !== "object") {
+    return { resume: emptyResume(), warnings: ["AI returned no resume structure — basic fields look empty."] };
+  }
+
+  // basics: object with optional string fields.
+  if (data.basics && typeof data.basics === "object") {
+    out.basics = data.basics;
+  } else if (data.basics !== undefined) {
+    warnings.push("AI didn't return a recognisable 'basics' block — please fill in name/email yourself.");
+    out.basics = {};
+  }
+
+  // work: must be array of objects. String entries get demoted to warnings.
+  if (Array.isArray(data.work)) {
+    const cleanWork: NonNullable<JsonResume["work"]> = [];
+    let droppedWork = 0;
+    for (const item of data.work) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        cleanWork.push(item as NonNullable<JsonResume["work"]>[number]);
+      } else {
+        droppedWork += 1;
+      }
+    }
+    out.work = cleanWork;
+    if (droppedWork > 0) {
+      warnings.push(`AI couldn't structure ${droppedWork} work entr${droppedWork === 1 ? "y" : "ies"} — please review the Work section.`);
+    }
+  }
+
+  if (Array.isArray(data.education)) out.education = data.education;
+  if (Array.isArray(data.skills)) out.skills = data.skills;
+  if (Array.isArray(data.projects)) out.projects = data.projects;
+
+  // Spillover: keep any other top-level keys verbatim (forward-compat with
+  // JSON Resume extensions like languages, awards, certificates).
+  for (const k of Object.keys(data)) {
+    if (!(k in out)) (out as Record<string, unknown>)[k] = data[k];
+  }
+
+  // Empty-ish? Still valid (raw text is saved), but warn so the user knows
+  // they need to fill in structured fields.
+  const hasContent =
+    (out.basics && Object.keys(out.basics).length > 0) ||
+    (Array.isArray(out.work) && out.work.length > 0) ||
+    (Array.isArray(out.skills) && out.skills.length > 0);
+  if (!hasContent) {
+    warnings.push("AI couldn't extract structured fields from this resume — the raw text is saved; use Ask Vantage to help fill in details.");
+  }
+
+  return { resume: out, warnings };
 }
