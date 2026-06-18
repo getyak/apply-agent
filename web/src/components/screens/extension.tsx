@@ -36,7 +36,7 @@ export function ExtensionScreen() {
   const whyValue = job.whyShort ?? "";
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-cream">
+    <div className="relative h-full w-full overflow-hidden bg-cream">
       {/* Fake browser chrome — neutral, host-system grey is fine here since it represents the ATS host */}
       <div className="flex h-[46px] items-center gap-3 border-b border-border-dark bg-paper px-4">
         <div className="flex items-center gap-2" aria-hidden>

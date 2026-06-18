@@ -16,13 +16,14 @@
 // The flow stage lives in local React state. The store's mockState
 // stays at "live" / "setup" for backward compat with onboarding code.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useVantage,
   MOCK_QS,
   MOCK_PROGRESS_LABELS,
   INTERVIEWING_DATA,
 } from "@/lib/store";
+import { useDock } from "@/lib/ask-vantage-store";
 import { initialsOf } from "@/lib/dates";
 
 type IntelStrategy =
@@ -160,6 +161,30 @@ export function MockScreen() {
   const [qIdx, setQIdx] = useState(0);
   const [messages, setMessages] = useState<MockMessage[]>([]);
   const [pendingAnswer, setPendingAnswer] = useState<string>("");
+  // HITL gate — agent-harness.md §HITL requires an explicit-go before any
+  // session that holds the user's attention. Live mock is a 10–25 min
+  // commitment, so we always interrupt with a confirm modal before the
+  // stage flips to "live". The modal carries duration / question count /
+  // mode name so the user knows what they're opting into.
+  const [pendingStart, setPendingStart] = useState(false);
+
+  // Immersive live stage — collapse the dock to its 54px launcher per
+  // vantage-ui-mapping.md §3.6 ("进 live 阶段：dock 自动收起到 54px
+  // launcher"). modes / intel / debrief stages keep the dock available so
+  // the user can still ask Vantage to refine their answer between rounds.
+  // Cleanup restores the dock when leaving the mock screen or on crash.
+  useEffect(() => {
+    if (stage === "live") {
+      useDock.getState().setHintedCollapse(true);
+    } else {
+      useDock.getState().setHintedCollapse(false);
+    }
+  }, [stage]);
+  useEffect(() => {
+    return () => {
+      useDock.getState().setHintedCollapse(false);
+    };
+  }, []);
 
   const selectedMode = useMemo(
     () => BUILT_IN_MODES.find((m) => m.slug === selectedSlug) ?? BUILT_IN_MODES[0],
@@ -204,16 +229,27 @@ export function MockScreen() {
     setQIdx(0);
     setMessages([]);
     if (m.intel === "none") {
-      seedFirstQuestion();
-      setStage("live");
+      // No intel page to read — go straight to the HITL confirm.
+      setPendingStart(true);
     } else {
       setStage("intel");
     }
   }
 
   function beginLive() {
+    // After reading the intel brief, still require an explicit-go before
+    // entering the timed live stage.
+    setPendingStart(true);
+  }
+
+  function confirmStart() {
+    setPendingStart(false);
     seedFirstQuestion();
     setStage("live");
+  }
+
+  function cancelStart() {
+    setPendingStart(false);
   }
 
   function seedFirstQuestion() {
@@ -292,6 +328,14 @@ export function MockScreen() {
           onStart={startMode}
           onBack={backHome}
         />
+        {pendingStart && (
+          <StartConfirmModal
+            mode={selectedMode}
+            questionCount={MOCK_QS.length}
+            onCancel={cancelStart}
+            onConfirm={confirmStart}
+          />
+        )}
       </Shell>
     );
   }
@@ -305,6 +349,14 @@ export function MockScreen() {
           onBack={() => setStage("modes")}
           onBegin={beginLive}
         />
+        {pendingStart && (
+          <StartConfirmModal
+            mode={selectedMode}
+            questionCount={MOCK_QS.length}
+            onCancel={cancelStart}
+            onConfirm={confirmStart}
+          />
+        )}
       </Shell>
     );
   }
@@ -1246,4 +1298,180 @@ function sendBtnStyle(): React.CSSProperties {
     justifyContent: "center",
     flexShrink: 0,
   };
+}
+
+// Rough wall-clock estimate by intel strategy. Used in the HITL confirm so
+// the user sees what they're committing to before the timer starts.
+function estimatedDurationMin(intel: IntelStrategy): number {
+  switch (intel) {
+    case "none":
+      return 10;
+    case "jd_based":
+      return 15;
+    case "crowdsourced":
+      return 20;
+    case "recruiter_specific":
+      return 25;
+  }
+}
+
+function StartConfirmModal({
+  mode,
+  questionCount,
+  onCancel,
+  onConfirm,
+}: {
+  mode: BuiltInMode;
+  questionCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const mins = estimatedDurationMin(mode.intel);
+  // Esc to cancel — same affordance as native dialogs. We intentionally do
+  // NOT add Enter to confirm here: starting a 10–25 min session should be
+  // deliberate, never accidental.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mock-start-title"
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(43, 40, 34, 0.42)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 60,
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="animate-fade-up"
+        style={{
+          background: "#FFFDFB",
+          border: "1px solid #EDE8DF",
+          borderRadius: 16,
+          padding: 28,
+          maxWidth: 440,
+          width: "100%",
+          boxShadow: "0 30px 60px rgba(40,25,5,0.18)",
+        }}
+      >
+        <div
+          className="ds-mono-10"
+          style={{
+            color: "#A66A00",
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+            marginBottom: 8,
+          }}
+        >
+          Ready to start?
+        </div>
+        <h2
+          id="mock-start-title"
+          style={{
+            fontFamily: "Space Grotesk",
+            fontWeight: 700,
+            fontSize: 22,
+            lineHeight: 1.25,
+            color: "#2B2822",
+            margin: "0 0 14px",
+          }}
+        >
+          {mode.name} — about {mins} min, {questionCount} questions.
+        </h2>
+        <p
+          style={{
+            fontFamily: "Inter",
+            fontSize: 14,
+            lineHeight: 1.55,
+            color: "#6B6560",
+            margin: "0 0 8px",
+          }}
+        >
+          {mode.tagline}
+        </p>
+        <p
+          style={{
+            fontFamily: "Inter",
+            fontSize: 13,
+            lineHeight: 1.55,
+            color: "#7a3b32",
+            margin: "0 0 22px",
+          }}
+        >
+          Once you start, the timer runs and the chat is live. You can exit at
+          any time — your answers won&apos;t be saved if you cancel.
+        </p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              flex: 1,
+              cursor: "pointer",
+              border: "1px solid #EDE8DF",
+              background: "#FFFFFF",
+              color: "#2B2822",
+              fontFamily: "Inter",
+              fontWeight: 600,
+              fontSize: 14,
+              padding: "12px 14px",
+              borderRadius: 11,
+            }}
+          >
+            Not yet
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            autoFocus
+            style={{
+              flex: 1.4,
+              cursor: "pointer",
+              border: "none",
+              background: "#5D3000",
+              color: "#FAF8F6",
+              fontFamily: "Inter",
+              fontWeight: 600,
+              fontSize: 14,
+              padding: "12px 14px",
+              borderRadius: 11,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            Start the session
+            <svg
+              width={15}
+              height={15}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#FAF8F6"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

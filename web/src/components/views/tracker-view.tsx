@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import Link from "next/link";
 import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
 import { statusVisual, type AppColumn } from "@/lib/status";
-import { Sparkles, Inbox } from "lucide-react";
+import { Sparkles, Inbox, Compass, ArrowRight } from "lucide-react";
 
 /** Row shape rendered in any column. Unifies the demo "applied" entries (kept
  *  for the empty-state seed during dev) and real API applications under a
@@ -221,6 +222,34 @@ export function TrackerView() {
           >
             Open prep
           </button>
+        </div>
+      )}
+
+      {/* First-time empty state — only when we've finished loading AND have
+          zero real applications. The seed cards under "Applied" stay as a
+          visual scaffold; this banner is the load-bearing CTA that explains
+          the column is genuinely empty and points to where matches live. */}
+      {!apiAppsLoading && totalReal === 0 && (
+        <div className="mb-6 flex items-start gap-3 bg-cream border border-cream-border rounded-[13px] px-4 py-4">
+          <div className="w-[34px] h-[34px] rounded-[9px] bg-white border border-cream-border flex items-center justify-center shrink-0">
+            <Compass className="w-[16px] h-[16px] text-brown" strokeWidth={1.7} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-body font-semibold text-[13.5px] text-ink">
+              Nothing here yet — pick a role from today&apos;s matches to begin.
+            </div>
+            <div className="font-body text-[12.5px] text-ink-light mt-[3px]">
+              Once you tailor and submit your first application, this board fills
+              with real activity. The cards below are a preview only.
+            </div>
+          </div>
+          <Link
+            href="/app/today"
+            className="shrink-0 inline-flex items-center gap-[6px] no-underline border-none bg-brown text-paper font-body font-semibold text-[12.5px] px-[14px] py-[7px] rounded-[8px] hover:bg-brown-light transition-colors"
+          >
+            Browse matches
+            <ArrowRight className="w-[13px] h-[13px]" strokeWidth={2} />
+          </Link>
         </div>
       )}
 

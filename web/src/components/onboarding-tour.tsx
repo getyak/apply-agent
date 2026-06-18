@@ -4,16 +4,17 @@ import { useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { useVantage } from "@/lib/store";
 
-// Lightweight onboarding tour: a 3-step spotlight + popover that anchors to the
-// three sidebar tabs (Ask Vantage / Today / Applications). No external library;
-// pure React + the existing Tailwind tokens. Anchors are looked up by data-tour
-// id, which the workspace Sidebar sets on the sidebar items.
+// Lightweight onboarding tour: a 3-step spotlight + popover. The first step
+// anchors to the Ask Vantage dock (right rail / launcher pill), the next two
+// anchor to the Today / Applications sidebar tabs. No external library; pure
+// React + the existing Tailwind tokens. Anchors are looked up by data-tour
+// id, which the dock and Sidebar set on the relevant DOM nodes.
 
 const STEPS: { target: string; title: string; body: string }[] = [
   {
-    target: "ask",
+    target: "dock",
     title: "Ask Vantage anything",
-    body: "Tell our agents what you want — find roles, tailor a résumé, prep an interview. They do the work; you stay in control.",
+    body: "The dock on the right is always here — find roles, tailor a résumé, prep an interview. Send a chip to fire it instantly, or write your own.",
   },
   {
     target: "today",
