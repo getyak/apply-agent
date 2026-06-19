@@ -301,7 +301,15 @@ export const resumes = {
   // Start an ASYNCHRONOUS parse: returns a job id immediately so the UI can
   // enter the workspace and poll, instead of blocking on the LLM. Prefer the
   // Markdown middle state (richer structure) when the upload produced it.
-  parseAsync: (input: { text?: string; markdown?: string; save?: boolean }) =>
+  parseAsync: (input: {
+    text?: string;
+    markdown?: string;
+    save?: boolean;
+    // Optional UUID of the user_files row this parse came from. Threaded
+    // through so the saved résumé can carry source-file metadata for the
+    // "Source · resume.pdf" chip in Resume Studio.
+    sourceFileId?: string;
+  }) =>
     api<{ job: ParseJob }>("/api/resumes/parse-async", {
       method: "POST",
       body: JSON.stringify(input),
@@ -352,6 +360,11 @@ export const files = {
     }
     return res.json();
   },
+
+  // Presigned URL for the stored original. Surface area is small on purpose —
+  // the URL is short-lived and the link is consumed by an iframe preview /
+  // direct download in the Source drawer.
+  download: (id: string) => api<{ url: string }>(`/api/files/${id}/download`),
 };
 
 export const jobs = {
@@ -441,6 +454,17 @@ export const chat = {
   messages: (sessionId: string) =>
     api<{ messages: Array<{ id: string; role: string; content: string; created_at: string }> }>(
       `/api/chat/sessions/${sessionId}/messages`,
+    ),
+};
+
+// Ask Vantage rail — drives the dock's RECENT list (vantage-ui-mapping
+// §1.2). One lifetime thread per user, so we never list *sessions* the
+// way `chat` above does; we only list anchors (recent user prompts that
+// the dock can scroll back to).
+export const ask = {
+  recent: (limit = 10) =>
+    api<{ items: Array<{ id: string; preview: string; createdAt: string }> }>(
+      `/api/ask/recent?limit=${encodeURIComponent(String(limit))}`,
     ),
 };
 

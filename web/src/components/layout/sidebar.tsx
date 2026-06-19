@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   MessageSquare,
@@ -60,6 +61,18 @@ export function Sidebar() {
       // lint is a false positive here because this only fires once.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (raw === "1") setCollapsed(true);
+      // Mobile fallback: under ~lg the 3-column desktop layout becomes
+      // unusable (sidebar + main + dock fight for 390px of width — QA bug
+      // #8). Force the sidebar into icon-only mode at narrow widths and
+      // re-evaluate on resize. The user's saved preference still wins on
+      // desktop because that branch runs first.
+      const mql = window.matchMedia("(max-width: 1023px)");
+      const apply = () => {
+        if (mql.matches) setCollapsed(true);
+      };
+      apply();
+      mql.addEventListener("change", apply);
+      return () => mql.removeEventListener("change", apply);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -79,25 +92,28 @@ export function Sidebar() {
     (a) => statusVisual(a.status).column === "interviewing",
   ).length;
 
+  // Active state is derived purely from `pathname` — the single source of
+  // truth. Earlier we mixed nav-store state with router intent, so a click
+  // could highlight "Today" while the page below still showed Chat because
+  // the URL hadn't caught up yet (QA bug #3 — URL ↔ content mismatch).
   const active = (id: NavId): boolean => {
     if (id === "interviews") return false;
     if (id === "today") return pathname === "/app/today";
     if (id === "apps") return pathname === "/app/applications";
-    if (id === "builder") return pathname === "/app/studio/resume";
+    if (id === "builder") return pathname === "/app/studio/resume" || pathname === "/app/resume";
     if (id === "mock") return pathname === "/app/studio/mock";
     if (id === "settings") return pathname === "/app/settings";
     return false;
   };
 
-  // Keep store-state at screen="app" so overlay screens (review/extension/
-  // builder/mock) stay free to take over via screen=...; tab clicks also push
-  // the URL so refresh and back/forward both work as expected.
-  const go = (id: NavId) => {
+  // Side-effect helper kept for the Interviews nav item, which still has to
+  // open the prep modal in addition to navigating. Normal nav items use a
+  // <Link> and never call this — that's how we keep the URL authoritative.
+  const onNavClick = (id: NavId) => {
     setScreen("app");
     if (id === "today") setNav("today");
     if (id === "apps" || id === "interviews") setNav("apps");
     if (id === "settings") setNav("settings");
-    router.push(ROUTES[id]);
     if (id === "interviews") setTimeout(() => openPrep(0), 60);
   };
 
@@ -136,10 +152,20 @@ export function Sidebar() {
         collapsed ? "w-[74px] px-2" : "w-[248px] px-4"
       } shrink-0 bg-white border-r border-border flex flex-col py-[22px] transition-[width] duration-150`}
     >
-      <div
+      {/* Brand mark — also the "home" affordance. Clicking it routes to
+          /app/today (the highest-signal landing screen — see app/page.tsx)
+          and resets nav + screen state so any open overlay (review /
+          extension / builder / mock / onboarding) is dismissed. Behaves
+          like a sidebar nav item in both expanded and collapsed modes.
+          Real <Link> so middle-click / cmd-click open in a new tab. */}
+      <Link
+        href="/app/today"
+        onClick={() => onNavClick("today")}
+        title={collapsed ? "Vantage — back to Today" : "Back to Today"}
+        aria-label="Vantage — back to Today"
         className={`flex items-center ${
           collapsed ? "justify-center" : "gap-[9px] px-[10px]"
-        } pb-[20px]`}
+        } pb-[20px] cursor-pointer bg-transparent border-0 text-left hover:opacity-80 transition-opacity`}
       >
         <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center shrink-0">
           <Check className="w-[14px] h-[14px] text-paper" strokeWidth={2.2} />
@@ -149,7 +175,7 @@ export function Sidebar() {
             VANTAGE
           </span>
         )}
-      </div>
+      </Link>
 
       <button
         type="button"
@@ -172,23 +198,27 @@ export function Sidebar() {
           Workspace
         </div>
       )}
-      <nav className="flex flex-col gap-[2px]">
-        <div
+      <nav className="flex flex-col gap-[2px]" aria-label="Workspace">
+        <Link
+          href={ROUTES.today}
           data-tour="today"
           className={navItem(active("today"))}
-          onClick={() => go("today")}
+          onClick={() => onNavClick("today")}
           title={collapsed ? "Today" : undefined}
+          aria-current={active("today") ? "page" : undefined}
         >
-          <Home className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          <Home className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Today</span>}
-        </div>
-        <div
+        </Link>
+        <Link
+          href={ROUTES.apps}
           data-tour="apps"
           className={navItem(active("apps"))}
-          onClick={() => go("apps")}
+          onClick={() => onNavClick("apps")}
           title={collapsed ? "Applications" : undefined}
+          aria-current={active("apps") ? "page" : undefined}
         >
-          <LayoutGrid className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          <LayoutGrid className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && (
             <>
               <span>Applications</span>
@@ -197,13 +227,14 @@ export function Sidebar() {
               </span>
             </>
           )}
-        </div>
-        <div
+        </Link>
+        <Link
+          href={ROUTES.interviews}
           className={navItem(false)}
-          onClick={() => go("interviews")}
+          onClick={() => onNavClick("interviews")}
           title={collapsed ? "Interviews" : undefined}
         >
-          <Calendar className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          <Calendar className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && (
             <>
               <span>Interviews</span>
@@ -214,7 +245,7 @@ export function Sidebar() {
               )}
             </>
           )}
-        </div>
+        </Link>
       </nav>
 
       {!collapsed ? (
@@ -225,36 +256,42 @@ export function Sidebar() {
       ) : (
         <div className="h-[10px]" />
       )}
-      <nav className="flex flex-col gap-[2px]">
-        <div
+      <nav className="flex flex-col gap-[2px]" aria-label="AI studio">
+        <Link
+          href={ROUTES.builder}
           className={navItem(active("builder"))}
-          onClick={() => go("builder")}
+          onClick={() => onNavClick("builder")}
           title={collapsed ? "Résumé studio" : undefined}
+          aria-current={active("builder") ? "page" : undefined}
         >
-          <FileText className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          <FileText className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Résumé studio</span>}
-        </div>
-        <div
+        </Link>
+        <Link
+          href={ROUTES.mock}
           className={navItem(active("mock"))}
-          onClick={() => go("mock")}
+          onClick={() => onNavClick("mock")}
           title={collapsed ? "Mock interview" : undefined}
+          aria-current={active("mock") ? "page" : undefined}
         >
-          <MessageSquare className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          <MessageSquare className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Mock interview</span>}
-        </div>
+        </Link>
       </nav>
 
       <div className="mt-auto" />
 
-      <nav className="flex flex-col gap-[2px] mb-3">
-        <div
+      <nav className="flex flex-col gap-[2px] mb-3" aria-label="Account">
+        <Link
+          href={ROUTES.settings}
           className={navItem(active("settings"))}
-          onClick={() => go("settings")}
+          onClick={() => onNavClick("settings")}
           title={collapsed ? "Settings" : undefined}
+          aria-current={active("settings") ? "page" : undefined}
         >
-          <Settings className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} />
+          <Settings className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Settings</span>}
-        </div>
+        </Link>
       </nav>
 
       {!collapsed && (

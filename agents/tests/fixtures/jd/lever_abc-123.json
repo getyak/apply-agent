@@ -1,0 +1,21 @@
+{
+  "id": "abc-123",
+  "text": "Staff Backend Engineer",
+  "categories": {
+    "team": "Synthetic Robotics",
+    "location": "Remote",
+    "commitment": "Full-time"
+  },
+  "description": "<p>We are hiring a Staff Backend Engineer to lead our distributed systems work.</p><p>You will design and build services in Rust and Python that process millions of events per second.</p>",
+  "lists": [
+    {
+      "text": "Responsibilities",
+      "content": "<ul><li>Design and own backend services from scratch</li><li>Lead architecture decisions for the data platform</li><li>Mentor senior engineers</li></ul>"
+    },
+    {
+      "text": "Requirements",
+      "content": "<ul><li>8+ years of backend experience at scale</li><li>Strong Rust or Python</li><li>Deep knowledge of distributed systems</li><li>Experience with Kafka, gRPC, Kubernetes</li></ul>"
+    }
+  ],
+  "hostedUrl": "https://jobs.lever.co/synthetic/abc-123"
+}

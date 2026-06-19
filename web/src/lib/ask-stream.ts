@@ -304,9 +304,22 @@ export async function sendAsk(
   // Clear composer-attached files now that they're committed to a message.
   if (attachments.length > 0) dock.clearAttachments();
 
-  dock.pushMessage({ kind: "user", text: wirePrompt });
+  const userMsgId = dock.pushMessage({ kind: "user", text: wirePrompt });
   const assistantMsgId = dock.pushMessage({ kind: "assistant", text: "" });
   const agentGroupMsgId = dock.pushMessage({ kind: "agents", agents: [] });
+
+  // Optimistic rail: surface the new prompt in RECENT immediately. The
+  // id here is the in-memory bubble id, which doubles as a scroll target
+  // when the user later clicks the anchor — see RecentRail in dock.tsx.
+  // Reconciliation with the persisted conversation_messages.id happens
+  // on the next dock mount via GET /api/ask/recent.
+  if (!opts.surface || opts.surface === "dock") {
+    useDock.getState().prependRecentAnchor({
+      id: userMsgId,
+      preview: wirePrompt,
+      createdAt: new Date().toISOString(),
+    });
+  }
 
   const controller = new AbortController();
   useDock.setState({ abortController: controller, streaming: true, input: "" });

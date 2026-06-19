@@ -49,6 +49,16 @@ export interface DockMessage {
   onAction?: () => void;
 }
 
+// One entry in the dock's RECENT rail. Each anchor is a past user prompt
+// in the lifetime ask_vantage thread. Clicking an anchor doesn't switch
+// threads — it scrolls the dock back to that turn (anchors-only model,
+// vantage-ui-mapping §1.2). `id` is the conversation_messages.id from PG.
+export interface RecentAnchor {
+  id: string;
+  preview: string;
+  createdAt: string; // ISO from PG
+}
+
 interface DockStateShape {
   state: DockState;
   mode: DockMode;
@@ -61,6 +71,11 @@ interface DockStateShape {
   threadId: string | null;
   streaming: boolean;
   abortController: AbortController | null;
+  // Server-backed history rail. Loaded on mount via GET /api/ask/recent
+  // and prepended to optimistically on each new user turn. We don't
+  // dedupe by id on the client — server is the source of truth, the
+  // next refresh from /recent will return the canonical row.
+  recentAnchors: RecentAnchor[];
 
   open: () => void;
   close: () => void;
@@ -78,6 +93,12 @@ interface DockStateShape {
   clearAttachments: () => void;
   cancelStream: () => void;
   setStreaming: (v: boolean) => void;
+  setRecentAnchors: (items: RecentAnchor[]) => void;
+  // Optimistic append for a freshly-sent user prompt — we don't yet know
+  // the persisted message id, so the caller passes a temp `id` (the
+  // in-memory DockMessage id is fine). A later refresh from /recent will
+  // overwrite the rail with canonical rows.
+  prependRecentAnchor: (a: RecentAnchor) => void;
   reset: () => void;
 }
 
@@ -116,6 +137,7 @@ export const useDock = create<DockStateShape>((set, get) => ({
   threadId: null,
   streaming: false,
   abortController: null,
+  recentAnchors: [],
 
   open: () => {
     if (typeof window !== "undefined")
@@ -170,6 +192,14 @@ export const useDock = create<DockStateShape>((set, get) => ({
     set({ abortController: null, streaming: false });
   },
   setStreaming: (v) => set({ streaming: v }),
+  setRecentAnchors: (items) => set({ recentAnchors: items }),
+  prependRecentAnchor: (a) =>
+    set((s) => ({
+      // Cap at 20 entries in memory so a long session doesn't grow the
+      // rail unboundedly. The server query also caps; this is belt and
+      // braces.
+      recentAnchors: [a, ...s.recentAnchors].slice(0, 20),
+    })),
   reset: () =>
     set({
       messages: [],
@@ -222,8 +252,15 @@ export function bootDockThread(userId: string | null) {
 // out of the create() defaults keeps SSR happy — defaults render the
 // same on server and first client paint, then this catches up.
 export function hydrateDockFromStorage() {
+  // Narrow viewports can't host the 372px docked panel alongside the main
+  // content (QA bug #8 — sidebar + main + dock fight for ~390px). Force the
+  // launcher state below the lg breakpoint regardless of the stored value;
+  // desktop users keep their preference.
+  const narrow =
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 1023px)").matches;
   useDock.setState({
     width: readPersistedWidth(),
-    state: readPersistedState(),
+    state: narrow ? "closed" : readPersistedState(),
   });
 }

@@ -364,7 +364,7 @@ interface VantageState {
   setUploadText: (v: string) => void;
   parseFile: (file: File) => Promise<void>;
   parsePastedText: (text: string) => Promise<void>;
-  _startAsyncParse: (source: string) => Promise<void>;
+  _startAsyncParse: (source: string, sourceFileId?: string) => Promise<void>;
   pollParseJob: (jobId: string) => void;
   dismissParseBanner: () => void;
   startTour: () => void;
@@ -497,7 +497,9 @@ export const useVantage = create<VantageState>((set, get) => ({
       return;
     }
     // Prefer the Markdown middle state for a richer parse; fall back to text.
-    await get()._startAsyncParse(up.markdown || up.text);
+    // Thread the uploaded file id through so the saved résumé can show a
+    // "Source · resume.pdf" chip in the studio.
+    await get()._startAsyncParse(up.markdown || up.text, up.file?.id);
   },
 
   // Paste/Link path: text is already in hand. Same optimistic flow — start the
@@ -514,9 +516,18 @@ export const useVantage = create<VantageState>((set, get) => ({
 
   // Shared: kick off the async parse job, enter the workspace, begin polling.
   // Internal helper (not in the public interface) used by both upload paths.
-  _startAsyncParse: async (source: string) => {
+  _startAsyncParse: async (source: string, sourceFileId?: string) => {
     try {
-      const { job } = await resumesApi.parseAsync({ markdown: source, save: false });
+      const { job } = await resumesApi.parseAsync({
+        markdown: source,
+        // Always persist; the workspace banner needs a stable resumeId to
+        // navigate to even when AI structuring failed. (Was previously
+        // `save: false` + a follow-up createResume in pollParseJob — fine
+        // for the legacy path, but it dropped sourceFileId because the
+        // resume row was created client-side via /resumes POST.)
+        save: true,
+        sourceFileId,
+      });
       set({
         parseJobId: job.id,
         parseJobStatus: "running",
@@ -548,8 +559,18 @@ export const useVantage = create<VantageState>((set, get) => ({
         set({ parseJobProgress: job.progress });
         if (job.status === "done" && job.result) {
           const resume = job.result.resume as ParsedResume;
-          set({ parseJobStatus: "done", parseJobProgress: 100, parsedResume: resume });
-          get().createResume(resume);
+          // The worker already persisted (save: true) and returned the row's
+          // id. Use it directly — avoids the legacy double-write that turned
+          // each re-upload into a new client-side row.
+          const result = job.result as { resume: ParsedResume; resumeId?: string };
+          set({
+            parseJobStatus: "done",
+            parseJobProgress: 100,
+            parsedResume: resume,
+            ...(result.resumeId ? { currentResumeId: result.resumeId } : {}),
+          });
+          // Fallback for older job results that don't carry a resumeId.
+          if (!result.resumeId) get().createResume(resume);
           return;
         }
         if (job.status === "failed") {
@@ -826,17 +847,22 @@ export const useVantage = create<VantageState>((set, get) => ({
     set({ apiJobsLoading: true });
     try {
       const res = await jobsApi.list({ limit: 20 });
-      const jobsWithScores = await Promise.all(
-        res.jobs.map(async (j) => {
+      const jobsWithScores: ApiJob[] = await Promise.all(
+        res.jobs.map(async (j): Promise<ApiJob> => {
           try {
             const m = await jobsApi.match(j.id);
             return { ...j, matchScore: m.match.score, matchedSkills: m.match.matchedSkills, missingSkills: m.match.missingSkills };
           } catch {
-            return { ...j, matchScore: 50 };
+            // Leave matchScore undefined when the engine can't score this job.
+            // The view distinguishes "Not scored yet" from a low score; a
+            // hardcoded 50 made every row look "Fair" (QA bug #2).
+            return { ...j };
           }
         }),
       );
-      jobsWithScores.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+      // Unscored rows sink to the bottom so real fits float up. Treat
+      // undefined as -1 so they sort after a genuine 0% match too.
+      jobsWithScores.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
       set({ apiJobs: jobsWithScores, apiJobsLoading: false });
     } catch {
       set({ apiJobsLoading: false });

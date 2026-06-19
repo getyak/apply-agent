@@ -1,12 +1,16 @@
 import { Hono } from "hono";
+import { config } from "../config";
 import { query } from "../db";
+import { ConflictError, UpstreamError } from "../errors";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
 import { validateBody } from "../middleware/validate";
 import {
   PrepareApplicationSchema,
+  PrepareFromJDSchema,
   UpdateApplicationSchema,
   type PrepareApplication,
+  type PrepareFromJD,
   type UpdateApplication,
 } from "../schemas";
 import { requireOwnership } from "../ownership";
@@ -32,6 +36,73 @@ app.post("/prepare", idempotency(), validateBody(PrepareApplicationSchema), asyn
   );
   return c.json({ application: result.rows[0] }, 201);
 });
+
+// T3b · prepare-from-jd
+// Drives the delivery loop end-to-end. Forwards to the Python agent layer's
+// /applications/prepare endpoint (delivery-loop-plan.md § 3 T3), which runs
+// the parse_jd → customize → cover → form saga and TTAR measurement. The TS
+// gateway only does what only it can do: look up the user's base résumé
+// from the canonical PG row and forward the auth-resolved user id.
+app.post(
+  "/prepare-from-jd",
+  idempotency(),
+  validateBody(PrepareFromJDSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { jdUrl, formFields, applicationId } = c.get(
+      "validatedBody",
+    ) as PrepareFromJD;
+
+    // 1. Find user's current base résumé.
+    const baseResume = await query<{
+      id: string;
+      version: number;
+      content: unknown;
+    }>(
+      `SELECT id, version, content
+         FROM resumes
+        WHERE user_id = $1 AND is_base = TRUE
+        ORDER BY version DESC
+        LIMIT 1`,
+      [userId],
+    );
+    if (baseResume.rows.length === 0) {
+      throw new ConflictError(
+        "Upload or generate a base résumé before preparing an application.",
+      );
+    }
+    const base = baseResume.rows[0]!;
+    const content =
+      typeof base.content === "string" ? JSON.parse(base.content) : base.content;
+
+    // 2. Forward to the Python agent layer.
+    const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/applications/prepare`;
+    const agentResp = await fetch(target, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-relay-user-id": userId,
+      },
+      body: JSON.stringify({
+        jd_url: jdUrl,
+        base_resume_id: base.id,
+        base_resume_content: content,
+        base_resume_version: base.version,
+        form_fields: formFields ?? [],
+        application_id: applicationId,
+      }),
+    });
+    if (!agentResp.ok) {
+      const body = await agentResp.text();
+      throw new UpstreamError(
+        `agent /applications/prepare returned ${agentResp.status}`,
+        body.slice(0, 500),
+      );
+    }
+    const data = (await agentResp.json()) as Record<string, unknown>;
+    return c.json(data);
+  },
+);
 
 app.get("/", async (c) => {
   const userId = c.get("userId");
