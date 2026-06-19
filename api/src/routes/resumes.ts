@@ -80,7 +80,7 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
 // signal — we never hand back a fake resume.
 app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
   const userId = c.get("userId");
-  const { text, save } = c.get("validatedBody") as ParseResume;
+  const { text, save, sourceFileId } = c.get("validatedBody") as ParseResume;
 
   let parsed;
   try {
@@ -104,7 +104,7 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
     });
   }
 
-  const row = await saveBaseResume(userId, parsed);
+  const row = await saveBaseResume(userId, parsed, sourceFileId);
   return c.json(
     {
       resume: row,
@@ -127,32 +127,99 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
  * Storage shape: { raw, parsed, warnings, parsedAt }. The raw text is the spine
  * — if AI ever choked we can re-parse later without asking the user to re-upload.
  */
-async function saveBaseResume(userId: string, parsed: ParseResult) {
+// PG unique-violation SQLSTATE. Surfaced when two concurrent parse jobs both
+// read the same MAX(version) and try to write version+1.
+const PG_UNIQUE_VIOLATION = "23505";
+
+async function saveBaseResume(
+  userId: string,
+  parsed: ParseResult,
+  sourceFileId?: string,
+) {
+  // If the caller pointed us at an uploaded file, fetch its metadata so the
+  // saved résumé can show a "Source · resume.pdf" chip in the studio without
+  // a second round-trip. Ownership-scoped — a forged id from another user
+  // simply yields no row and `source` stays undefined.
+  let source:
+    | {
+        fileId: string;
+        fileName: string;
+        mime: string;
+        sizeBytes: number;
+      }
+    | undefined;
+  if (sourceFileId) {
+    const fileRow = await query(
+      `SELECT id, filename, mime_type, size_bytes
+         FROM user_files
+        WHERE id = $1 AND user_id = $2 AND is_deleted = false`,
+      [sourceFileId, userId],
+    );
+    if (fileRow.rows.length > 0) {
+      const r = fileRow.rows[0];
+      source = {
+        fileId: r.id as string,
+        fileName: (r.filename as string) ?? "resume",
+        mime: (r.mime_type as string) ?? "application/octet-stream",
+        sizeBytes: Number(r.size_bytes ?? 0),
+      };
+    }
+  }
+
   const content = {
     raw: parsed.raw,
     parsed: parsed.resume,
     warnings: parsed.warnings,
     parsedAt: new Date().toISOString(),
+    ...(source ? { source } : {}),
   };
 
-  // Try to overwrite the existing base row first.
-  const updateResult = await query(
-    `UPDATE resumes
-       SET content = $1, version = version + 1
-       WHERE user_id = $2 AND is_base = true
-       RETURNING id, user_id, content, version, is_base, created_at`,
-    [JSON.stringify(content), userId],
-  );
-  if (updateResult.rows.length > 0) return updateResult.rows[0];
+  // Re-upload: bump the base row to a NEW per-user version. Naively setting
+  // `version = version + 1` collides with the UNIQUE(user_id, version) when
+  // tailored variants already occupy higher versions (e.g. base v1 + tailored
+  // v2 → "+1" tries to write v2 again). The MAX(version)+1 form is the same
+  // pattern POST /api/resumes uses. Two concurrent parse jobs reading the
+  // same MAX still race, so we retry once on unique-violation — by then the
+  // other job has committed and the next MAX(version)+1 is fresh.
+  const ATTEMPTS = 3;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    try {
+      const updateResult = await query(
+        `UPDATE resumes
+           SET content = $1,
+               version = (
+                 SELECT COALESCE(MAX(version), 0) + 1
+                   FROM resumes
+                  WHERE user_id = $2
+               )
+           WHERE user_id = $2 AND is_base = true
+           RETURNING id, user_id, content, version, is_base, created_at`,
+        [JSON.stringify(content), userId],
+      );
+      if (updateResult.rows.length > 0) return updateResult.rows[0];
 
-  // No base yet — create version 1.
-  const insert = await query(
-    `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-     VALUES ($1, $2, 1, true, NOW())
-     RETURNING id, user_id, content, version, is_base, created_at`,
-    [userId, JSON.stringify(content)],
-  );
-  return insert.rows[0];
+      // No base yet — create version 1 (or MAX+1 if tailored rows pre-existed).
+      const insert = await query(
+        `INSERT INTO resumes (user_id, content, version, is_base, created_at)
+         VALUES (
+           $1,
+           $2,
+           (SELECT COALESCE(MAX(version), 0) + 1 FROM resumes WHERE user_id = $1),
+           true,
+           NOW()
+         )
+         RETURNING id, user_id, content, version, is_base, created_at`,
+        [userId, JSON.stringify(content)],
+      );
+      return insert.rows[0];
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code === PG_UNIQUE_VIOLATION && i < ATTEMPTS - 1) continue;
+      throw err;
+    }
+  }
+  // Unreachable — the loop either returns or rethrows.
+  throw new Error("saveBaseResume: exhausted retries without resolution");
 }
 
 /** Shape returned to the client when a parse job finishes. */
@@ -172,10 +239,12 @@ interface ParseJobResult {
 // fabricates — on LLM failure the job ends "failed" with an honest message.
 app.post("/parse-async", validateBody(ParseResumeAsyncSchema), async (c) => {
   const userId = c.get("userId");
-  const { text, markdown, save } = c.get("validatedBody") as ParseResumeAsync;
+  const { text, markdown, save, sourceFileId } = c.get(
+    "validatedBody",
+  ) as ParseResumeAsync;
   // Prefer the Markdown middle state (richer structure → better parse); fall
   // back to raw text. The upload route already produced Markdown for files.
-  const source = (markdown ?? text ?? "").trim();
+  const sourceText = (markdown ?? text ?? "").trim();
 
   const job = await createJob<ParseJobResult>(userId, "resume-parse");
 
@@ -183,13 +252,13 @@ app.post("/parse-async", validateBody(ParseResumeAsyncSchema), async (c) => {
   // Redis as it progresses. Bun's long-lived process keeps this promise alive.
   void runJob<ParseJobResult>(job.id, async (step) => {
     await step("parsing");
-    const parsed = await parseResumeText(source);
+    const parsed = await parseResumeText(sourceText);
     let saved = false;
     let resumeId: string | undefined;
     if (save) {
       // Always persist — even when AI parsing failed, the raw text is the user's
       // v1 base. Warnings ride along so the UI can prompt the user to fill gaps.
-      const row = await saveBaseResume(userId, parsed);
+      const row = await saveBaseResume(userId, parsed, sourceFileId);
       saved = true;
       resumeId = row.id as string;
     }
@@ -287,6 +356,12 @@ function isWrappedResume(content: unknown): content is {
   parsed: JsonResume;
   warnings?: string[];
   parsedAt?: string;
+  source?: {
+    fileId: string;
+    fileName: string;
+    mime: string;
+    sizeBytes: number;
+  };
 } {
   return (
     !!content &&
@@ -298,10 +373,10 @@ function isWrappedResume(content: unknown): content is {
 
 /** Flatten the wrapper shape back to a backward-compatible row: the client still
  *  reads `content.basics / content.work / ...` like before, with the new
- *  metadata available as `_raw / _warnings / _parsedAt`. */
+ *  metadata available as `_raw / _warnings / _parsedAt / _source`. */
 function unwrapResumeRow(row: Record<string, unknown>): Record<string, unknown> {
   if (!isWrappedResume(row.content)) return row;
-  const { raw, parsed, warnings, parsedAt } = row.content;
+  const { raw, parsed, warnings, parsedAt, source } = row.content;
   return {
     ...row,
     content: {
@@ -309,6 +384,7 @@ function unwrapResumeRow(row: Record<string, unknown>): Record<string, unknown> 
       _raw: raw,
       _warnings: warnings ?? [],
       _parsedAt: parsedAt ?? null,
+      ...(source ? { _source: source } : {}),
     },
   };
 }

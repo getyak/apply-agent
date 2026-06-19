@@ -33,6 +33,10 @@ export const OptimizeResumeSchema = z.object({
 export const ParseResumeSchema = z.object({
   text: z.string().min(20, "Resume text is too short to parse").max(60_000),
   save: z.boolean().optional(),
+  // Points back at the user_files row the parse came from, so the saved résumé
+  // can carry source-file metadata for the "Source" chip in Resume Studio.
+  // Optional: pasted text and tests still parse without an uploaded file.
+  sourceFileId: z.string().uuid().optional(),
 });
 
 /**
@@ -47,6 +51,8 @@ export const ParseResumeAsyncSchema = z
     text: z.string().max(60_000).optional(),
     markdown: z.string().max(120_000).optional(),
     save: z.boolean().optional(),
+    // See ParseResumeSchema.sourceFileId.
+    sourceFileId: z.string().uuid().optional(),
   })
   .refine((v) => (v.markdown ?? v.text ?? "").trim().length >= 20, {
     message: "Provide resume text or markdown of at least 20 characters",
@@ -76,6 +82,16 @@ export const PrepareApplicationSchema = z.object({
   resumeId: z.string().uuid().optional(),
   coverLetter: z.string().optional(),
   formAnswers: z.record(z.string(), z.unknown()).optional(),
+});
+
+// T3b: prepare-from-jd kicks the full delivery-loop saga in the Python
+// agent layer. The TS gateway just forwards (it has the user's base résumé
+// in PG, so we look it up here and pass the JSON Resume blob through to
+// avoid the agent doing the SELECT twice).
+export const PrepareFromJDSchema = z.object({
+  jdUrl: z.string().url(),
+  formFields: z.array(z.record(z.string(), z.unknown())).optional(),
+  applicationId: z.string().uuid().optional(),
 });
 
 export const UpdateApplicationSchema = z
@@ -150,5 +166,6 @@ export type UpdateResume = z.infer<typeof UpdateResumeSchema>;
 export type ParseResume = z.infer<typeof ParseResumeSchema>;
 export type ParseResumeAsync = z.infer<typeof ParseResumeAsyncSchema>;
 export type PrepareApplication = z.infer<typeof PrepareApplicationSchema>;
+export type PrepareFromJD = z.infer<typeof PrepareFromJDSchema>;
 export type UpdateApplication = z.infer<typeof UpdateApplicationSchema>;
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;

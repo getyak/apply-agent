@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
 import { statusVisual, type AppColumn } from "@/lib/status";
@@ -262,13 +263,26 @@ function DetailDrawer({
   errorMsg: string | null;
 }) {
   const v = statusVisual(application.status);
-  return (
+  // The drawer used to render inline inside TrackerView, whose ancestor
+  // chain contains `animate-fade-up` (a residual `transform: matrix(...)`).
+  // Any non-`none` transform on an ancestor hijacks the containing block of
+  // a `position: fixed` child — so `fixed inset-0` was no longer relative
+  // to the viewport. The panel height collapsed to the ancestor's intrinsic
+  // height (~479px), the scroll area got squished, and the Cover-letter
+  // section was clipped. Portalling to `document.body` lifts the dialog
+  // out of that subtree entirely, restoring viewport-relative anchoring
+  // and aligning with the WAI-ARIA pattern for modal dialogs.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="application-drawer-title"
       onClick={onClose}
-      className="fixed inset-0 bg-ink/40 z-50 flex justify-end animate-fade-in"
+      // `h-[100dvh]` belt-and-braces alongside `inset-0`: on mobile the
+      // dynamic viewport unit survives URL bar collapse, which `100vh`
+      // cannot. Doesn't hurt on desktop.
+      className="fixed inset-0 h-[100dvh] bg-ink/40 z-50 flex justify-end animate-fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -311,7 +325,11 @@ function DetailDrawer({
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-6 flex flex-col gap-6">
+        {/* Scroll surface — `min-h-0` lets it actually shrink inside the
+            flex column; trailing `pb-8` is the safety inset so the last
+            section never touches the sticky footer (or kisses the bottom
+            of the viewport when there's no error frame). */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-8 flex flex-col gap-6">
           {/* Status field — primary edit. Backed by PATCH ?status=. */}
           <section>
             <label className="block font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2">
@@ -384,15 +402,22 @@ function DetailDrawer({
             />
           </section>
 
-          {/* Server feedback. */}
-          {errorMsg ? (
+        </div>
+
+        {/* Server feedback lives in its own non-scrolling footer slot so the
+            user can always see PATCH failures even after scrolling the form
+            content. Only rendered when there's something to say — no empty
+            chrome otherwise. */}
+        {errorMsg ? (
+          <div className="border-t border-border bg-paper px-6 py-4">
             <div className="bg-[#FBEDEA] border border-[#E8C4BC] rounded-[10px] p-3 font-body text-[12.5px] text-[#A23A2E]">
               {errorMsg}
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

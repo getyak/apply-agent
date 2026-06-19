@@ -1,11 +1,13 @@
 "use client";
 
-// Résumé view — vibe chat (left) + document + version timeline (right).
-// Per docs/architecture/vantage-ui-mapping.md §2 (rev. 2026-06-18):
-//   Resume Studio carries its own document-scoped vibe chat. The Ask
-//   Vantage dock remains the cross-surface lifetime conversation; the
-//   vibe chat is per-résumé-branch and shares the /api/ask/stream
-//   plumbing via runAskStream + useConversationStream.
+// Résumé view — single-column document + version timeline.
+// Per docs/architecture/vantage-ui-mapping.md §2 (rev. 2026-06-18 merger):
+//   The earlier two-pane layout (left vibe-chat panel + right document)
+//   has been collapsed into one column. The Ask Vantage dock is now the
+//   sole conversation entry; on /app/studio/resume the dock auto-binds
+//   to the `resume_studio:{user_id}:{resume_id}` thread and surfaces a
+//   "This résumé" chip group above the global "Explore" chips. See
+//   §2.6 for the merger rationale.
 // Vantage.dc.html lines 392–583 are the visual contract for the
 // document pane.
 //
@@ -13,14 +15,10 @@
 // chat-driven "build from scratch" flow) remains separately reachable.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { resumes as resumesApi } from "@/lib/api";
+import ReactMarkdown from "react-markdown";
+import { resumes as resumesApi, files as filesApi } from "@/lib/api";
 import { useDock } from "@/lib/ask-vantage-store";
 import { useVantage } from "@/lib/store";
-import { useConversationStream } from "@/lib/use-conversation-stream";
-import {
-  VibeChatPanel,
-  type VibeChip,
-} from "@/components/studio/vibe-chat-panel";
 
 type VersionRow = {
   id: string;
@@ -60,6 +58,13 @@ interface JsonResumeEducation {
   endDate?: string;
 }
 
+interface ResumeSource {
+  fileId: string;
+  fileName: string;
+  mime: string;
+  sizeBytes: number;
+}
+
 interface JsonResume {
   basics?: JsonResumeBasics;
   work?: JsonResumeWork[];
@@ -71,6 +76,10 @@ interface JsonResume {
   _warnings?: string[];
   _raw?: string;
   _parsedAt?: string | null;
+  // Points back at the original uploaded file (PDF/DOCX) when the résumé came
+  // from /api/files → /api/resumes/parse-async. Drives the "Source" chip in
+  // the document header.
+  _source?: ResumeSource;
 }
 
 function relativeTime(iso: string): string {
@@ -112,7 +121,9 @@ function VantageMark({ size = 14 }: { size?: number }) {
 
 export function ResumeView() {
   const currentResumeId = useVantage((s) => s.currentResumeId);
-  const currentUser = useVantage((s) => s.currentUser);
+  // currentUser is no longer needed here — the dock now owns the
+  // resume_studio thread derivation (user_id × résumé_id), so this view
+  // only needs to know which résumé is selected.
   // Async parse pipeline state — owned by the global store so the workspace
   // banner and this view stay in lockstep (one source of truth for "what
   // file are we parsing right now").
@@ -124,11 +135,19 @@ export function ResumeView() {
   const parseError = useVantage((s) => s.parseError);
   const dismissParseBanner = useVantage((s) => s.dismissParseBanner);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [vibeInput, setVibeInput] = useState("");
 
   const [versions, setVersions] = useState<VersionRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [doc, setDoc] = useState<JsonResume | null>(null);
+  // Source drawer: opens when the user clicks the "Source · resume.pdf" chip.
+  // Owns its own lazy-fetched signed URL so the iframe preview doesn't fire
+  // until the drawer is actually open.
+  const [sourceOpen, setSourceOpen] = useState(false);
+  // Document view mode: "document" renders the structured JSON Resume,
+  // "extracted" renders the raw Markdown/text the parser saw. This gives the
+  // user a way to spot a bad LLM extraction without leaving the page (see
+  // vantage-ui-mapping.md §2.7).
+  const [viewMode, setViewMode] = useState<"document" | "extracted">("document");
   // Diff base: the master résumé content. We lazy-load it on first
   // compare-mode entry against a tailored variant; the master itself
   // has nothing to diff against, so we leave this null otherwise.
@@ -301,154 +320,33 @@ export function ResumeView() {
     URL.revokeObjectURL(url);
   }
 
-  // ─── Vibe chat (vantage-ui-mapping.md §2.6) ────────────────────────────
+  // ─── Vibe chat removed (vantage-ui-mapping.md §2.6, rev. 2026-06-18) ───
   //
-  // The thread id is per-master-résumé, so every tailored variant of the
-  // same master shares the conversation — the user thinks "this résumé",
-  // not "this version".
+  // The Resume Studio previously rendered a left-rail VibeChatPanel here
+  // that held a per-résumé conversation. The dual-input UX (vibe panel +
+  // Ask Vantage dock) violated §0's "Vantage is one conversation" rule and
+  // forced the user to pick between two text boxes that did the same
+  // thing. The merged design keeps a single entry — the dock — which
+  // switches onto the `resume_studio:{user_id}:{currentResumeId}` thread
+  // automatically when the user is on /app/studio/resume. The chips that
+  // used to live on the left now live as the "This résumé" group in the
+  // dock's greeting (see dock.tsx::CHIPS_THIS_RESUME).
   //
-  // resumeRootId resolution: when the user is viewing a tailored variant,
-  // we route to the most-recent master id (matches the existing diff base
-  // logic). For a master, the master's own id is the root. When nothing is
-  // viewable yet (initial load / empty state) the thread is null and the
-  // panel sits inert — clicking a chip is a no-op until the data arrives.
-  const resumeRootId = useMemo(() => {
-    if (!currentVersion) return null;
-    if (currentVersion.isBase) return currentVersion.id;
-    return masterVersions[0]?.id ?? currentVersion.id;
-  }, [currentVersion, masterVersions]);
-
-  const vibeThreadId = useMemo(() => {
-    if (!currentUser || !resumeRootId) return null;
-    return `resume_studio:${currentUser.id}:${resumeRootId}`;
-  }, [currentUser, resumeRootId]);
-
-  const vibeChat = useConversationStream({
-    threadId: vibeThreadId,
-    surface: "resume_studio",
-    resetKey: vibeThreadId,
-  });
-
-  // Chip handlers. Each prepares a focused prompt that primes the
-  // conversation; sending happens through the same vibeChat.send() so
-  // SSE results land in this panel, not the dock.
-  function sendChip(prompt: string) {
-    void vibeChat.send(prompt);
-  }
-
-  const vibeChips: VibeChip[] = useMemo(() => {
-    const disabled = vibeChat.streaming || !vibeThreadId;
-    return [
-      {
-        id: "optimize",
-        label: "优化建议",
-        hint: "Analyze the current résumé and surface the top 3 weakest spots.",
-        disabled,
-        onActivate: () =>
-          sendChip(
-            "Analyze this résumé and tell me the three weakest spots — be specific about which bullet or section, and what to change.",
-          ),
-      },
-      {
-        id: "tailor",
-        label: "JD 微调",
-        hint: "Tailor this résumé for a job description.",
-        disabled,
-        onActivate: () =>
-          sendChip(
-            "I want to tailor this résumé for a specific role. Ask me to paste the JD, then customize the bullets to match — without inventing experience I don't have.",
-          ),
-      },
-      {
-        id: "plan",
-        label: "职业规划",
-        hint: "Read the trajectory and map the next 1–2 moves.",
-        disabled,
-        onActivate: () =>
-          sendChip(
-            "Read my résumé's trajectory and tell me what the next one or two career moves should look like, plus which skills I'd need to close to get there.",
-          ),
-      },
-      {
-        id: "recommend",
-        label: "职业推荐",
-        hint: "Surface jobs that match the current résumé.",
-        disabled,
-        onActivate: () =>
-          sendChip(
-            "Based on this résumé, suggest five roles that would be a strong match right now — and explain in one line why each fits.",
-          ),
-      },
-    ];
-    // sendChip closes over vibeChat which changes per render; we accept
-    // the new identities — chips are cheap to recompute.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vibeChat.streaming, vibeThreadId]);
-
-  // withVibeChat wraps every render branch (loading / error / empty / main)
-  // in the left-vibe-chat + right-content two-pane shell so the chat panel
-  // is always present once we know who the user is.
-  function withVibeChat(content: React.ReactNode): React.ReactNode {
-    // While currentUser is still loading we don't have a thread id yet;
-    // render the content full-width rather than flashing a dead panel.
-    if (!currentUser) {
-      return (
-        <div
-          style={{
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            background: "#FAF8F6",
-          }}
-        >
-          {content}
-        </div>
-      );
-    }
+  // We keep the surface visually focused on the document + timeline; the
+  // shell below is a thin wrapper that gives every render branch the same
+  // background.
+  function withShell(content: React.ReactNode): React.ReactNode {
     return (
       <div
         style={{
           height: "100%",
           display: "flex",
-          flexDirection: "row",
+          flexDirection: "column",
           background: "#FAF8F6",
           minHeight: 0,
         }}
       >
-        <VibeChatPanel
-          title={
-            currentVersion?.isBase
-              ? "Sharpen your master résumé"
-              : currentVersion
-                ? "Refine this résumé"
-                : "Start with your résumé"
-          }
-          subtitle="Scoped to this résumé — picks up your version, your context, every time."
-          chips={vibeChips}
-          messages={vibeChat.messages}
-          agentEvents={vibeChat.agentEvents}
-          streaming={vibeChat.streaming}
-          input={vibeInput}
-          onInputChange={setVibeInput}
-          onSend={() => {
-            const t = vibeInput.trim();
-            if (!t) return;
-            setVibeInput("");
-            void vibeChat.send(t);
-          }}
-          onCancel={() => vibeChat.cancel()}
-        />
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          {content}
-        </div>
+        {content}
       </div>
     );
   }
@@ -479,7 +377,7 @@ export function ResumeView() {
   );
 
   if (loading) {
-    return withVibeChat(
+    return withShell(
       <>
         {sharedChrome}
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -490,7 +388,7 @@ export function ResumeView() {
   }
 
   if (error && versions.length === 0) {
-    return withVibeChat(
+    return withShell(
       <>
         {sharedChrome}
         <div style={{ padding: 32 }}>
@@ -506,7 +404,7 @@ export function ResumeView() {
   }
 
   if (versions.length === 0 || !doc) {
-    return withVibeChat(
+    return withShell(
       <>
         {sharedChrome}
         <div style={{ padding: 32 }}>
@@ -560,7 +458,7 @@ export function ResumeView() {
     .filter(Boolean)
     .join(" · ");
 
-  return withVibeChat(
+  return withShell(
     <>
       {sharedChrome}
       <div
@@ -601,6 +499,12 @@ export function ResumeView() {
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 11 }}>
+          {doc?._raw && doc._raw.trim().length > 0 ? (
+            <ViewModeTabs value={viewMode} onChange={setViewMode} />
+          ) : null}
+          {doc?._source ? (
+            <SourceChip source={doc._source} onClick={() => setSourceOpen(true)} />
+          ) : null}
           <span
             style={{
               display: "flex",
@@ -664,6 +568,8 @@ export function ResumeView() {
           work={doc.work ?? []}
           skills={doc.skills ?? []}
           education={doc.education ?? []}
+          rawText={doc._raw ?? null}
+          viewMode={viewMode}
           showAITouchedLabel={!currentVersion?.isBase}
           compareOn={compareOn}
           baseDoc={tailoredAgainstBase ? baseDoc : null}
@@ -675,6 +581,13 @@ export function ResumeView() {
           }
         />
       </div>
+      {doc?._source && sourceOpen ? (
+        <SourceDrawer
+          source={doc._source}
+          onClose={() => setSourceOpen(false)}
+          onReplace={askToUpload}
+        />
+      ) : null}
     </>,
   );
 }
@@ -983,6 +896,8 @@ function DocumentPane({
   work,
   skills,
   education,
+  rawText,
+  viewMode,
   showAITouchedLabel,
   compareOn,
   baseDoc,
@@ -994,12 +909,32 @@ function DocumentPane({
   work: JsonResumeWork[];
   skills: JsonResumeSkill[];
   education: JsonResumeEducation[];
+  // Original extracted text from the uploaded file. Used as a fallback render
+  // path when the LLM couldn't produce any structured fields — see §2.7 of
+  // vantage-ui-mapping.md (Source/Extracted/Document tri-view).
+  rawText: string | null;
+  // Active document tab. "extracted" shows rawText as Markdown so the user
+  // can spot a bad LLM extraction without leaving the page.
+  viewMode: "document" | "extracted";
   showAITouchedLabel: boolean;
   compareOn: boolean;
   baseDoc: JsonResume | null;
   baseDocLoading: boolean;
   baseVersionLabel: string | null;
 }) {
+  // Structured-empty: the parse succeeded technically (no error, no warnings
+  // visible) but every section the document pane knows how to render is
+  // empty. Falling through to the regular render path here would produce a
+  // near-blank card with just "Your résumé" — which is what the user reported
+  // as "nothing extracted". Detect it and switch to a raw-text fallback so
+  // the upload is at least *visible*.
+  const structuredEmpty =
+    work.length === 0 &&
+    skills.length === 0 &&
+    education.length === 0 &&
+    !(basics.summary && basics.summary.trim().length > 0) &&
+    !(basics.name && basics.name.trim().length > 0);
+  const showRawFallback = structuredEmpty && !!rawText && rawText.trim().length > 0;
   // diffOn = compare mode AND we have a base document to compare against.
   // Without a base (e.g. user is looking at master itself, or fetch failed)
   // we fall through to the same render path as non-diff mode.
@@ -1067,6 +1002,12 @@ function DocumentPane({
         )}
 
         <div className="ds-card" style={{ padding: "44px 48px", minHeight: 560 }}>
+          {viewMode === "extracted" && rawText && rawText.trim().length > 0 ? (
+            <ExtractedView text={rawText} />
+          ) : showRawFallback ? (
+            <RawTextFallback text={rawText!} />
+          ) : (
+          <>
           <div style={{ marginBottom: 24, paddingBottom: 22, borderBottom: "1px solid #EDE8DF" }}>
             <h1 className="ds-h1" style={{ margin: "0 0 4px" }}>{basics.name ?? "Your résumé"}</h1>
             <div className="ds-body-md" style={{ color: "#6B6560" }}>{basics.label ?? ""}</div>
@@ -1203,7 +1144,102 @@ function DocumentPane({
               ))}
             </Section>
           )}
+          </>
+          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render the raw extracted text from the uploaded file when the LLM couldn't
+ * produce any structured fields. Calm amber tone (not red): the *upload* worked,
+ * the *structuring* didn't. Preserves blank lines as paragraph breaks so the
+ * shape of the original document is at least readable. The Ask Vantage CTA in
+ * the parse-warnings banner above is how the user moves forward from here.
+ */
+function RawTextFallback({ text }: { text: string }) {
+  // Split on blank lines so paragraph shape survives. Single line breaks
+  // inside a paragraph are preserved via `whiteSpace: "pre-wrap"` below.
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.replace(/\s+$/g, ""))
+    .filter((p) => p.trim().length > 0);
+  return (
+    <div>
+      <div
+        style={{
+          marginBottom: 22,
+          paddingBottom: 18,
+          borderBottom: "1px solid #EDE8DF",
+        }}
+      >
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 7,
+            background: "#FFFBF0",
+            border: "1px solid #F2E6CC",
+            color: "#5D3000",
+            padding: "5px 10px 5px 8px",
+            borderRadius: 999,
+            fontFamily: "JetBrains Mono",
+            fontSize: 10,
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+            marginBottom: 12,
+          }}
+        >
+          <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          </svg>
+          Couldn&apos;t structure — here&apos;s what we saw
+        </div>
+        <div className="ds-body-sm" style={{ color: "#6B6560", fontSize: 13, lineHeight: 1.55 }}>
+          Vantage saved your upload, but the AI couldn&apos;t map it into résumé
+          fields. The original text is below — use Ask Vantage to walk through it
+          section by section, or upload a cleaner file.
+        </div>
+      </div>
+      <div
+        style={{
+          fontFamily: "Inter",
+          fontSize: 14,
+          lineHeight: 1.7,
+          color: "#3a352e",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        {paragraphs.length > 0 ? (
+          paragraphs.map((p, i) => (
+            <p
+              key={i}
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {p}
+            </p>
+          ))
+        ) : (
+          <p
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              color: "#A39F99",
+              fontStyle: "italic",
+            }}
+          >
+            (Empty file — no text could be extracted.)
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1551,6 +1587,424 @@ function ParseWarningsBanner({
       >
         Help me fill the gaps →
       </button>
+    </div>
+  );
+}
+
+// ── Source chip + drawer ────────────────────────────────────────────────────
+//
+// The original uploaded PDF/DOCX is a first-class artifact (vision: "data
+// flywheel = career context"). The chip lives in the document chrome to make
+// it visible without pulling attention away from the rendered résumé; the
+// drawer is the heavy view (iframe preview, download, re-upload). No new
+// route — we stay inside Resume Studio per vantage-ui-mapping.md §2.7.
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function SourceChip({
+  source,
+  onClick,
+}: {
+  source: ResumeSource;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={source.fileName}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        background: "#FFFFFF",
+        border: "1px solid #D6CEC0",
+        color: "#2B2822",
+        fontFamily: "Inter",
+        fontSize: 12.5,
+        fontWeight: 500,
+        padding: "6px 11px 6px 9px",
+        borderRadius: 999,
+        cursor: "pointer",
+        maxWidth: 240,
+        transition: "border-color .14s, background .14s",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "#5D3000";
+        e.currentTarget.style.background = "#F5EDE3";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "#D6CEC0";
+        e.currentTarget.style.background = "#FFFFFF";
+      }}
+    >
+      <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="#5D3000" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+      </svg>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        Source · {source.fileName}
+      </span>
+      <span className="ds-mono-10" style={{ color: "#A39F99" }}>
+        {formatBytes(source.sizeBytes)}
+      </span>
+    </button>
+  );
+}
+
+function SourceDrawer({
+  source,
+  onClose,
+  onReplace,
+}: {
+  source: ResumeSource;
+  onClose: () => void;
+  onReplace: () => void;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const isPdf = source.mime === "application/pdf" || source.fileName.toLowerCase().endsWith(".pdf");
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    filesApi
+      .download(source.fileId)
+      .then((res) => {
+        if (!alive) return;
+        setUrl(res.url);
+      })
+      .catch((e: Error) => {
+        if (!alive) return;
+        setError(
+          e.message ||
+            "Couldn't fetch the original — the file may have been removed or storage is offline.",
+        );
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [source.fileId]);
+
+  // Esc closes — drawer is a heavy surface, give the user a fast way out.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Source file"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(43, 40, 34, 0.42)",
+        zIndex: 60,
+        display: "flex",
+        justifyContent: "flex-end",
+      }}
+      onClick={onClose}
+    >
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(640px, 100vw)",
+          height: "100%",
+          background: "#FAF8F6",
+          borderLeft: "1px solid #EDE8DF",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "-12px 0 32px rgba(43,40,34,0.18)",
+        }}
+      >
+        <header
+          style={{
+            flexShrink: 0,
+            padding: "18px 22px",
+            borderBottom: "1px solid #EDE8DF",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 8,
+              background: "#F3F0EB",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#5D3000" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+            </svg>
+          </div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div
+              style={{
+                fontFamily: "Inter",
+                fontWeight: 600,
+                fontSize: 14,
+                color: "#2B2822",
+                lineHeight: 1.2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {source.fileName}
+            </div>
+            <div className="ds-mono-10">
+              {(source.mime || "FILE").toUpperCase()} · {formatBytes(source.sizeBytes)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              border: "1px solid #D6CEC0",
+              background: "#FFFFFF",
+              color: "#2B2822",
+              borderRadius: 8,
+              padding: "6px 10px",
+              fontFamily: "JetBrains Mono",
+              fontSize: 11,
+              letterSpacing: 0.5,
+              cursor: "pointer",
+            }}
+          >
+            CLOSE
+          </button>
+        </header>
+
+        <div
+          style={{
+            flexShrink: 0,
+            padding: "10px 22px",
+            borderBottom: "1px solid #EDE8DF",
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <a
+            href={url ?? "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-disabled={!url}
+            onClick={(e) => {
+              if (!url) e.preventDefault();
+            }}
+            style={{
+              ...chromeBtnStyle(false),
+              textDecoration: "none",
+              opacity: url ? 1 : 0.5,
+              pointerEvents: url ? "auto" : "none",
+            }}
+          >
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <path d="M7 10l5 5 5-5M12 15V3" />
+            </svg>
+            Download original
+          </a>
+          <button type="button" onClick={onReplace} style={chromeBtnStyle(false)}>
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 16V4M6 10l6-6 6 6" />
+              <path d="M4 20h16" />
+            </svg>
+            Replace with a new file
+          </button>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, padding: 18, overflow: "auto" }}>
+          {loading ? (
+            <div style={{ padding: 32, color: "#6B6560" }}>
+              <span className="ds-mono-10">FETCHING SIGNED URL…</span>
+            </div>
+          ) : error ? (
+            <div className="ds-card" style={{ padding: 18 }}>
+              <div className="ds-headline-caps" style={{ color: "#A23A2E", marginBottom: 6 }}>
+                COULDN&apos;T LOAD PREVIEW
+              </div>
+              <p className="ds-body-sm" style={{ margin: 0 }}>
+                {error}
+              </p>
+            </div>
+          ) : url && isPdf ? (
+            <iframe
+              src={url}
+              title={source.fileName}
+              style={{
+                width: "100%",
+                height: "100%",
+                minHeight: 480,
+                border: "1px solid #EDE8DF",
+                borderRadius: 10,
+                background: "#FFFFFF",
+              }}
+            />
+          ) : (
+            <div className="ds-card" style={{ padding: 18 }}>
+              <div className="ds-headline-caps" style={{ marginBottom: 6 }}>
+                PREVIEW NOT SUPPORTED
+              </div>
+              <p className="ds-body-sm" style={{ margin: "0 0 10px" }}>
+                Inline preview only works for PDFs. Use the download button above
+                to open the original in your editor.
+              </p>
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// ── View-mode tabs + Extracted (Markdown / raw text) view ──────────────────
+
+function ViewModeTabs({
+  value,
+  onChange,
+}: {
+  value: "document" | "extracted";
+  onChange: (v: "document" | "extracted") => void;
+}) {
+  // Segmented control matching the document chrome's tonal range. Two segments
+  // only: "Document" is the canonical structured view, "Extracted" shows the
+  // raw Markdown / text the parser saw. The Source PDF lives in the drawer
+  // (heavy surface, separate trigger) — keep this strip minimal.
+  return (
+    <div
+      role="tablist"
+      aria-label="Document view mode"
+      style={{
+        display: "inline-flex",
+        background: "#F3F0EB",
+        border: "1px solid #E8DCCA",
+        borderRadius: 9,
+        padding: 2,
+        gap: 2,
+      }}
+    >
+      {(["document", "extracted"] as const).map((mode) => {
+        const active = value === mode;
+        return (
+          <button
+            key={mode}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(mode)}
+            style={{
+              cursor: "pointer",
+              border: "none",
+              background: active ? "#FFFFFF" : "transparent",
+              color: active ? "#2B2822" : "#6B6560",
+              fontFamily: "Inter",
+              fontWeight: active ? 600 : 500,
+              fontSize: 12.5,
+              padding: "6px 12px",
+              borderRadius: 7,
+              boxShadow: active ? "0 1px 2px rgba(43,40,34,0.06)" : "none",
+              transition: "background .14s, color .14s",
+            }}
+          >
+            {mode === "document" ? "Document" : "Extracted"}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Shows the raw extracted text the parser saw, rendered as Markdown when it
+ * looks markdown-ish, or as preformatted text otherwise. The point is to make
+ * the AI step's input visible so the user can diagnose a bad extraction
+ * without having to leave Resume Studio (or open the original PDF).
+ */
+function ExtractedView({ text }: { text: string }) {
+  // Heuristic: if the text contains an ATX heading or any list/bold marker
+  // we treat it as Markdown. The upload pipeline emits Markdown (markdown.ts
+  // → bytesToMarkdown) so for files this is almost always true; pasted plain
+  // text falls through to the <pre> branch.
+  const looksMarkdown = /(^|\n)#{1,6}\s|\n[-*]\s|\*\*/.test(text);
+  return (
+    <div>
+      <div
+        style={{
+          marginBottom: 18,
+          paddingBottom: 14,
+          borderBottom: "1px solid #EDE8DF",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <span
+          className="ds-mono-10"
+          style={{
+            color: "#5D3000",
+            background: "#F5EDE3",
+            border: "1px solid #E8DCCA",
+            padding: "3px 8px",
+            borderRadius: 6,
+          }}
+        >
+          EXTRACTED · WHAT THE PARSER SAW
+        </span>
+        <span className="ds-body-sm" style={{ color: "#6B6560", fontSize: 12.5 }}>
+          {looksMarkdown
+            ? "Rendered from the upload's Markdown middle state."
+            : "Plain text — no Markdown structure detected."}
+        </span>
+      </div>
+      {looksMarkdown ? (
+        <div
+          style={{
+            fontFamily: "Inter",
+            fontSize: 14,
+            lineHeight: 1.7,
+            color: "#3a352e",
+          }}
+          className="resume-extracted-md"
+        >
+          <ReactMarkdown>{text}</ReactMarkdown>
+        </div>
+      ) : (
+        <pre
+          style={{
+            margin: 0,
+            fontFamily: "Inter",
+            fontSize: 14,
+            lineHeight: 1.7,
+            color: "#3a352e",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {text}
+        </pre>
+      )}
     </div>
   );
 }

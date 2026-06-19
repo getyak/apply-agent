@@ -1,0 +1,284 @@
+/*
+ * Vantage Markdown theme.
+ *
+ * Two layers in one file:
+ *   1. .vt-md-* — Markdown element styling (paragraph, list, code,
+ *      table, blockquote, link). Inherits the global palette declared in
+ *      app/globals.css (--color-brown, --color-cream-border, etc.) so
+ *      chat surfaces never need to hard-code hex values.
+ *   2. .vt-md .hljs — highlight.js syntax theme. Hand-tuned from the
+ *      github-light preset to fit the warm cream backdrop Vantage uses
+ *      everywhere; default github-light's cold blues clashed with the
+ *      brown body text.
+ *
+ * Keep additions minimal — the dock is the persistent surface and any
+ * surprise typography here will show up across every screen.
+ */
+
+.vt-md {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--color-ink);
+  word-break: break-word;
+}
+
+.vt-md.vt-md-subline {
+  color: var(--color-ink-light);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.vt-md > *:first-child { margin-top: 0; }
+.vt-md > *:last-child { margin-bottom: 0; }
+
+.vt-md-p {
+  margin: 0 0 8px 0;
+  white-space: pre-wrap;
+}
+
+.vt-md-h1,
+.vt-md-h2,
+.vt-md-h3 {
+  margin: 14px 0 6px;
+  color: var(--color-brown);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.vt-md-h1 { font-size: 15px; }
+.vt-md-h2 { font-size: 14px; }
+.vt-md-h3 { font-size: 13.5px; }
+
+.vt-md-ul,
+.vt-md-ol {
+  margin: 4px 0 10px;
+  padding-left: 22px;
+}
+.vt-md-li { margin: 2px 0; }
+.vt-md-li > p { margin: 0; }
+
+.vt-md-li input[type="checkbox"] {
+  margin-right: 6px;
+  accent-color: var(--color-brown);
+}
+
+.vt-md-blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--color-cream-border);
+  color: var(--color-ink-light);
+  background: rgba(245, 237, 227, 0.4);
+  border-radius: 2px;
+}
+
+.vt-md-a {
+  color: var(--color-brown);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(93, 48, 0, 0.25);
+  transition: border-color 0.12s ease;
+}
+.vt-md-a:hover { border-bottom-color: var(--color-brown); }
+
+.vt-md-hr {
+  border: 0;
+  border-top: 1px dashed var(--color-cream-border);
+  margin: 14px 0;
+}
+
+/* Inline code */
+.vt-md-inline-code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--color-cream);
+  color: var(--color-brown);
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-cream-border);
+}
+
+/* Code blocks */
+.vt-md-code-wrap {
+  margin: 8px 0;
+  border: 1px solid var(--color-cream-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #FBF8F3;
+}
+
+.vt-md-code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 6px 12px;
+  background: var(--color-cream);
+  border-bottom: 1px solid var(--color-cream-border);
+}
+
+.vt-md-code-lang {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.vt-md-code-copy {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--color-ink-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.vt-md-code-copy:hover {
+  color: var(--color-brown);
+  background: rgba(93, 48, 0, 0.06);
+}
+.vt-md-code-copy:focus-visible {
+  outline: 2px solid var(--color-brown);
+  outline-offset: 1px;
+}
+
+.vt-md-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: transparent;
+}
+.vt-md-pre code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-ink);
+  background: transparent;
+  padding: 0;
+  border: 0;
+}
+
+/* Tables */
+.vt-md-table-wrap {
+  margin: 8px 0;
+  border: 1px solid var(--color-cream-border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.vt-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.vt-md-table th,
+.vt-md-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-cream-border);
+}
+.vt-md-table thead th {
+  background: var(--color-cream);
+  color: var(--color-brown);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.vt-md-table tr:last-child td { border-bottom: 0; }
+
+/* highlight.js theme — warm cream, Vantage palette */
+.vt-md .hljs {
+  background: transparent;
+  color: var(--color-ink);
+}
+.vt-md .hljs-comment,
+.vt-md .hljs-quote {
+  color: var(--color-ink-muted);
+  font-style: italic;
+}
+.vt-md .hljs-keyword,
+.vt-md .hljs-selector-tag,
+.vt-md .hljs-literal,
+.vt-md .hljs-doctag,
+.vt-md .hljs-meta {
+  color: var(--color-brown);
+  font-weight: 600;
+}
+.vt-md .hljs-string,
+.vt-md .hljs-template-string,
+.vt-md .hljs-regexp,
+.vt-md .hljs-attribute {
+  color: var(--color-green);
+}
+.vt-md .hljs-number,
+.vt-md .hljs-symbol,
+.vt-md .hljs-bullet,
+.vt-md .hljs-link {
+  color: var(--color-amber);
+}
+.vt-md .hljs-title,
+.vt-md .hljs-section,
+.vt-md .hljs-name,
+.vt-md .hljs-tag,
+.vt-md .hljs-class .hljs-title,
+.vt-md .hljs-type {
+  color: var(--color-brown-light);
+}
+.vt-md .hljs-variable,
+.vt-md .hljs-params,
+.vt-md .hljs-attr {
+  color: var(--color-ink);
+}
+.vt-md .hljs-built_in,
+.vt-md .hljs-builtin-name {
+  color: var(--color-coral);
+}
+.vt-md .hljs-emphasis { font-style: italic; }
+.vt-md .hljs-strong { font-weight: 700; }
+
+.vt-md .hljs * { font-family: inherit; }
+
+/* Streaming caret — used by <StreamingCursor /> at the tail of an
+ * assistant bubble that is still receiving SSE deltas. */
+.vt-stream-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--color-brown);
+  border-radius: 1px;
+  animation: vt-stream-cursor-blink 1.05s steps(2, end) infinite;
+}
+@keyframes vt-stream-cursor-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vt-stream-cursor {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ReasoningSummary running-state pulse — small dot that breathes while
+ * any agent in the turn is still working. */
+.vt-reasoning-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-amber);
+  flex-shrink: 0;
+  animation: vt-reasoning-pulse 1.05s ease-in-out infinite;
+}
+@keyframes vt-reasoning-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vt-reasoning-pulse {
+    animation: none;
+    opacity: 0.85;
+  }
+}

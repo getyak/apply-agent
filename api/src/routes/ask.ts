@@ -17,6 +17,7 @@ import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { z } from "zod";
 import { config } from "../config";
+import { query } from "../db";
 import { authMiddleware } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import type { AppEnv } from "../types";
@@ -44,6 +45,56 @@ const AGENT_HUMAN_LABEL: Record<string, string> = {
 
 const routes = new Hono<AppEnv>();
 
+// Lifetime ask_vantage session id resolver. Per docs/architecture/
+// vantage-ui-mapping.md §1.2, every user has exactly one ask_vantage
+// session — enforced by idx_sessions_ask_vantage_per_user (migration
+// 012). We INSERT with ON CONFLICT DO NOTHING and follow up with a SELECT
+// so the resolver works whether or not the session already exists. The
+// thread_id the dock keeps in localStorage (`ask_vantage:{userId}`)
+// drives LangGraph's checkpointer; the conversation_sessions row drives
+// our own history rail (the dock's RECENT list).
+async function ensureAskVantageSession(userId: string): Promise<string> {
+  const insert = await query<{ id: string }>(
+    `INSERT INTO conversation_sessions
+       (user_id, session_type, agent_type, title, status)
+     VALUES ($1, 'ask_vantage', 'coordinator', 'Ask Vantage', 'active')
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
+    [userId],
+  );
+  if (insert.rows.length > 0) return insert.rows[0].id;
+  // Conflict path: row already existed — fetch it.
+  const sel = await query<{ id: string }>(
+    `SELECT id FROM conversation_sessions
+      WHERE user_id = $1 AND session_type = 'ask_vantage'
+      LIMIT 1`,
+    [userId],
+  );
+  if (sel.rows.length === 0) {
+    // Should be unreachable: the unique partial index guarantees the
+    // INSERT only conflicts when the row exists. Defensive throw so we
+    // surface schema drift rather than silently dropping history.
+    throw new Error("ensureAskVantageSession: row vanished after conflict");
+  }
+  return sel.rows[0].id;
+}
+
+// Strip a stored anchor to ~80 chars without slicing a multi-byte char in
+// half. Used for both the user-prompt preview and the assistant content
+// rail. The DB still has the full text — we only truncate at read time.
+function previewText(s: string, max = 80): string {
+  const trimmed = s.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= max) return trimmed;
+  // Iterate codepoint-by-codepoint via the iterator so we don't cut a
+  // surrogate pair (emoji, some CJK runs).
+  let out = "";
+  for (const ch of trimmed) {
+    if (out.length + ch.length > max - 1) break;
+    out += ch;
+  }
+  return out + "…";
+}
+
 routes.use("/stream", authMiddleware);
 routes.post("/stream", validateBody(AskBody), async (c) => {
   const { prompt, thread_id, surface } = c.get("validatedBody") as z.infer<
@@ -51,6 +102,37 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
   >;
   const userId = c.get("userId") as string;
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/ask/stream`;
+
+  // History persistence — kept best-effort. If the conversation_messages
+  // INSERTs fail we still want the dock to get its stream; the chat
+  // remains usable, we just lose the RECENT anchor for that turn. Log so
+  // we notice in dev / staging.
+  //
+  // We only persist for the lifetime ask_vantage thread (the default
+  // surface). resume_studio / mock_studio / applications surfaces are
+  // per-document scopes that don't share the dock's RECENT rail, so
+  // routing their messages here would pollute the rail with content the
+  // user can't navigate to from the dock.
+  const persistHistory = !surface || surface === "dock";
+  let askSessionId: string | null = null;
+  let userMessageId: string | null = null;
+  if (persistHistory) {
+    try {
+      askSessionId = await ensureAskVantageSession(userId);
+      const ins = await query<{ id: string }>(
+        `INSERT INTO conversation_messages
+           (session_id, role, content)
+         VALUES ($1, 'user', $2)
+         RETURNING id`,
+        [askSessionId, prompt],
+      );
+      userMessageId = ins.rows[0].id;
+    } catch (err) {
+      console.warn("[ask] history persist (user) failed:", err);
+      askSessionId = null;
+      userMessageId = null;
+    }
+  }
 
   let upstream: Response;
   try {
@@ -116,6 +198,10 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
     const decoder = new TextDecoder();
     let buf = "";
     const seenAgents = new Set<string>();
+    // Accumulate everything we emit as { kind: "text" } so we can persist
+    // the final assistant turn once the stream settles. Mirrors what the
+    // dock concatenates into m.text on the client.
+    let assistantBuf = "";
 
     try {
       while (true) {
@@ -132,6 +218,18 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
           const payload = parseSseFrame(frame);
           if (!payload) continue;
           for (const line of toNdjson(payload, seenAgents)) {
+            // Peek the frame so we can build a faithful assistant text
+            // record for history without re-parsing later. We accumulate
+            // before writing — order doesn't matter since both branches
+            // run synchronously per frame.
+            try {
+              const parsed = JSON.parse(line) as { kind?: string; delta?: string };
+              if (parsed.kind === "text" && typeof parsed.delta === "string") {
+                assistantBuf += parsed.delta;
+              }
+            } catch {
+              /* line is always valid JSON from toNdjson — guard is defensive */
+            }
             await out.write(line + "\n");
           }
         }
@@ -149,7 +247,91 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
       } catch {
         // Already cancelled if the upstream finished.
       }
+
+      // Persist the assistant half + roll up session counters. Best-effort
+      // again — if it fails we already streamed to the user; the only
+      // visible degradation is "this turn won't appear in RECENT" which
+      // is recoverable on the next message.
+      if (askSessionId && assistantBuf.trim().length > 0) {
+        try {
+          await query(
+            `INSERT INTO conversation_messages
+               (session_id, role, content, metadata)
+             VALUES ($1, 'assistant', $2, $3)`,
+            [askSessionId, assistantBuf, JSON.stringify({ agent: "coordinator", surface: surface ?? "dock" })],
+          );
+          await query(
+            `UPDATE conversation_sessions
+               SET last_active_at = NOW(),
+                   message_count = message_count + 2
+             WHERE id = $1`,
+            [askSessionId],
+          );
+        } catch (err) {
+          console.warn("[ask] history persist (assistant) failed:", err);
+        }
+      } else if (askSessionId && userMessageId) {
+        // We at least logged the user prompt; still bump message_count
+        // for the lone user row so the rail count stays honest. This
+        // covers cases where the stream errored before any assistant
+        // text accumulated.
+        try {
+          await query(
+            `UPDATE conversation_sessions
+               SET last_active_at = NOW(),
+                   message_count = message_count + 1
+             WHERE id = $1`,
+            [askSessionId],
+          );
+        } catch (err) {
+          console.warn("[ask] history persist (count bump) failed:", err);
+        }
+      }
     }
+  });
+});
+
+// GET /api/ask/recent — list the user's most recent prompts from the
+// lifetime ask_vantage thread, newest first. Used by the dock's RECENT
+// rail (vantage-ui-mapping.md §1.2 anchors-only model). We deliberately
+// only return user rows; the rail jumps to "where the user last asked
+// X", not "where Vantage said Y". `limit` is capped server-side so a
+// crafted client can't pull the entire history.
+routes.use("/recent", authMiddleware);
+routes.get("/recent", async (c) => {
+  const userId = c.get("userId") as string;
+  const limitRaw = c.req.query("limit");
+  const limit = Math.max(
+    1,
+    Math.min(50, limitRaw ? Number.parseInt(limitRaw, 10) || 10 : 10),
+  );
+
+  // Single query joining session → messages; gives us "" rows if the
+  // user has no session yet (LEFT JOIN). Cheap because the unique partial
+  // index keeps at most one ask_vantage session per user.
+  const result = await query<{
+    id: string;
+    content: string;
+    created_at: string;
+  }>(
+    `SELECT m.id, m.content, m.created_at
+       FROM conversation_sessions s
+       JOIN conversation_messages m
+         ON m.session_id = s.id
+      WHERE s.user_id = $1
+        AND s.session_type = 'ask_vantage'
+        AND m.role = 'user'
+      ORDER BY m.created_at DESC
+      LIMIT $2`,
+    [userId, limit],
+  );
+
+  return c.json({
+    items: result.rows.map((r) => ({
+      id: r.id,
+      preview: previewText(r.content),
+      createdAt: r.created_at,
+    })),
   });
 });
 

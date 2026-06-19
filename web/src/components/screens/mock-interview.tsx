@@ -176,6 +176,7 @@ export function MockScreen() {
   const backHome = useVantage((s) => s.backHome);
   const apiApplications = useVantage((s) => s.apiApplications);
   const currentUser = useVantage((s) => s.currentUser);
+  const parsedResume = useVantage((s) => s.parsedResume);
 
   const [stage, setStage] = useState<Stage>("modes");
   const [selectedSlug, setSelectedSlug] = useState<string>("scene_recreation");
@@ -223,7 +224,12 @@ export function MockScreen() {
       }
     : INTERVIEWING_DATA[0];
 
-  const initials = initialsOf(currentUser?.displayName ?? "");
+  // Same precedence as sidebar/dock: prefer the résumé's basics.name over
+  // auth display_name so the avatar never falls back to the email's first
+  // letter (QA bug #5).
+  const initials = initialsOf(
+    parsedResume?.basics?.name?.trim() || currentUser?.displayName?.trim() || "",
+  );
 
   const intel = {
     duration: "30 MIN",

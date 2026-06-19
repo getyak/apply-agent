@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useVantage } from "@/lib/store";
-import { getToken, auth as authApi, resumes as resumesApi } from "@/lib/api";
+import {
+  getToken,
+  auth as authApi,
+  resumes as resumesApi,
+  ask as askApi,
+} from "@/lib/api";
 import { Sidebar } from "@/components/layout/sidebar";
 import { OnboardingBanner } from "@/components/onboarding-banner";
 import { OnboardingTour } from "@/components/onboarding-tour";
@@ -38,6 +43,30 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, []);
   useEffect(() => {
     bootDockThread(currentUser?.id ?? null);
+  }, [currentUser?.id]);
+
+  // Hydrate the dock's RECENT rail from the server every time the user
+  // (re)resolves. Done in parallel with bootDockThread so the rail
+  // appears as soon as auth lands — feels instant on tab return.
+  // Anonymous threads have no server-side history, so we skip the fetch
+  // entirely and leave the rail in its empty state.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+    askApi
+      .recent(10)
+      .then((res) => {
+        if (cancelled) return;
+        useDock.getState().setRecentAnchors(res.items);
+      })
+      .catch((err) => {
+        // Recent rail is informational; failing to load shouldn't block
+        // the dock. Log so we notice in dev but otherwise stay silent.
+        console.warn("[ask] recent fetch failed:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser?.id]);
 
   // Mock live wants a quiet stage. Per vantage-ui-mapping.md §3.6 the dock

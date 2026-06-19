@@ -11,7 +11,11 @@ import {
 } from "lucide-react";
 
 function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => void }) {
-  const match = job.matchScore ?? 50;
+  // `matchScore` may be undefined when the matcher hasn't scored this job yet
+  // (server down, no résumé selected, etc.). Surface that honestly instead of
+  // bucketing every row as "Fair" with a fake 50% bar (QA bug #2).
+  const match = job.matchScore;
+  const scored = typeof match === "number";
   const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
   const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
   const fitLabel = (m: number) => (m >= 95 ? "Excellent" : m >= 90 ? "Strong" : m >= 85 ? "Good" : "Fair");
@@ -27,19 +31,31 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-[9px] mb-[3px]">
           <span className="font-body font-semibold text-[16px] text-ink">{job.role_title}</span>
-          <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px]" style={{ color: fitColor(match), background: fitBg(match) }}>
-            {fitLabel(match)}
-          </span>
+          {scored ? (
+            <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px]" style={{ color: fitColor(match), background: fitBg(match) }}>
+              {fitLabel(match)}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px] bg-[#F3F0EB] text-ink-muted">
+              Not scored
+            </span>
+          )}
         </div>
         <div className="font-body text-[13px] text-ink-light">
           {job.company}{location ? ` · ${location}` : ""}{salary ? ` · ${salary}` : ""}
         </div>
-        <div className="flex items-center gap-[10px] mt-[11px]">
-          <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
-            <div className="h-full rounded-full bg-green" style={{ width: `${match}%` }} />
+        {scored ? (
+          <div className="flex items-center gap-[10px] mt-[11px]">
+            <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
+              <div className="h-full rounded-full bg-green" style={{ width: `${match}%` }} />
+            </div>
+            <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
           </div>
-          <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
-        </div>
+        ) : (
+          <div className="font-mono text-[11px] text-ink-muted mt-[11px]">
+            Add or refresh your résumé so Vantage can score this match.
+          </div>
+        )}
         {job.matchedSkills && job.matchedSkills.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {job.matchedSkills.slice(0, 4).map((s) => (
@@ -101,7 +117,12 @@ export function TodayView() {
 
   // Real stats only — no fake fallbacks. Empty states are below.
   const totalJobs = trendSnapshot?.totalJobs ?? apiJobs.length;
-  const strongFits = apiJobs.filter((j) => (j.matchScore ?? 0) >= 85).length;
+  // Only count rows the matcher has actually scored. Treating an unscored job
+  // as "0" let us claim "0 strong fits" instead of "scoring not ready yet"
+  // (QA UX note — surface the empty state honestly).
+  const scoredJobs = apiJobs.filter((j) => typeof j.matchScore === "number");
+  const strongFits = scoredJobs.filter((j) => (j.matchScore ?? 0) >= 85).length;
+  const anyScored = scoredJobs.length > 0;
   const trackedSkills = trendSnapshot?.topSkills?.length ?? 0;
 
   return (
@@ -122,9 +143,17 @@ export function TodayView() {
         </div>
         <div className="w-px bg-border" />
         <div className="flex-1 px-[22px] py-[18px]">
-          <div className="font-display font-bold text-[26px] text-green">{strongFits}</div>
+          <div className={`font-display font-bold text-[26px] ${anyScored ? "text-green" : "text-ink-muted"}`}>
+            {anyScored ? strongFits : "—"}
+          </div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
-            {strongFits === 1 ? "strong fit, ready to send" : "strong fits, ready to send"}
+            {!anyScored
+              ? "no fits scored yet"
+              : strongFits === 0
+                ? "no strong fits — try broader filters"
+                : strongFits === 1
+                  ? "strong fit, ready to send"
+                  : "strong fits, ready to send"}
           </div>
         </div>
         <div className="w-px bg-border" />
@@ -142,7 +171,12 @@ export function TodayView() {
             <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
               Live matches
             </h2>
-            <span className="font-body text-[13px] text-ink-muted">From database · sorted by fit</span>
+            {/* Only claim "sorted by fit" when the matcher has actually scored
+                something. Otherwise the label fights the uniform "Not scored"
+                tags below it (QA bug #2). */}
+            <span className="font-body text-[13px] text-ink-muted">
+              {anyScored ? "From database · sorted by fit" : "From database · scoring pending"}
+            </span>
           </div>
           <div className="flex flex-col gap-[13px] mb-[34px]">
             {apiJobs.map((job) => (

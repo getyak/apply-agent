@@ -1,0 +1,74 @@
+# Delivery-loop golden dataset — drives the TTAR gate.
+#
+# Each entry maps a JD URL to expected behaviour after running
+# agents/coordinator/workflows.run_prepare_application on it. The URLs
+# resolve to fixture files under agents/tests/fixtures/jd/ via
+# RELAY_JD_FIXTURE_DIR so the gate runs hermetic (no network, no LLM).
+#
+# Run locally:
+#   uv run python eval/delivery-loop/run.py
+#
+# CI: .github/workflows/eval.yml → ttar-gate job (runs on every PR).
+#
+# Thresholds (docs/architecture/delivery-loop-plan.md § 1.2):
+#   TTAR-success ≥ 85%   |  fabrication rate = 0  |  parse_jd success ≥ 90%
+#   TTAR-latency p95 captured into baseline.json (informational only until
+#   we have ≥3 history points to compare against).
+
+threshold:
+  success_min: 0.85
+  fabrication_max: 0.0
+  parse_jd_success_min: 0.9
+  # latency thresholds are informational in v1 — captured in baseline.json
+  # but do not fail the build until we have an established baseline.
+
+cases:
+  - id: greenhouse-001
+    jd_url: https://boards.greenhouse.io/synthetic/jobs/4071234
+    expect_status: review
+    expect_company: Synthetic Labs
+
+  - id: greenhouse-002
+    jd_url: https://boards.greenhouse.io/synthetic/jobs/4071234
+    expect_status: review
+    expect_company: Synthetic Labs
+
+  - id: greenhouse-003
+    jd_url: https://boards.greenhouse.io/synthetic/jobs/4071234
+    expect_status: review
+    expect_company: Synthetic Labs
+
+  - id: lever-001
+    jd_url: https://jobs.lever.co/synthetic/abc-123
+    expect_status: review
+    expect_company: Synthetic Robotics
+
+  - id: lever-002
+    jd_url: https://jobs.lever.co/synthetic/abc-123
+    expect_status: review
+    expect_company: Synthetic Robotics
+
+  - id: lever-003
+    jd_url: https://jobs.lever.co/synthetic/abc-123
+    expect_status: review
+    expect_company: Synthetic Robotics
+
+  - id: ashby-001
+    jd_url: https://jobs.ashbyhq.com/synthetic/xyz-789
+    expect_status: review
+
+  - id: ashby-002
+    jd_url: https://jobs.ashbyhq.com/synthetic/xyz-789
+    expect_status: review
+
+  - id: ashby-003
+    jd_url: https://jobs.ashbyhq.com/synthetic/xyz-789
+    expect_status: review
+
+  # Failure case: URL with no fixture → parse_jd should fail cleanly and
+  # TTAR-success drops 1/10, leaving the run at 90% (still above 85% gate).
+  # If parse_jd ever stops failing-fast on this, the gate yells.
+  - id: nonexistent-001
+    jd_url: https://boards.greenhouse.io/nonexistent-ats/jobs/0
+    expect_status: draft
+    expect_parse_jd_failure: true

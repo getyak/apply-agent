@@ -38,7 +38,31 @@ from agents.nodes import interview_agent, resume_agent
 from agents.tools.auto import pg_query
 
 log = structlog.get_logger("agents.api")
-app = FastAPI(title="Relay Agents", version="0.1.0")
+
+
+# Lifespan: start the application:submitted consumers in the background so the
+# T8 flywheel plumbing exists from boot. They are log-only today and tolerate
+# a missing Redis (subscribe() returns silently), so wiring this in carries
+# zero risk in dev / hermetic CI.
+from contextlib import asynccontextmanager  # noqa: E402 — needs `app` below
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from agents.events.consumers import start_in_background
+
+    task = start_in_background()
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass  # noqa: BLE001 — clean shutdown path
+
+
+app = FastAPI(title="Relay Agents", version="0.1.0", lifespan=_lifespan)
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -122,7 +146,11 @@ async def ask_stream(
 
         try:
             result = await dispatch(
-                intent, user_id=user_id, message=payload.message, thread_id=thread_id
+                intent,
+                user_id=user_id,
+                message=payload.message,
+                thread_id=thread_id,
+                surface=surface,
             )
             yield _sse({"event": "result", **result})
             # Persist the turn so the next dock prompt has context.
@@ -211,6 +239,204 @@ async def resume_customize(payload: ResumeCustomizePayload, user_id: UserDep) ->
     if not result.get("ok"):
         raise HTTPException(status_code=422, detail=result)
     return result
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Applications — delivery loop (docs/architecture/delivery-loop-plan.md)
+# ───────────────────────────────────────────────────────────────────────
+
+
+class PrepareApplicationPayload(BaseModel):
+    jd_url: str
+    base_resume_id: UUID
+    base_resume_content: dict[str, Any]
+    base_resume_version: int = 1
+    form_fields: list[dict[str, Any]] = []  # ATS field descriptors; may be empty
+    application_id: UUID | None = None       # idempotency: reuse a draft row
+
+
+@app.post("/applications/prepare")
+async def applications_prepare(
+    payload: PrepareApplicationPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Run the full delivery-loop saga and return everything the UI needs.
+
+    Drives TTAR (delivery-loop-plan.md § 1). Stage-level fallbacks live in
+    workflows.run_prepare_application — this endpoint just shapes the
+    response and surfaces the TTAR-relevant fields.
+    """
+    from agents.coordinator.workflows import run_prepare_application
+
+    return await run_prepare_application(
+        user_id=user_id,
+        jd_url=payload.jd_url,
+        base_resume_id=payload.base_resume_id,
+        base_resume_content=payload.base_resume_content,
+        base_resume_version=payload.base_resume_version,
+        form_fields=payload.form_fields,
+        application_id=payload.application_id,
+    )
+
+
+class ApplicationSubmittedPayload(BaseModel):
+    """Posted by the extension after the user clicks the ATS Submit button.
+
+    Body shape stays minimal — anything the consumers need is queryable from
+    the application_drafts / jobs tables given the id. We keep `company` /
+    `role_title` in the event itself so log-only consumers (T8 phase 1) have
+    something readable without doing a JOIN.
+    """
+
+    company: str | None = None
+    role_title: str | None = None
+    submitted_via: str = "client_extension"
+
+
+@app.post("/applications/{application_id}/submitted")
+async def applications_submitted(
+    application_id: UUID,
+    payload: ApplicationSubmittedPayload,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    """Mark an application as submitted + emit application:submitted event.
+
+    Flywheel pre-wiring (delivery-loop-plan.md § 2.1 + T8). The event powers
+    the interview_agent_preheat / trend_agent_signal consumers wired in
+    agents/events/consumers.py.
+
+    DB write is best-effort (it's how we transition status=submitted) but
+    the event fire is the real product surface — if PG is down for some
+    reason we still emit so the consumers see the submit.
+    """
+    from agents.events.bus import publish
+    from agents.tools.auto import pg_query
+
+    # Best-effort DB update — drop the application into 'submitted' state
+    # and stamp submitted_at. If the row is owned by another user we
+    # silently no-op (don't leak existence).
+    try:
+        await pg_query(
+            "UPDATE application_drafts "
+            "   SET status = 'submitted', "
+            "       submitted_at = COALESCE(submitted_at, now()), "
+            "       submitted_via = COALESCE(submitted_via, %s), "
+            "       updated_at = now() "
+            " WHERE id = %s AND user_id = %s",
+            (payload.submitted_via, str(application_id), str(user_id)),
+        )
+    except Exception as exc:  # noqa: BLE001 boundary
+        log.warning("applications.submitted.db_write_failed", error=str(exc))
+
+    entry_id = await publish(
+        "application:submitted",
+        {
+            "user_id": str(user_id),
+            "application_id": str(application_id),
+            "company": payload.company,
+            "role_title": payload.role_title,
+            "submitted_via": payload.submitted_via,
+        },
+    )
+    return {"ok": True, "event_id": entry_id, "application_id": str(application_id)}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Extension — cloud field mapping (delivery-loop-plan.md § 3 T7)
+# ───────────────────────────────────────────────────────────────────────
+
+
+class ExtensionMapFieldsPayload(BaseModel):
+    """Subset of CloudFillRequest from apps/extension/src/cloud-fill.ts."""
+
+    context: dict[str, Any]  # ATSContext shape, but we only read jdUrl + source
+    jd_url: str
+    fields: list[dict[str, Any]]  # DetectedField[] from the extension
+
+    # pydantic v2: accept both camelCase from the extension and snake_case.
+    model_config = {"populate_by_name": True}
+
+
+@app.post("/extension/map-fields")
+async def extension_map_fields(
+    payload: ExtensionMapFieldsPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Map ATS form fields the local filler couldn't handle.
+
+    Drives the "+25% fields" half of docs/architecture/client-side-delivery.md
+    plan B. The extension calls this with whatever planLocalFill() left as
+    `unmatched`; we look up the user's base résumé, fetch the parsed JD via
+    jobmatch_agent, and hand both to appprep_agent.generate_form_answers.
+
+    Returned shape matches CloudFillResponse:
+      {
+        "fills":     [{ selector, profileKey, value, type, confidence }, ...],
+        "unmatched": [DetectedField, ...]   // fields the model declined / skipped
+      }
+    """
+    from agents.nodes import appprep_agent, jobmatch_agent
+    from agents.tools.auto import pg_query
+
+    if not payload.fields:
+        return {"fills": [], "unmatched": []}
+
+    # 1. Look up the user's base résumé. Without one we have nothing to
+    #    ground answers in; degrade rather than crash.
+    rows = await pg_query(
+        "SELECT content FROM resumes "
+        "WHERE user_id = %s AND is_base = TRUE "
+        "ORDER BY version DESC LIMIT 1",
+        (str(user_id),),
+    )
+    if not rows:
+        # No base résumé → return all fields as unmatched so the user fills
+        # them manually. Don't 422 — the extension would just look broken.
+        return {"fills": [], "unmatched": payload.fields}
+
+    base_resume = rows[0]["content"]
+    if isinstance(base_resume, str):
+        import json as _json
+
+        base_resume = _json.loads(base_resume)
+
+    # 2. Parse the JD (cached UPSERT — cheap when the same job has been
+    #    seen before).
+    try:
+        parsed = await jobmatch_agent.parse_jd_from_url(
+            payload.jd_url, user_id=user_id, persist=True
+        )
+        parsed_jd = parsed.parsed
+    except jobmatch_agent.JDFetchError:
+        parsed_jd = {}
+
+    # 3. Ask AppPrep for answers per field.
+    answers = await appprep_agent.generate_form_answers(
+        tailored_resume=base_resume,
+        parsed_jd=parsed_jd,
+        fields=payload.fields,
+        user_id=user_id,
+    )
+
+    # 4. Convert FormFieldAnswer → FillInstruction (or unmatched).
+    fields_by_id = {str(f.get("id") or ""): f for f in payload.fields}
+    fills: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = []
+    for ans in answers:
+        f = fields_by_id.get(ans.id)
+        if ans.skip or not ans.answer or not f:
+            if f:
+                unmatched.append(f)
+            continue
+        fills.append(
+            {
+                "selector": f.get("selector", ""),
+                "profileKey": "cloud_llm",  # extension uses this only for highlight metadata
+                "value": ans.answer,
+                "type": f.get("type", "text"),
+                "confidence": ans.confidence,
+            }
+        )
+
+    return {"fills": fills, "unmatched": unmatched}
 
 
 # ───────────────────────────────────────────────────────────────────────

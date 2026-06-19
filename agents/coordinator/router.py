@@ -227,7 +227,11 @@ async def classify_intent(message: str) -> Intent:
 
 
 async def dispatch(
-    intent: Intent, user_id: UUID, message: str, thread_id: str | None = None
+    intent: Intent,
+    user_id: UUID,
+    message: str,
+    thread_id: str | None = None,
+    surface: str | None = None,
 ) -> dict[str, Any]:
     """Route to the relevant agent. Returns a result dict the API streams back.
 
@@ -238,6 +242,13 @@ async def dispatch(
     ``thread_id`` is the lifetime ask_vantage thread for this user
     (vantage-ui-mapping.md § 1.2). It is threaded into the small-talk reply so
     the dock has multi-turn memory.
+
+    ``surface`` identifies which UI panel asked. When it is ``resume_studio``
+    we attach a brief of the user's current master résumé to the small-talk
+    system prompt so questions like "介绍一下这个人" or "分析这份简历" reach
+    the model with the document already in context — otherwise the agent has
+    no way to know which résumé is open and (correctly) refuses to invent
+    one. Other surfaces keep the old, surface-agnostic behaviour.
     """
     if intent.intent == "find_jobs":
         return {"agent": "jobmatch_agent", "action": "find_matches", "status": "not_implemented_yet"}
@@ -332,10 +343,17 @@ async def dispatch(
         }
 
     # 'other' → small-talk fallback (free, V4 Flash).
-    return await _smalltalk_reply(message, thread_id=thread_id)
+    return await _smalltalk_reply(
+        message, thread_id=thread_id, user_id=user_id, surface=surface
+    )
 
 
-async def _smalltalk_reply(message: str, thread_id: str | None = None) -> dict[str, Any]:
+async def _smalltalk_reply(
+    message: str,
+    thread_id: str | None = None,
+    user_id: UUID | None = None,
+    surface: str | None = None,
+) -> dict[str, Any]:
     # Load the last few turns of this lifetime thread so the reply has memory
     # (vantage-ui-mapping.md § 1.2). Best-effort: no history if PG is down.
     history: list[BaseMessage] = []
@@ -350,22 +368,169 @@ async def _smalltalk_reply(message: str, thread_id: str | None = None) -> dict[s
             )
             history = []
 
-    model = pick_model("fast", temperature=0.7, max_tokens=200)
+    # Resume Studio surface → pull the current master résumé and attach it as
+    # an extra system block so "介绍一下这个人 / analyze this résumé" land with
+    # the actual document, not a blank context. Best-effort: when there is no
+    # résumé yet, or PG is unreachable, we just skip the block (the reply still
+    # works, it'll just be the generic "upload one to get started" line).
+    resume_block: str | None = None
+    if surface == "resume_studio" and user_id is not None:
+        try:
+            resume_block = await load_active_resume_brief(user_id)
+        except Exception as exc:  # noqa: BLE001 — boundary
+            log.error("router.load_active_resume_brief_failed", error=str(exc))
+            resume_block = None
+
+    # Language fidelity: the chat history shipped Chinese user turns next to
+    # English agent turns — see the QA pass UX notes. The fix is small but
+    # uncompromising: detect once from the *latest* user turn and pin the
+    # reply language for the whole response. We hand the model a simple
+    # heuristic so it doesn't have to think about it.
+    has_cjk = bool(re.search(r"[぀-ヿ㐀-鿿]", message))
+    language_directive = (
+        "Reply in the same language the user just wrote in. The user's "
+        "latest message is "
+        + (
+            "written with CJK characters — reply in Chinese unless the user "
+            "explicitly asks for English. "
+            if has_cjk
+            else "written in a Latin script — reply in English unless the user "
+            "explicitly asks for another language. "
+        )
+        + "Never mix two languages in a single reply, and do not translate "
+        "technical terms / brand names that should stay in their original form."
+    )
+
+    system_parts = [
+        "You are Vantage, an AI job-search copilot. Reply briefly and "
+        "redirect the user gently to what you can do: find roles, sharpen "
+        "résumés, draft cover letters, run mocks, surface market trends, "
+        "or build a résumé from scratch.",
+        language_directive,
+    ]
+    if resume_block:
+        system_parts.append(
+            "The user is currently viewing their master résumé in Resume "
+            "Studio. Treat the following JSON as the live document and refer "
+            "to it when the user says '这个人' / 'this résumé' / 'me' / 'I'. "
+            "Never invent experience that isn't in it. If asked to introduce "
+            "the person, summarise from the résumé itself.\n\n"
+            f"<active_resume>\n{resume_block}\n</active_resume>"
+        )
+
+    model = pick_model("fast", temperature=0.7, max_tokens=400)
     resp = await model.ainvoke(
         [
-            SystemMessage(
-                content=(
-                    "You are Vantage, an AI job-search copilot. Reply briefly and "
-                    "redirect the user gently to what you can do: find roles, sharpen "
-                    "résumés, draft cover letters, run mocks, surface market trends, "
-                    "or build a résumé from scratch."
-                )
-            ),
+            SystemMessage(content="\n\n".join(system_parts)),
             *history,
             HumanMessage(content=message[:1000]),
         ]
     )
     return {"agent": "coordinator", "action": "reply", "text": str(resp.content)}
+
+
+async def load_active_resume_brief(user_id: UUID, max_chars: int = 4000) -> str | None:
+    """Return a compact JSON brief of the user's current master résumé.
+
+    Picks the highest-version row with ``is_base = true`` and trims a few
+    typically-large fields (work descriptions, project highlights) so the brief
+    fits comfortably alongside the system prompt. Returns ``None`` when the
+    user has no résumé yet or PG isn't configured.
+    """
+    dsn = _resolve_pg_dsn()
+    if not dsn:
+        return None
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT content, version
+                FROM resumes
+                WHERE user_id = %s AND is_base = true
+                ORDER BY version DESC
+                LIMIT 1
+                """,
+                (str(user_id),),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return None
+
+    content = row["content"] or {}
+    brief = _compact_resume_brief(content, max_chars=max_chars)
+    return brief or None
+
+
+def _compact_resume_brief(content: dict[str, Any], max_chars: int) -> str:
+    """Render a small, model-friendly JSON snapshot of a JSON Resume document.
+
+    Drops sections that are usually long-tail noise (interests, references,
+    languages metadata) and clips bullets per role so a verbose résumé still
+    fits. Falls back to a length-bounded JSON dump if the document doesn't
+    look like JSON Resume — better something than nothing.
+    """
+    if not isinstance(content, dict):
+        return json.dumps(content, ensure_ascii=False)[:max_chars]
+
+    basics = content.get("basics") or {}
+    work = content.get("work") or []
+    education = content.get("education") or []
+    skills = content.get("skills") or []
+    projects = content.get("projects") or []
+
+    def _clip_list(items: list[Any], n: int) -> list[Any]:
+        return items[:n] if isinstance(items, list) else []
+
+    compact: dict[str, Any] = {
+        "basics": {
+            k: basics.get(k)
+            for k in ("name", "label", "headline", "email", "phone", "location", "summary")
+            if basics.get(k)
+        },
+        "work": [
+            {
+                k: w.get(k)
+                for k in ("name", "company", "position", "startDate", "endDate", "summary")
+                if w.get(k)
+            }
+            | ({"highlights": _clip_list(w.get("highlights") or [], 4)} if w.get("highlights") else {})
+            for w in _clip_list(work, 5)
+            if isinstance(w, dict)
+        ],
+        "education": [
+            {
+                k: e.get(k)
+                for k in ("institution", "studyType", "area", "startDate", "endDate")
+                if e.get(k)
+            }
+            for e in _clip_list(education, 3)
+            if isinstance(e, dict)
+        ],
+        "skills": [
+            {k: s.get(k) for k in ("name", "keywords", "level") if s.get(k)}
+            for s in _clip_list(skills, 8)
+            if isinstance(s, dict)
+        ],
+        "projects": [
+            {
+                k: p.get(k)
+                for k in ("name", "description", "url")
+                if p.get(k)
+            }
+            for p in _clip_list(projects, 4)
+            if isinstance(p, dict)
+        ],
+    }
+
+    rendered = json.dumps(compact, ensure_ascii=False)
+    if len(rendered) <= max_chars:
+        return rendered
+    # Last-resort trim — keep it parseable as a string for the model.
+    return rendered[: max_chars - 1] + "…"
 
 
 # ───────────────────────────────────────────────────────────────────────

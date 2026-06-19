@@ -11,42 +11,119 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useShallow } from "zustand/react/shallow";
 import {
   useDock,
+  type AgentEvent,
   type DockAttachment,
   type DockMessage,
 } from "@/lib/ask-vantage-store";
 import { sendAsk } from "@/lib/ask-stream";
 import { useVantage } from "@/lib/store";
 import { files as filesApi } from "@/lib/api";
+import { greetingFor } from "@/lib/dates";
+import { MarkdownMessage } from "@/components/chat/markdown-message";
+import { ReasoningSummary } from "@/components/chat/reasoning-summary";
+import { StreamingCursor } from "@/components/chat/streaming-cursor";
 
-// Cross-surface chips: things you'd ask Vantage no matter which page you're
-// on. The default set — used everywhere except Resume Studio, where the
-// document-scoped vibe panel already owns résumé chips (see
-// docs/architecture/vantage-ui-mapping.md §2.6).
-const SUGGESTIONS_DEFAULT = [
-  "Find roles I should look at today",
-  "Sharpen my résumé for Stripe",
-  "Practise the Stripe recruiter screen",
-  "What changed in the market this week?",
-  "Build me a cover letter for Linear",
-] as const;
+// A single chip carries two strings: `display` is the short English line on
+// the card; `prompt` is the verbose instruction we actually send to the
+// coordinator. Splitting them keeps the cards scannable without dumbing
+// down the prompt the LLM gets — the vibe panel's long prompts (e.g.
+// "Analyze this résumé and tell me the three weakest spots — be specific
+// about which bullet or section, and what to change.") survive verbatim
+// into the dock conversation.
+interface SuggestionChip {
+  display: string;
+  prompt: string;
+}
 
-// Resume Studio variant: the studio's left vibe panel owns "sharpen this
-// résumé / tailor for a JD" — the dock here surfaces other tracks the
-// user might still want without leaving the page.
-const SUGGESTIONS_RESUME_STUDIO = [
-  "Find roles I should look at today",
-  "Practise the Stripe recruiter screen",
-  "What changed in the market this week?",
-  "Build me a cover letter for Linear",
-] as const;
+interface SuggestionGroup {
+  // `id` is stable so React can key without using the (possibly duplicate)
+  // label as the key.
+  id: "this_resume" | "explore";
+  label: string;
+  // One-liner shown next to the group label. For scoped groups this is
+  // where we keep the old Vibe Chat's "scoped to this résumé" contract so
+  // users still know what the group acts on after the merger.
+  scopeHint?: string;
+}
 
-function suggestionsForPath(pathname: string | null): readonly string[] {
+// Explore group — global tracks you'd ask Vantage from any page. Same set
+// the dock has always shown, minus the résumé-specific "Sharpen my résumé
+// for Stripe" since that now belongs inside the This-résumé group on the
+// Resume Studio route.
+const CHIPS_EXPLORE_DEFAULT: SuggestionChip[] = [
+  { display: "Find roles I should look at today", prompt: "Find roles I should look at today" },
+  { display: "Sharpen my résumé for Stripe", prompt: "Sharpen my résumé for Stripe" },
+  { display: "Practise the Stripe recruiter screen", prompt: "Practise the Stripe recruiter screen" },
+  { display: "What changed in the market this week?", prompt: "What changed in the market this week?" },
+  { display: "Build me a cover letter for Linear", prompt: "Build me a cover letter for Linear" },
+];
+
+const CHIPS_EXPLORE_RESUME_STUDIO: SuggestionChip[] = [
+  { display: "Find roles I should look at today", prompt: "Find roles I should look at today" },
+  { display: "Practise the Stripe recruiter screen", prompt: "Practise the Stripe recruiter screen" },
+  { display: "What changed in the market this week?", prompt: "What changed in the market this week?" },
+  { display: "Build me a cover letter for Linear", prompt: "Build me a cover letter for Linear" },
+];
+
+// "This résumé" group — migrated from the old VibeChatPanel. Each chip's
+// `prompt` is the original verbose instruction so the resume_agent sees
+// the same input it always has; `display` is the action-style English
+// short line the user sees on the card.
+const CHIPS_THIS_RESUME: SuggestionChip[] = [
+  {
+    display: "Find my résumé's 3 weakest spots",
+    prompt:
+      "Analyze this résumé and tell me the three weakest spots — be specific about which bullet or section, and what to change.",
+  },
+  {
+    display: "Tailor this résumé to a JD",
+    prompt:
+      "I want to tailor this résumé for a specific role. Ask me to paste the JD, then customize the bullets to match — without inventing experience I don't have.",
+  },
+  {
+    display: "Map my next 1–2 career moves",
+    prompt:
+      "Read my résumé's trajectory and tell me what the next one or two career moves should look like, plus which skills I'd need to close to get there.",
+  },
+  {
+    display: "Surface roles that match this résumé",
+    prompt:
+      "Based on this résumé, suggest five roles that would be a strong match right now — and explain in one line why each fits.",
+  },
+];
+
+// Resolve chip groups for the current route. The Resume Studio surface
+// surfaces *two* groups: This résumé (scoped) + Explore (global). All
+// other surfaces show only Explore — keeps the new structure invisible
+// where it doesn't apply.
+function chipGroupsForPath(
+  pathname: string | null,
+): { meta: SuggestionGroup; chips: SuggestionChip[] }[] {
   if (pathname?.startsWith("/app/studio/resume")) {
-    return SUGGESTIONS_RESUME_STUDIO;
+    return [
+      {
+        meta: {
+          id: "this_resume",
+          label: "This résumé",
+          scopeHint: "Scoped to your current version",
+        },
+        chips: CHIPS_THIS_RESUME,
+      },
+      {
+        meta: { id: "explore", label: "Explore" },
+        chips: CHIPS_EXPLORE_RESUME_STUDIO,
+      },
+    ];
   }
-  return SUGGESTIONS_DEFAULT;
+  return [
+    {
+      meta: { id: "explore", label: "Explore" },
+      chips: CHIPS_EXPLORE_DEFAULT,
+    },
+  ];
 }
 
 // Agent teams surfaced via "@" mentions — each is a LangGraph node name on
@@ -144,34 +221,15 @@ function CheckBadge() {
   );
 }
 
-function ThinkingDots() {
-  return (
-    <div style={{ display: "flex", gap: 4 }}>
-      {[0, 0.15, 0.3].map((d) => (
-        <span
-          key={d}
-          className="animate-bob"
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 999,
-            background: "#D6CEC0",
-            animationDelay: `${d}s`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function AgentCardRow({ id }: { id: string }) {
   const ev = useDock((s) => s.agentEvents[id]);
-  // Auto-expand while the agent is still thinking; collapse once it's done so
-  // a long history of finished steps doesn't dominate the scroll.
-  const [open, setOpen] = useState(ev?.state === "running");
-  useEffect(() => {
-    if (ev?.state === "running") setOpen(true);
-  }, [ev?.state]);
+  // Default collapsed in both states. The header alone (spinner + agent
+  // label + status chip) already tells the user "this agent is working /
+  // done"; the agent / started-at / status metadata inside the body is
+  // debug-grade and is only useful when they actively dig in. Earlier
+  // versions force-expanded while running, which produced a wall of
+  // mono-spaced metadata under every turn.
+  const [open, setOpen] = useState<boolean>(false);
   if (!ev) return null;
   const statusColor =
     ev.state === "done"
@@ -258,10 +316,70 @@ function AgentCardRow({ id }: { id: string }) {
   );
 }
 
-function MessageRow({ m }: { m: DockMessage }) {
+// AgentsGroupRow — reads the live AgentEvent records out of the dock
+// store for a single turn's ids, hands them to ReasoningSummary for the
+// outer collapse, and renders the existing AgentCardRow stack inside.
+// Kept here (instead of in chat/reasoning-summary.tsx) because it needs
+// to know the dock store layout. Future surfaces with their own store
+// can ship their own wrapper around the same ReasoningSummary view.
+function AgentsGroupRow({ ids }: { ids: string[] }) {
+  // Selector returns a fresh array each call — wrap with useShallow so
+  // zustand v5 + React 19's useSyncExternalStore treats element-equal
+  // arrays as the same snapshot. Without this we trip the
+  // "getSnapshot should be cached" infinite-loop guard.
+  const events = useDock(
+    useShallow((s): AgentEvent[] => {
+      const out: AgentEvent[] = [];
+      for (const id of ids) {
+        const ev = s.agentEvents[id];
+        if (ev) out.push(ev);
+      }
+      return out;
+    }),
+  );
+  if (events.length === 0) return null;
+
+  // One-step turn: the AgentCardRow already collapses by itself and
+  // shows the same label / status. Wrapping it in a second outer
+  // "Thinking · 2.3s · 1 step" header just duplicates information and
+  // doubles the chrome (we saw two chevrons stacked vertically). Skip
+  // the outer wrapper in that case and let the single card speak.
+  const inner = ids.map((id) => <AgentCardRow key={id} id={id} />);
+  return (
+    <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+      <div style={{ width: 28, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+        {events.length === 1 ? (
+          inner
+        ) : (
+          <ReasoningSummary events={events}>{inner}</ReasoningSummary>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MessageRow({
+  m,
+  isLastAssistant,
+  streaming,
+}: {
+  m: DockMessage;
+  // Whether this row is the most recent assistant bubble AND a stream is
+  // currently in flight — drives the trailing <StreamingCursor/>.
+  isLastAssistant: boolean;
+  streaming: boolean;
+}) {
   if (m.kind === "user") {
     return (
-      <div style={{ display: "flex", justifyContent: "flex-end", width: "100%" }}>
+      <div
+        // data-msg-id lets RecentRail.scrollToAnchor(id) find this row
+        // by attribute selector and call scrollIntoView. Mounted on the
+        // outer wrapper (rather than the inner bubble) so the highlight
+        // outline below covers the whole gutter on flash.
+        data-msg-id={m.id}
+        style={{ display: "flex", justifyContent: "flex-end", width: "100%" }}
+      >
         <div
           style={{
             maxWidth: 280,
@@ -283,6 +401,13 @@ function MessageRow({ m }: { m: DockMessage }) {
   }
 
   if (m.kind === "assistant") {
+    // Empty assistant bubble while a stream is in flight is just visual
+    // noise — the reasoning card right below already carries the "AI
+    // is working" semantics with its own pulse + ticking timer. We hide
+    // the bubble entirely until the first token actually lands, then
+    // the cursor takes over until done.
+    if (!m.text && isLastAssistant && streaming) return null;
+
     return (
       <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
         <div
@@ -306,16 +431,16 @@ function MessageRow({ m }: { m: DockMessage }) {
             color: "#2B2822",
             padding: "10px 14px",
             borderRadius: 14,
-            fontFamily: "Inter, system-ui, sans-serif",
-            fontSize: 13.5,
-            lineHeight: 1.55,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
             minWidth: 0,
             flex: 1,
           }}
         >
-          {m.text || "…"}
+          {m.text ? (
+            <MarkdownMessage content={m.text} />
+          ) : (
+            <span style={{ color: "#A39F99", fontFamily: "Inter, system-ui, sans-serif" }}>…</span>
+          )}
+          {isLastAssistant && streaming ? <StreamingCursor /> : null}
         </div>
       </div>
     );
@@ -323,18 +448,7 @@ function MessageRow({ m }: { m: DockMessage }) {
 
   if (m.kind === "agents") {
     if (!m.agents || m.agents.length === 0) return null;
-    return (
-      <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
-        <div style={{ width: 28, flexShrink: 0 }} />
-        <div
-          style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 0 }}
-        >
-          {m.agents.map((id) => (
-            <AgentCardRow key={id} id={id} />
-          ))}
-        </div>
-      </div>
-    );
+    return <AgentsGroupRow ids={m.agents} />;
   }
 
   if (m.kind === "result") {
@@ -376,8 +490,10 @@ function MessageRow({ m }: { m: DockMessage }) {
               <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: "#2B2822" }}>
                 {m.title}
               </div>
-              <div style={{ fontFamily: "Inter", fontSize: 12.5, color: "#6B6560", marginTop: 2 }}>
-                {m.sub}
+              <div style={{ marginTop: 2 }}>
+                {m.sub ? (
+                  <MarkdownMessage content={m.sub} variant="subline" />
+                ) : null}
               </div>
             </div>
           </div>
@@ -423,6 +539,134 @@ function dockShellStyle(width: number): React.CSSProperties {
   };
 }
 
+// Relative-time formatter for the RECENT rail. Resolution drops as
+// distance grows so we don't pretend to know seconds-old precision a
+// week later. Intl.RelativeTimeFormat would be fine, but writing it out
+// keeps the bundle small and dock typography consistent.
+function relativeTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const diff = Date.now() - t;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(t).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// RecentRail — the dock's history strip in "full" layout. Anchors-only
+// model (vantage-ui-mapping §1.2): each row is a past user prompt; click
+// scrolls the main chat list back to that turn and pulses a brief
+// highlight ring on the bubble. We never switch threads. Empty state
+// stays helpful instead of preachy.
+function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement | null> }) {
+  const anchors = useDock((s) => s.recentAnchors);
+  const [pulseId, setPulseId] = useState<string | null>(null);
+
+  const scrollToAnchor = (id: string) => {
+    const root = scrollRoot.current;
+    if (!root) return;
+    const target = root.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`);
+    if (!target) {
+      // Anchor exists on the server but not yet in the in-memory log
+      // (e.g. user just landed and their first scroll-back targets a
+      // turn from a previous session). Until we wire full history
+      // hydration, give a soft signal that we know the anchor exists
+      // but can't navigate to it.
+      setPulseId(`miss:${id}`);
+      window.setTimeout(() => setPulseId(null), 800);
+      return;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    setPulseId(id);
+    window.setTimeout(() => setPulseId(null), 1400);
+  };
+
+  // Mirror pulse → DOM via an inline outline. Keeps the highlight side
+  // effect colocated with the rail rather than threading another piece
+  // of state into MessageRow.
+  useEffect(() => {
+    if (!pulseId || pulseId.startsWith("miss:")) return;
+    const root = scrollRoot.current;
+    if (!root) return;
+    const target = root.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(pulseId)}"]`);
+    if (!target) return;
+    const prev = target.style.outline;
+    const prevOffset = target.style.outlineOffset;
+    const prevRadius = target.style.borderRadius;
+    target.style.outline = "2px solid #A66A00";
+    target.style.outlineOffset = "4px";
+    target.style.borderRadius = "14px";
+    return () => {
+      target.style.outline = prev;
+      target.style.outlineOffset = prevOffset;
+      target.style.borderRadius = prevRadius;
+    };
+  }, [pulseId, scrollRoot]);
+
+  if (anchors.length === 0) {
+    return (
+      <div className="ds-caption" style={{ padding: "12px 8px", color: "#A39F99" }}>
+        Your conversation lives here. Ask Vantage anything to start the log.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {anchors.map((a) => {
+        const isMiss = pulseId === `miss:${a.id}`;
+        return (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => scrollToAnchor(a.id)}
+            title={a.preview}
+            style={{
+              all: "unset",
+              cursor: "pointer",
+              display: "block",
+              padding: "8px 8px",
+              borderRadius: 8,
+              transition: "background .12s ease-out",
+              background: isMiss ? "#FCE9E1" : "transparent",
+            }}
+            onMouseEnter={(e) => {
+              if (!isMiss) e.currentTarget.style.background = "#F5EDE3";
+            }}
+            onMouseLeave={(e) => {
+              if (!isMiss) e.currentTarget.style.background = "transparent";
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 13,
+                lineHeight: 1.4,
+                color: "#2B2822",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {a.preview}
+            </div>
+            <div
+              className="ds-mono-9"
+              style={{ marginTop: 2, color: isMiss ? "#A23A2E" : "#A39F99" }}
+            >
+              {isMiss ? "older — open thread to see" : relativeTime(a.createdAt)}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AskVantageDock() {
   const state = useDock((s) => s.state);
   const width = useDock((s) => s.width);
@@ -435,18 +679,48 @@ export function AskVantageDock() {
   const toggleDock = useDock((s) => s.toggleDock);
   const hintedCollapse = useDock((s) => s.hintedCollapse);
 
-  // Pathname picks the suggestion set per §2.6: Resume Studio routes drop
-  // the "Sharpen my résumé" chip because the studio's own vibe panel owns
-  // that track.
+  // Pathname picks the chip groups per §2.6 (post-merger): on /app/studio/
+  // resume we show This-résumé + Explore; everywhere else just Explore.
+  // The old left-rail VibeChatPanel is gone — the dock is now the single
+  // conversation entry, and per-surface chip groups carry the scope.
   const pathname = usePathname();
-  const suggestions = useMemo(() => suggestionsForPath(pathname), [pathname]);
+  const chipGroups = useMemo(() => chipGroupsForPath(pathname), [pathname]);
 
   const currentUser = useVantage((s) => s.currentUser);
+  const currentResumeId = useVantage((s) => s.currentResumeId);
+  const parsedResume = useVantage((s) => s.parsedResume);
+  // Match the sidebar's precedence: prefer the name the user wrote on their
+  // résumé over the auth display_name. Auth display_name can be blank or
+  // backfilled from the email local-part (the source of QA bug #5: the
+  // avatar showed "N" because the user's email started with "n", not their
+  // real name "XIONG"). Sidebar + dock + greeting now agree.
   const firstName = useMemo(() => {
-    const n = currentUser?.displayName ?? "";
-    const first = n.split(/\s+/)[0] ?? "";
+    const resumeName = parsedResume?.basics?.name?.trim() ?? "";
+    const auth = currentUser?.displayName?.trim() ?? "";
+    const source = resumeName || auth;
+    const first = source.split(/\s+/)[0] ?? "";
     return first || "there";
-  }, [currentUser]);
+  }, [parsedResume, currentUser]);
+
+  // Surface + thread override for chips inside the "This résumé" group.
+  // Sending a scoped chip swaps the dock conversation onto the
+  // `resume_studio:{user_id}:{root_id}` thread so the resume_agent has the
+  // right per-branch checkpointer history. The dock's own ask_vantage
+  // thread continues to back every other interaction (free-text composer,
+  // Explore chips, agent-team mentions).
+  //
+  // We use currentResumeId as the root id stand-in until the store
+  // exposes a root pointer; for the Master version that's already the
+  // master id, for tailored variants it's the variant's id — slightly
+  // looser than the studio's own root resolution, but the
+  // post-merger UX intentionally treats "this résumé" as "whatever is
+  // on screen right now". The studio's branch-vs-master nuance survives
+  // in §2.6's docs and can be tightened later by threading the actual
+  // root via the store.
+  const resumeStudioThread = useMemo(() => {
+    if (!currentUser || !currentResumeId) return null;
+    return `resume_studio:${currentUser.id}:${currentResumeId}`;
+  }, [currentUser, currentResumeId]);
 
   const attachments = useDock((s) => s.attachments);
 
@@ -513,7 +787,17 @@ export function AskVantageDock() {
     // Empty body but with attachments? Use a friendly default verb so the
     // agent has something to reason about.
     const finalPrompt = text || "Please review the attached file(s).";
-    void sendAsk(finalPrompt, attachments);
+    // On Resume Studio with a résumé loaded, free-text composer turns join
+    // the same resume_studio thread the chips use. That's what makes the
+    // dock the *single* conversation entry: clicking "Find my résumé's 3
+    // weakest spots" and then typing "now redo the second one as STAR
+    // format" must land in the same conversation — anything else and we
+    // re-introduce the dual-input problem the merger was supposed to fix.
+    const sendOpts =
+      pathname?.startsWith("/app/studio/resume") && resumeStudioThread
+        ? { surface: "resume_studio" as const, threadIdOverride: resumeStudioThread }
+        : undefined;
+    void sendAsk(finalPrompt, attachments, sendOpts);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -528,7 +812,9 @@ export function AskVantageDock() {
       <button
         onClick={toggleDock}
         data-tour="dock"
+        type="button"
         title="Open Ask Vantage"
+        aria-label="Open Ask Vantage"
         style={{
           position: "fixed",
           bottom: 26,
@@ -640,7 +926,18 @@ export function AskVantageDock() {
           >
             Ask Vantage
           </div>
-          <div className="ds-mono-9">YOUR AGENT · ALWAYS HERE</div>
+          {/* Scope strip: on Resume Studio with a résumé loaded, we make it
+              clear which conversation track is live so the chip-vs-composer
+              behavior is obvious. Everywhere else the original "always
+              here" tagline still carries the dock's persistent-companion
+              identity. */}
+          {pathname?.startsWith("/app/studio/resume") && resumeStudioThread ? (
+            <div className="ds-mono-9" style={{ color: "#5D3000" }}>
+              TALKING ABOUT THIS RÉSUMÉ
+            </div>
+          ) : (
+            <div className="ds-mono-9">YOUR AGENT · ALWAYS HERE</div>
+          )}
         </div>
         <button
           onClick={toggleFull}
@@ -698,9 +995,7 @@ export function AskVantageDock() {
                 </svg>
               </button>
             </div>
-            <div className="ds-caption" style={{ padding: "12px 8px", color: "#A39F99" }}>
-              Your conversation lives here. Open it again from any tab.
-            </div>
+            <RecentRail scrollRoot={scrollRef} />
           </aside>
         )}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -720,31 +1015,37 @@ export function AskVantageDock() {
               <Greeting
                 firstName={firstName}
                 streaming={streaming}
-                suggestions={suggestions}
+                chipGroups={chipGroups}
+                resumeStudioThread={resumeStudioThread}
               />
             )}
-            {messages.map((m) => (
-              <MessageRow key={m.id} m={m} />
-            ))}
-            {streaming && (
-              <div style={{ display: "flex", gap: 11, alignItems: "center" }}>
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 8,
-                    background: "#5D3000",
-                    flexShrink: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <VantageMark />
-                </div>
-                <ThinkingDots />
-              </div>
-            )}
+            {(() => {
+              // Identify the most recent assistant bubble so only it
+              // gets the trailing <StreamingCursor/>. Doing the scan
+              // once outside the map keeps it O(n) and avoids passing
+              // a "last index" through every row.
+              let lastAssistantIdx = -1;
+              for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].kind === "assistant") {
+                  lastAssistantIdx = i;
+                  break;
+                }
+              }
+              return messages.map((m, idx) => (
+                <MessageRow
+                  key={m.id}
+                  m={m}
+                  isLastAssistant={idx === lastAssistantIdx}
+                  streaming={streaming}
+                />
+              ));
+            })()}
+            {/* Previously a bottom-of-list "VantageMark + ThinkingDots"
+                bubble used to signal streaming. With the per-bubble
+                <StreamingCursor/> + the ReasoningSummary thinking pulse,
+                that third indicator was redundant — three things saying
+                "I'm thinking" at once. Kept the comment so the next
+                person doesn't reintroduce it. */}
           </div>
           <Composer
             input={input}
@@ -762,12 +1063,21 @@ export function AskVantageDock() {
 function Greeting({
   firstName,
   streaming,
-  suggestions,
+  chipGroups,
+  resumeStudioThread,
 }: {
   firstName: string;
   streaming: boolean;
-  suggestions: readonly string[];
+  chipGroups: { meta: SuggestionGroup; chips: SuggestionChip[] }[];
+  // When non-null and a "This résumé" chip fires, the SSE turn goes to
+  // this thread instead of the dock's lifetime ask_vantage thread. Null
+  // on every non-Resume route or when no résumé is selected yet.
+  resumeStudioThread: string | null;
 }) {
+  // Single source of truth for date + greeting: greetingFor() and the same
+  // Intl.DateTimeFormat call as the Today header so the dock can never
+  // disagree with the main view (bug #1 from the QA pass — dock said "Good
+  // morning" while Today said "Good evening" at the same moment).
   const today = useMemo(() => {
     const d = new Date();
     return d
@@ -778,72 +1088,136 @@ function Greeting({
       })
       .toUpperCase();
   }, []);
+  const greeting = useMemo(() => greetingFor(), []);
+  const who = firstName?.trim() || "there";
   return (
     <div className="animate-fade-up">
       <div className="ds-mono-10" style={{ marginBottom: 10 }}>TODAY · {today}</div>
       <h1 className="ds-h2" style={{ margin: "0 0 7px", color: "#2B2822" }}>
-        Good morning, {firstName}.
+        {greeting}, {who}.
       </h1>
       <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
         What should we work on? Tap a card to send it instantly — or write your
         own.
       </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {suggestions.map((sug) => (
-          <button
-            key={sug}
-            onClick={() => {
-              if (streaming) return;
-              // Quick-prompt chips bypass the composer and fire straight at
-              // the coordinator — per current UX, the chip IS the action,
-              // not a draft seed.
-              void sendAsk(sug);
-            }}
-            disabled={streaming}
-            className="ds-card"
-            style={{
-              cursor: streaming ? "not-allowed" : "pointer",
-              padding: "12px 14px",
-              display: "flex",
-              alignItems: "center",
-              gap: 11,
-              transition: "border-color .15s, transform .15s",
-              textAlign: "left",
-              width: "100%",
-              opacity: streaming ? 0.6 : 1,
-            }}
-            onMouseEnter={(e) => {
-              if (streaming) return;
-              e.currentTarget.style.borderColor = "#5D3000";
-              e.currentTarget.style.transform = "translateY(-1px)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = "#EDE8DF";
-              e.currentTarget.style.transform = "translateY(0)";
-            }}
+
+      {chipGroups.map((group, gi) => {
+        const isScoped = group.meta.id === "this_resume";
+        // Disable scoped chips when the thread isn't ready yet (no user or
+        // no résumé selected). Keeps the chip visible so the layout doesn't
+        // jump, but prevents a click from firing into ask_vantage by
+        // accident.
+        const scopedDisabled = isScoped && resumeStudioThread == null;
+        return (
+          <div
+            key={group.meta.id}
+            // Top margin only on subsequent groups; first group flows under
+            // the greeting paragraph's spacing.
+            style={{ marginTop: gi === 0 ? 0 : 22 }}
           >
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                background: "#F5EDE3",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
-            >
-              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#5D3000" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
-              </svg>
+            {/* Group header — only render when there's more than one group.
+                On non-Resume routes we have a single "Explore" group; a
+                heading would just be noise. */}
+            {chipGroups.length > 1 ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 9,
+                  marginBottom: 10,
+                }}
+              >
+                <span
+                  className="ds-mono-10"
+                  style={{ color: "#5D3000" }}
+                >
+                  {group.meta.label.toUpperCase()}
+                </span>
+                {group.meta.scopeHint ? (
+                  <span
+                    style={{
+                      fontFamily: "Inter, system-ui, sans-serif",
+                      fontSize: 11.5,
+                      color: "#A39F99",
+                    }}
+                  >
+                    {group.meta.scopeHint}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              {group.chips.map((chip) => {
+                const chipDisabled = streaming || scopedDisabled;
+                const sendOpts = isScoped && resumeStudioThread
+                  ? { surface: "resume_studio" as const, threadIdOverride: resumeStudioThread }
+                  : undefined;
+                return (
+                  <button
+                    key={`${group.meta.id}:${chip.display}`}
+                    onClick={() => {
+                      if (chipDisabled) return;
+                      // Quick-prompt chips bypass the composer and fire
+                      // straight at the coordinator. Scoped chips ride the
+                      // resume_studio thread; the rest stay on ask_vantage.
+                      void sendAsk(chip.prompt, [], sendOpts);
+                    }}
+                    disabled={chipDisabled}
+                    className="ds-card"
+                    title={
+                      scopedDisabled
+                        ? "Open a résumé first — these actions need one to scope to."
+                        : chip.prompt !== chip.display
+                          ? chip.prompt
+                          : undefined
+                    }
+                    style={{
+                      cursor: chipDisabled ? "not-allowed" : "pointer",
+                      padding: "12px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 11,
+                      transition: "border-color .15s, transform .15s",
+                      textAlign: "left",
+                      width: "100%",
+                      opacity: chipDisabled ? 0.6 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (chipDisabled) return;
+                      e.currentTarget.style.borderColor = "#5D3000";
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = "#EDE8DF";
+                      e.currentTarget.style.transform = "translateY(0)";
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 8,
+                        background: "#F5EDE3",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#5D3000" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+                      </svg>
+                    </div>
+                    <span style={{ fontFamily: "Inter", fontWeight: 500, fontSize: 13.5, color: "#2B2822" }}>
+                      {chip.display}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <span style={{ fontFamily: "Inter", fontWeight: 500, fontSize: 13.5, color: "#2B2822" }}>
-              {sug}
-            </span>
-          </button>
-        ))}
-      </div>
+          </div>
+        );
+      })}
 
       <div className="ds-mono-10" style={{ margin: "28px 0 10px", color: "#A39F99" }}>
         AGENT TEAMS

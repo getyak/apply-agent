@@ -348,11 +348,50 @@ jobs:
         working-directory: apps/extension
         run: bun run build
 
+  # ---- TTAR gate ----
+  # Drives the north-star metric (docs/architecture/delivery-loop-plan.md § 1):
+  # Time-To-Application-Ready. Hermetic — uses JD fixtures + LLM stubs so we
+  # don't need OPENROUTER_API_KEY or PG/Redis to gate every PR. Asserts:
+  # success ≥ 85%, fabrication = 0, parse_jd_success ≥ 90%.
+  ttar-gate:
+    name: TTAR gate (delivery loop)
+    needs: changes
+    if: needs.changes.outputs.agents == 'true' || needs.changes.outputs.eval == 'true' || needs.changes.outputs.prompts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: agents/uv.lock
+
+      - name: Setup Python
+        run: uv python install 3.12
+        working-directory: agents
+
+      - name: Install (dev extras include pyyaml for run.py)
+        working-directory: agents
+        run: uv sync --frozen --all-extras
+
+      - name: Run TTAR gate
+        run: uv run --project agents python eval/delivery-loop/run.py
+
+      - name: Upload TTAR report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttar-report-${{ github.run_id }}
+          path: /tmp/ttar-report.json
+          retention-days: 30
+
   # ---- 汇总 gate（branch protection 只需要 require 这一个 check）----
   ci-success:
     name: CI Success
     if: always()
-    needs: [api, agents, web, extension]
+    needs: [api, agents, web, extension, ttar-gate]
     runs-on: ubuntu-latest
     steps:
       - name: Verify
