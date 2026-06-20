@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { useVantage } from "@/lib/store";
+import { useDock } from "@/lib/ask-vantage-store";
 import { initialsOf } from "@/lib/dates";
 import { statusVisual } from "@/lib/status";
 
@@ -50,7 +51,22 @@ export function Sidebar() {
   // Collapsed = 74px icon-only rail. Width persisted to localStorage so the
   // user's preference survives reloads. Default to expanded so first-time
   // users see the full nav vocabulary.
-  const [collapsed, setCollapsed] = useState(false);
+  // `userCollapsed` is the user's *saved* preference (the toggle button
+  // reads and writes this). `collapsed` is the effective render state —
+  // see N3 below for why the two diverge during Mock live.
+  const [userCollapsed, setUserCollapsed] = useState(false);
+  // N3 (round-2): mirror the dock's `hintedCollapse` signal — when a Mock
+  // live session asks for an immersive stage (vantage-ui-mapping.md §3.6
+  // promises *both* dock → launcher *and* sidebar → 74px rail), the
+  // sidebar collapses too. Before round-2 only the dock listened, so the
+  // left rail stayed at 248px and the immersive promise was half-broken.
+  // We deliberately *don't* persist this to localStorage — it's an
+  // ephemeral overlay-state override, not the user's preference. When the
+  // mock screen unmounts, layout.tsx clears `hintedCollapse` and the
+  // effective `collapsed` boolean below resolves back to the user's saved
+  // value automatically.
+  const hintedCollapse = useDock((s) => s.hintedCollapse);
+  const collapsed = userCollapsed || hintedCollapse;
 
   useEffect(() => {
     if (!currentUser) loadCurrentUser();
@@ -60,7 +76,7 @@ export function Sidebar() {
       // canonical "sync external system → state" effect; the cascading-render
       // lint is a false positive here because this only fires once.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (raw === "1") setCollapsed(true);
+      if (raw === "1") setUserCollapsed(true);
       // Mobile fallback: under ~lg the 3-column desktop layout becomes
       // unusable (sidebar + main + dock fight for 390px of width — QA bug
       // #8). Force the sidebar into icon-only mode at narrow widths and
@@ -68,7 +84,7 @@ export function Sidebar() {
       // desktop because that branch runs first.
       const mql = window.matchMedia("(max-width: 1023px)");
       const apply = () => {
-        if (mql.matches) setCollapsed(true);
+        if (mql.matches) setUserCollapsed(true);
       };
       apply();
       mql.addEventListener("change", apply);
@@ -78,7 +94,7 @@ export function Sidebar() {
   }, []);
 
   const toggleCollapsed = () => {
-    setCollapsed((v) => {
+    setUserCollapsed((v) => {
       const next = !v;
       if (typeof window !== "undefined")
         window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");

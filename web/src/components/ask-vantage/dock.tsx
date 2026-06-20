@@ -1001,6 +1001,11 @@ export function AskVantageDock() {
   const currentUser = useVantage((s) => s.currentUser);
   const currentResumeId = useVantage((s) => s.currentResumeId);
   const parsedResume = useVantage((s) => s.parsedResume);
+  // N1 (round-2): the dock is the always-on surface, so it's the natural
+  // place to confirm "your résumé upload is being processed" without
+  // pulling the user back to the onboarding screen. Read the workspace
+  // store's async parse state and forward it to the Greeting subcomponent.
+  const parseJobStatus = useVantage((s) => s.parseJobStatus);
   // Match the sidebar's precedence: prefer the name the user wrote on their
   // résumé over the auth display_name. Auth display_name can be blank or
   // backfilled from the email local-part (the source of QA bug #5: the
@@ -1354,6 +1359,7 @@ export function AskVantageDock() {
                 streaming={streaming}
                 chipGroups={chipGroups}
                 resumeStudioThread={resumeStudioThread}
+                parseJobStatus={parseJobStatus}
               />
             )}
             {(() => {
@@ -1402,6 +1408,7 @@ function Greeting({
   streaming,
   chipGroups,
   resumeStudioThread,
+  parseJobStatus,
 }: {
   firstName: string;
   streaming: boolean;
@@ -1410,6 +1417,10 @@ function Greeting({
   // this thread instead of the dock's lifetime ask_vantage thread. Null
   // on every non-Resume route or when no résumé is selected yet.
   resumeStudioThread: string | null;
+  // N1 (round-2): mirrors workspace store state so the dock greeting
+  // paragraph can confirm an upload in flight, surface a parse failure,
+  // or fall back to the normal "what should we work on" copy.
+  parseJobStatus: "idle" | "running" | "done" | "failed";
 }) {
   // Single source of truth for date + greeting: greetingFor() and the same
   // Intl.DateTimeFormat call as the Today header so the dock can never
@@ -1433,10 +1444,29 @@ function Greeting({
       <h1 className="ds-h2" style={{ margin: "0 0 7px", color: "#2B2822" }}>
         {greeting}, {who}.
       </h1>
-      <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
-        What should we work on? Tap a card to send it instantly — or write your
-        own.
-      </p>
+      {parseJobStatus === "running" ? (
+        // N1 (round-2): when an async résumé parse is in flight, the dock
+        // greeting paragraph is the single quiet place we can confirm the
+        // upload was accepted and the system is working on it. Otherwise a
+        // user who just hit "Upload" sees nothing change in the dock and
+        // wonders if the file went anywhere. Once status flips to "done" or
+        // "failed" the onboarding banner takes over the loud part — the dock
+        // paragraph returns to its normal "What should we work on" copy.
+        <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
+          Reading your résumé in the background — keep going, I&apos;ll surface
+          weak spots and matches as soon as it&apos;s ready.
+        </p>
+      ) : parseJobStatus === "failed" ? (
+        <p className="ds-body-sm" style={{ color: "#A66A00", margin: "0 0 20px" }}>
+          That parse didn&apos;t finish — re-upload or paste the text and I&apos;ll
+          try again.
+        </p>
+      ) : (
+        <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
+          What should we work on? Tap a card to send it instantly — or write
+          your own.
+        </p>
+      )}
 
       {chipGroups.map((group, gi) => {
         const isScoped = group.meta.id === "this_resume";

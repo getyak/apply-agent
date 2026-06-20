@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
 import { statusVisual, type AppColumn } from "@/lib/status";
-import { Sparkles, Inbox, Compass, ArrowRight, X } from "lucide-react";
+import { Sparkles, Inbox, Compass, ArrowRight, X, ShieldCheck } from "lucide-react";
 
 /** Row shape rendered in any column. Unifies the demo "applied" entries (kept
  *  for the empty-state seed during dev) and real API applications under a
@@ -478,6 +478,27 @@ export function TrackerView() {
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<AppColumn | null>(null);
+  // N4 (round-2): dismissable info card explaining the client-side
+  // delivery contract (vision.md + client-side-delivery.md §2). New users
+  // land on this page with no understanding of where the "submit" step
+  // actually happens — they reasonably assume Relay submits on their
+  // behalf, then get confused when nothing moves. This card sets the
+  // expectation up front. Persist dismissal so we don't nag returning
+  // users; default to shown so the first visit always gets the brief.
+  const DELIVERY_INFO_KEY = "vantage.applications.deliveryInfoSeen";
+  const [showDeliveryInfo, setShowDeliveryInfo] = useState(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.localStorage.getItem(DELIVERY_INFO_KEY) === "1") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowDeliveryInfo(false);
+    }
+  }, []);
+  const dismissDeliveryInfo = () => {
+    setShowDeliveryInfo(false);
+    if (typeof window !== "undefined")
+      window.localStorage.setItem(DELIVERY_INFO_KEY, "1");
+  };
 
   useEffect(() => {
     loadApplications();
@@ -573,6 +594,34 @@ export function TrackerView() {
               : `${totalReal} ${totalReal === 1 ? "application" : "applications"} tracked`}
         </span>
       </div>
+
+      {showDeliveryInfo && (
+        <div className="mb-6 flex items-start gap-3 bg-white border border-border rounded-[13px] px-4 py-4">
+          <div className="w-[34px] h-[34px] rounded-[9px] bg-cream border border-cream-border flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-[16px] h-[16px] text-brown" strokeWidth={1.7} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-body font-semibold text-[13.5px] text-ink">
+              You submit · we prepare
+            </div>
+            <div className="font-body text-[12.5px] text-ink-light mt-[3px] leading-snug">
+              Vantage tailors your résumé, drafts the cover letter, and pre-fills
+              the form — but the final <strong className="font-semibold">Submit</strong>{" "}
+              click happens in your browser, under your login, on your IP.
+              Zero risk of bot-detection, no stored ATS passwords.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={dismissDeliveryInfo}
+            title="Got it — don't show again"
+            aria-label="Dismiss explanation"
+            className="shrink-0 cursor-pointer border-none bg-transparent text-ink-muted hover:text-ink p-1 rounded-[6px]"
+          >
+            <X className="w-[14px] h-[14px]" strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
 
       {hasInterviewing && (
         <div className="mb-6 flex items-center gap-3 bg-gold-bg border border-cream-border rounded-[13px] px-4 py-3">
