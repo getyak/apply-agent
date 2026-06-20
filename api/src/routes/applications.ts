@@ -135,7 +135,7 @@ app.get("/", async (c) => {
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset],
   );
-  return c.json(paginated(result.rows, total, { limit, offset }));
+  return c.json(paginated(result.rows.map(withDerived), total, { limit, offset }));
 });
 
 app.get("/:id", async (c) => {
@@ -149,7 +149,7 @@ app.get("/:id", async (c) => {
      WHERE ad.id = $1 AND ad.user_id = $2`,
     [id, userId],
   );
-  return c.json({ application: result.rows[0] });
+  return c.json({ application: withDerived(result.rows[0]) });
 });
 
 app.patch("/:id", validateBody(UpdateApplicationSchema), async (c) => {
@@ -191,7 +191,87 @@ app.patch("/:id", validateBody(UpdateApplicationSchema), async (c) => {
      RETURNING *`,
     params,
   );
-  return c.json({ application: result.rows[0] });
+  return c.json({ application: withDerived(result.rows[0]) });
 });
+
+// ─── Next-action derivation (P3.2) ─────────────────────────────────────
+//
+// Until the reconcile cron lands (Phase 3 follow-up) we derive a
+// next_action client-side-of-the-API from the row's existing state. The
+// real persisted column stays NULL until cron writes it; this derived
+// pair is added alongside under *_derived keys so the front-end can
+// prefer DB values when present and fall back to live derivation.
+
+type DerivedNextAction =
+  | "prep"
+  | "submit"
+  | "follow_up"
+  | "interview"
+  | "close_loop"
+  | null;
+
+interface DerivedPair {
+  next_action_derived: DerivedNextAction;
+  next_action_due_derived: string | null;
+}
+
+function deriveNextAction(row: {
+  status?: string | null;
+  submitted_at?: string | Date | null;
+  interview_date?: string | Date | null;
+  outcome?: string | null;
+}): DerivedPair {
+  const now = Date.now();
+  const status = row.status ?? "";
+
+  // 1. Outcome present (rejected / offer / withdrawn) — close the loop.
+  // This must come BEFORE the interview check: a rejected row with a
+  // historical interview_date is a closure prompt, not a "go practise"
+  // prompt. (Stale interview_date on a rejected row happens whenever
+  // the user logs an outcome after the interview already happened.)
+  if (status === "rejected" || status === "offer" || row.outcome) {
+    return { next_action_derived: "close_loop", next_action_due_derived: null };
+  }
+
+  // 2. Interview imminent — overrides remaining states.
+  if (row.interview_date) {
+    const due = new Date(row.interview_date).getTime();
+    const days = Math.floor((due - now) / (1000 * 60 * 60 * 24));
+    if (days >= 0 && days <= 7) {
+      return {
+        next_action_derived: "interview",
+        next_action_due_derived: new Date(row.interview_date).toISOString(),
+      };
+    }
+  }
+
+  // 3. Submitted ≥ 7 days ago — nudge follow-up.
+  if (row.submitted_at) {
+    const submitted = new Date(row.submitted_at).getTime();
+    const ageDays = Math.floor((now - submitted) / (1000 * 60 * 60 * 24));
+    if (ageDays >= 7) {
+      const due = new Date(submitted + 7 * 24 * 60 * 60 * 1000).toISOString();
+      return { next_action_derived: "follow_up", next_action_due_derived: due };
+    }
+  }
+
+  // 4. Draft / review states.
+  if (status === "review") {
+    return { next_action_derived: "submit", next_action_due_derived: null };
+  }
+  if (status === "draft") {
+    return { next_action_derived: "prep", next_action_due_derived: null };
+  }
+
+  return { next_action_derived: null, next_action_due_derived: null };
+}
+
+function withDerived<T extends Parameters<typeof deriveNextAction>[0]>(
+  row: T,
+): T & DerivedPair {
+  return { ...row, ...deriveNextAction(row) };
+}
+
+export { deriveNextAction, withDerived };
 
 export default app;

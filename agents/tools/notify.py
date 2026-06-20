@@ -38,14 +38,21 @@ async def write_user_memory(user_id: UUID, key: str, value: dict[str, Any]) -> b
 @mark_notify
 async def save_resume_version(
     user_id: UUID,
-    version: int,
     content_json: dict[str, Any],
     parent_version_id: UUID | None,
     tailored_for_job: UUID | None,
     is_base: bool = False,
-) -> UUID:
-    """INSERT into resumes table; returns new row id. Optimistic locking handled
-    by UNIQUE(user_id, version) — caller must compute next version."""
+    version: int = 0,
+) -> tuple[UUID, int]:
+    """INSERT into resumes; returns (new_row_id, assigned_version).
+
+    Migration 016 installs a BEFORE INSERT trigger that assigns the next
+    per-user version under an advisory lock when ``version`` is 0 or NULL.
+    Callers should leave ``version`` at its default; it stays a parameter
+    for the rare case where a specific version must be forced (e.g. a
+    backfill script). The trigger keeps the UNIQUE(user_id, version)
+    constraint safe under concurrent writers — no more 23505 races.
+    """
     import uuid as _uuid
 
     dsn = os.environ["RELAY_PG_DSN"]  # required for writes
@@ -54,6 +61,7 @@ async def save_resume_version(
         INSERT INTO resumes (
             id, user_id, version, content, is_base, tailored_for_job, parent_version
         ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING version
     """
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         async with conn.cursor() as cur:
@@ -69,5 +77,7 @@ async def save_resume_version(
                     str(parent_version_id) if parent_version_id else None,
                 ),
             )
+            row = await cur.fetchone()
         await conn.commit()
-    return new_id
+    assigned_version = int(row[0]) if row else version
+    return new_id, assigned_version

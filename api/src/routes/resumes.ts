@@ -56,17 +56,13 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const { content, isBase } = c.get("validatedBody") as CreateResume;
 
-  const versionResult = await query(
-    "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM resumes WHERE user_id = $1",
-    [userId],
-  );
-  const nextVersion = versionResult.rows[0].next_version;
-
+  // version=0 → migration 016's BEFORE INSERT trigger assigns the next
+  // per-user version under an advisory lock. No app-level MAX+1 race.
   const result = await query(
     `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-     VALUES ($1, $2, $3, $4, NOW())
+     VALUES ($1, $2, 0, $3, NOW())
      RETURNING id, user_id, content, version, is_base, created_at`,
-    [userId, JSON.stringify(content), nextVersion, isBase ?? true],
+    [userId, JSON.stringify(content), isBase ?? true],
   );
   return c.json({ resume: result.rows[0] }, 201);
 });
@@ -127,10 +123,6 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
  * Storage shape: { raw, parsed, warnings, parsedAt }. The raw text is the spine
  * — if AI ever choked we can re-parse later without asking the user to re-upload.
  */
-// PG unique-violation SQLSTATE. Surfaced when two concurrent parse jobs both
-// read the same MAX(version) and try to write version+1.
-const PG_UNIQUE_VIOLATION = "23505";
-
 async function saveBaseResume(
   userId: string,
   parsed: ParseResult,
@@ -174,52 +166,32 @@ async function saveBaseResume(
     ...(source ? { source } : {}),
   };
 
-  // Re-upload: bump the base row to a NEW per-user version. Naively setting
-  // `version = version + 1` collides with the UNIQUE(user_id, version) when
-  // tailored variants already occupy higher versions (e.g. base v1 + tailored
-  // v2 → "+1" tries to write v2 again). The MAX(version)+1 form is the same
-  // pattern POST /api/resumes uses. Two concurrent parse jobs reading the
-  // same MAX still race, so we retry once on unique-violation — by then the
-  // other job has committed and the next MAX(version)+1 is fresh.
-  const ATTEMPTS = 3;
-  for (let i = 0; i < ATTEMPTS; i++) {
-    try {
-      const updateResult = await query(
-        `UPDATE resumes
-           SET content = $1,
-               version = (
-                 SELECT COALESCE(MAX(version), 0) + 1
-                   FROM resumes
-                  WHERE user_id = $2
-               )
-           WHERE user_id = $2 AND is_base = true
-           RETURNING id, user_id, content, version, is_base, created_at`,
-        [JSON.stringify(content), userId],
-      );
-      if (updateResult.rows.length > 0) return updateResult.rows[0];
+  // Re-upload semantics: a re-parse replaces the user's base row IN PLACE —
+  // we don't bump version. Only JD-tailored variants and user-driven edits
+  // (PUT /:id) create new versions; "user re-uploads the same PDF" is a
+  // refresh of the same v1, not a v2.
+  //
+  // Two writers serialise cleanly: the UPDATE locks the base row, and even
+  // if no base exists yet, the INSERT path passes version=0 so migration
+  // 016's trigger assigns a fresh version under a per-user advisory lock.
+  // The old MAX(version)+1 race is gone on both branches.
+  const updateResult = await query(
+    `UPDATE resumes
+       SET content = $1
+     WHERE user_id = $2 AND is_base = true
+     RETURNING id, user_id, content, version, is_base, created_at`,
+    [JSON.stringify(content), userId],
+  );
+  if (updateResult.rows.length > 0) return updateResult.rows[0];
 
-      // No base yet — create version 1 (or MAX+1 if tailored rows pre-existed).
-      const insert = await query(
-        `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-         VALUES (
-           $1,
-           $2,
-           (SELECT COALESCE(MAX(version), 0) + 1 FROM resumes WHERE user_id = $1),
-           true,
-           NOW()
-         )
-         RETURNING id, user_id, content, version, is_base, created_at`,
-        [userId, JSON.stringify(content)],
-      );
-      return insert.rows[0];
-    } catch (err) {
-      const code = (err as { code?: string })?.code;
-      if (code === PG_UNIQUE_VIOLATION && i < ATTEMPTS - 1) continue;
-      throw err;
-    }
-  }
-  // Unreachable — the loop either returns or rethrows.
-  throw new Error("saveBaseResume: exhausted retries without resolution");
+  // First-time upload for this user — let the trigger assign the version.
+  const insert = await query(
+    `INSERT INTO resumes (user_id, content, version, is_base, created_at)
+     VALUES ($1, $2, 0, true, NOW())
+     RETURNING id, user_id, content, version, is_base, created_at`,
+    [userId, JSON.stringify(content)],
+  );
+  return insert.rows[0];
 }
 
 /** Shape returned to the client when a parse job finishes. */

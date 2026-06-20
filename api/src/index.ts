@@ -20,6 +20,7 @@ import fileRoutes from "./routes/files";
 import healthRoutes from "./routes/health";
 import userRoutes from "./routes/users";
 import askRoutes from "./routes/ask";
+import todayRoutes from "./routes/today";
 
 const app = new Hono<AppEnv>();
 
@@ -43,6 +44,7 @@ app.route("/api/applications", applicationRoutes);
 app.route("/api/interviews", interviewRoutes);
 app.route("/api/chat", chatRoutes);
 app.route("/api/trends", trendRoutes);
+app.route("/api/today", todayRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/users", userRoutes);
 // Ask Vantage SSE relay → Python LangGraph host. Single mount-point;

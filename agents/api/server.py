@@ -201,21 +201,16 @@ async def resume_upload(payload: ResumeUploadPayload, user_id: UserDep) -> dict[
 
     from agents.tools.notify import save_resume_version
 
-    # Compute next version number for this user.
-    rows = await pg_query(
-        "SELECT COALESCE(MAX(version), 0) AS v FROM resumes WHERE user_id = %s",
-        (str(user_id),),
-    )
-    next_v = int(rows[0]["v"]) + 1 if rows else 1
-    new_id = await save_resume_version(
+    # version is assigned atomically by migration 016's trigger — no
+    # app-level SELECT MAX(version)+1 race.
+    new_id, assigned_v = await save_resume_version(
         user_id=user_id,
-        version=next_v,
         content_json=parsed,
         parent_version_id=None,
         tailored_for_job=None,
         is_base=True,
     )
-    return {"resume_id": str(new_id), "version": next_v, "parsed": parsed}
+    return {"resume_id": str(new_id), "version": assigned_v, "parsed": parsed}
 
 
 class ResumeCustomizePayload(BaseModel):
