@@ -304,9 +304,37 @@ export function TodayView() {
         </div>
       )}
       {queueLoaded && actionQueue.length === 0 && (
-        <div className="mb-[34px] font-body text-[13px] text-ink-muted">
-          Nothing on the action queue yet — applications, interviews and learn signals will surface here automatically.
-        </div>
+        // TODAY2 (round-12): the round-12 onboarding audit found that a
+        // brand-new account hit /app/today and saw a passive line —
+        // "applications, interviews and learn signals will surface here
+        // automatically" — which reads as "the service is broken" when
+        // the queue is empty *because the user hasn't uploaded anything
+        // yet*. Branch the copy on whether we know about a résumé: if
+        // we don't, surface a single concrete next step; if we do, the
+        // original passive line still applies (the queue really will
+        // populate as the user starts applying / scheduling interviews).
+        !parsedResume ? (
+          <div className="mb-[34px] flex items-start gap-3 rounded-[14px] border border-cream-border bg-cream px-[18px] py-[14px]">
+            <div className="font-body text-[13.5px] text-ink-dark flex-1">
+              <span className="font-semibold">Start with your résumé.</span>{" "}
+              Vantage builds the queue once it has something to match
+              against — upload or paste your résumé and matches, prep
+              actions, and skill signals start showing up here.
+            </div>
+            <button
+              type="button"
+              onClick={() => router.push("/app/studio/resume")}
+              className="font-body text-[13px] font-semibold text-paper bg-brown rounded-[8px] px-3 py-2 hover:bg-brown-light transition-colors whitespace-nowrap"
+            >
+              Upload résumé
+            </button>
+          </div>
+        ) : (
+          <div className="mb-[34px] font-body text-[13px] text-ink-muted">
+            Nothing on the action queue yet — applications, interviews
+            and learn signals will surface here automatically.
+          </div>
+        )
       )}
 
       {apiJobs.length > 0 && (

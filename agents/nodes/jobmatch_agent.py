@@ -489,6 +489,30 @@ def _empty_parsed() -> dict[str, Any]:
     }
 
 
+# JD_H4 (round-12): defensive bounds on salary values. The round-12
+# jobmatch-hallucination audit pointed out that _normalize_parsed used
+# to pass through whatever the LLM emitted — including negative
+# salaries, ones large enough to make downstream matching pointless
+# (10^10), and swapped min/max where the LLM put the bigger number
+# first. None of these are honest extractions, so dropping them to
+# None is the safer signal: "we couldn't read a salary here", not "this
+# job pays −$50,000".
+_JD_SALARY_MIN_BOUND = 0
+_JD_SALARY_MAX_BOUND = 5_000_000  # well above any honest annual figure
+
+
+def _sanitize_salary(val: Any) -> int | None:
+    if val is None:
+        return None
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return None
+    if n < _JD_SALARY_MIN_BOUND or n > _JD_SALARY_MAX_BOUND:
+        return None
+    return n
+
+
 def _normalize_parsed(parsed: dict[str, Any]) -> dict[str, Any]:
     """Ensure every required key exists with the right type."""
     base = _empty_parsed()
@@ -500,6 +524,16 @@ def _normalize_parsed(parsed: dict[str, Any]) -> dict[str, Any]:
         if isinstance(default, list) and not isinstance(val, list):
             val = []
         out[key] = val
+    # JD_H4: sanitise numeric fields after the type/key reconciliation
+    # above so the rest of the loop stays declarative.
+    smin = _sanitize_salary(out.get("salary_min"))
+    smax = _sanitize_salary(out.get("salary_max"))
+    if smin is not None and smax is not None and smin > smax:
+        # LLM swapped the order. Trust the *spread* but reorder so
+        # downstream "min ≤ candidate-asks ≤ max" matching keeps working.
+        smin, smax = smax, smin
+    out["salary_min"] = smin
+    out["salary_max"] = smax
     return out
 
 

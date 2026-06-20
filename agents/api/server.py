@@ -187,6 +187,7 @@ async def ask_stream(
     user_id: UserDep,
     x_relay_thread_id: Annotated[str | None, Header()] = None,
     x_relay_surface: Annotated[str | None, Header()] = None,
+    x_request_id: Annotated[str | None, Header()] = None,
 ) -> StreamingResponse:
     """SSE stream — classifies intent, runs the dispatched agent, emits task cards.
 
@@ -203,7 +204,21 @@ async def ask_stream(
     # logged for observability and reserved for future per-surface context
     # tuning in the router.
     surface = (x_relay_surface or "dock").lower()
-    log.info("ask_stream.start", thread_id=thread_id, surface=surface)
+    # OBS3 (round-12): bind the gateway-issued request id to structlog so
+    # every subsequent log line in this turn carries it. The round-12
+    # observability audit pointed out that Python logs were context-free
+    # w.r.t. the originating request — a 5xx in agent_tasks could not be
+    # traced back to the browser-visible X-Request-Id. structlog's
+    # contextvars-based binding scopes the override to the current
+    # asyncio task so concurrent requests don't cross-contaminate.
+    if x_request_id:
+        structlog.contextvars.bind_contextvars(request_id=x_request_id)
+    log.info(
+        "ask_stream.start",
+        thread_id=thread_id,
+        surface=surface,
+        request_id=x_request_id,
+    )
 
     async def gen() -> AsyncIterator[str]:
         yield _sse({"event": "thinking", "agent": "coordinator"})

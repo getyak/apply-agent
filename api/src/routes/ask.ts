@@ -158,6 +158,15 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
     }
   }
 
+  // OBS1 (round-12): the round-12 observability audit found that the
+  // gateway's request_id was generated and echoed to the browser, but
+  // not forwarded to the Python agent host — so any agent_tasks /
+  // structlog line emitted downstream had no breadcrumb back to the
+  // originating request. requestId middleware (api/src/middleware/
+  // observability.ts) sets c.var.requestId on every request; passing
+  // it through here lets server.py rebind structlog context and write
+  // it into audit rows.
+  const requestId = c.get("requestId");
   let upstream: Response;
   try {
     upstream = await fetch(target, {
@@ -176,6 +185,7 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
         // to load. Default to "dock" upstream if absent, so older clients
         // keep working unchanged.
         ...(surface ? { "X-Relay-Surface": surface } : {}),
+        ...(requestId ? { "X-Request-Id": requestId } : {}),
       },
       body: JSON.stringify({ message: prompt }),
     });
