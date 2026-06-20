@@ -16,7 +16,6 @@ endpoints the router invokes:
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -27,10 +26,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.events.bus import publish
 from agents.harness.audit import audit
-from agents.harness.llm import cost_cents, pick_model
-from agents.tools.auto import pg_query, redis_get, redis_setex
+from agents.harness.llm import pick_model
+from agents.tools.auto import redis_get, redis_setex
 from agents.tools.notify import save_resume_version
-
 
 log = structlog.get_logger("agents.nodes.resume")
 
@@ -74,14 +72,23 @@ async def customize(
     Returns: {tailored: dict, version: int, fabricated_entities: list}
     """
     async with audit(user_id, "resume_agent", "customize") as record:
+        # Cache stores the full envelope ({tailored, change_log}) so the
+        # warm path also returns provenance — historically we stored
+        # just `tailored` which forced a re-generation any time the UI
+        # asked for the change_log. Old cache entries (raw tailored
+        # dict) are coerced to envelope shape via
+        # _normalise_customize_envelope so we don't need a cache
+        # version bump.
         cache_key = f"resume:tailored:{user_id}:{job_id}:{base_version}"
         cached = await redis_get(cache_key)
         if cached:
             record.cache_hit = True
-            tailored = json.loads(cached)
+            envelope = _normalise_customize_envelope(json.loads(cached))
         else:
-            tailored = await _generate_tailored(base_resume, jd_text)
-            await redis_setex(cache_key, 7 * 24 * 3600, json.dumps(tailored))
+            envelope = await _generate_tailored(base_resume, jd_text)
+            await redis_setex(cache_key, 7 * 24 * 3600, json.dumps(envelope))
+        tailored = envelope["tailored"]
+        change_log = envelope["change_log"]
 
         # Fabrication guard — retry up to 2 times if entities leak.
         for attempt in range(3):
@@ -98,21 +105,36 @@ async def customize(
                     "reason": "fabrication_guard_failed",
                     "fabricated": fab,
                 }
-            tailored = await _generate_tailored(base_resume, jd_text, fabrication_warning=fab)
+            envelope = await _generate_tailored(
+                base_resume, jd_text, fabrication_warning=fab
+            )
+            tailored = envelope["tailored"]
+            change_log = envelope["change_log"]
 
-        # Persist as v_{n+1}.
-        new_version = base_version + 1
-        new_id = await save_resume_version(
+        # Annotate every change_log entry with a risk level (safe / needs
+        # review / unsupported). The UI uses these to drive bullet-level
+        # chips and gate the Approve button on "needs review" so users
+        # see WHY each line was rewritten — vision.md's "诚实" line made
+        # mechanical.
+        annotated_log = change_log_guard(base_resume, change_log)
+        needs_review_count = sum(1 for c in annotated_log if c.get("risk") == "needs_review")
+
+        # Migration 016's trigger picks the next per-user version atomically;
+        # we keep `base_version` for the parent_version_id link but no longer
+        # compute the new version ourselves (concurrent customize against the
+        # same base would otherwise collide on UNIQUE(user_id, version)).
+        new_id, new_version = await save_resume_version(
             user_id=user_id,
-            version=new_version,
             content_json=tailored,
             parent_version_id=base_id,
             tailored_for_job=job_id,
             is_base=False,
         )
+        _ = base_version  # noqa: F841 — kept for parent linkage semantics, see above.
 
         await publish(
-            "resume:updated", {"user_id": str(user_id), "version": new_version, "resume_id": str(new_id)}
+            "resume:updated",
+            {"user_id": str(user_id), "version": new_version, "resume_id": str(new_id)},
         )
 
         return {
@@ -121,14 +143,24 @@ async def customize(
             "version": new_version,
             "resume_id": str(new_id),
             "diff": _compute_diff(base_resume, tailored),
+            "change_log": annotated_log,
+            "needs_review_count": needs_review_count,
         }
 
 
 async def _generate_tailored(
     base_resume: dict[str, Any], jd_text: str, fabrication_warning: list[str] | None = None
 ) -> dict[str, Any]:
+    """Run the customize prompt and return a normalised
+    `{tailored, change_log}` envelope.
+
+    The v2 prompt asks the model to emit both halves. When a model returns
+    just a résumé document (older prompt, malformed JSON, or a tiny model
+    that ignores the schema), we coerce it into the envelope shape with
+    an empty `change_log` so callers never need a branching parse.
+    """
     model = pick_model("general", temperature=0.4, max_tokens=4096)
-    sys_prompt = _load_prompt("customize.v1.md")
+    sys_prompt = _load_prompt("customize.v2.md")
     if fabrication_warning:
         sys_prompt += (
             "\n\nPREVIOUS ATTEMPT INTRODUCED THESE FABRICATIONS — DO NOT REPEAT:\n"
@@ -138,7 +170,46 @@ async def _generate_tailored(
     resp = await model.ainvoke(
         [SystemMessage(content=sys_prompt), HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
     )
-    return _safe_json(resp.content)
+    parsed = _safe_json(resp.content)
+    return _normalise_customize_envelope(parsed)
+
+
+def _normalise_customize_envelope(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Always return `{tailored, change_log}`. Forgiving of older shapes.
+
+    - If `parsed` already has a `tailored` key we trust it (and default
+      change_log to []).
+    - If `parsed` looks like a JSON Resume document at the top level
+      (has `basics` or `work`) we wrap it.
+    - change_log entries that are not dicts (or that are missing the two
+      required keys) are dropped so downstream callers can assume a
+      stable record shape.
+    """
+    if isinstance(parsed, dict) and "tailored" in parsed:
+        tailored = parsed.get("tailored") or {}
+        raw_log = parsed.get("change_log") or []
+    else:
+        tailored = parsed if isinstance(parsed, dict) else {}
+        raw_log = []
+    change_log: list[dict[str, Any]] = []
+    for entry in raw_log if isinstance(raw_log, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        bullet_id = entry.get("bullet_id")
+        change_type = entry.get("change_type")
+        if not isinstance(bullet_id, str) or not isinstance(change_type, str):
+            continue
+        change_log.append(
+            {
+                "bullet_id": bullet_id,
+                "change_type": change_type,
+                "before": entry.get("before"),
+                "after": entry.get("after"),
+                "source_evidence": entry.get("source_evidence"),
+                "explanation": entry.get("explanation"),
+            }
+        )
+    return {"tailored": tailored, "change_log": change_log}
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -196,6 +267,88 @@ def fabrication_guard(base: dict[str, Any], tailored: dict[str, Any]) -> list[st
     return fabricated
 
 
+# ───────────────────────────────────────────────────────────────────────
+# change_log_guard — per-bullet risk annotation for the UI
+# ───────────────────────────────────────────────────────────────────────
+
+
+# `infer_wording` means the model rephrased something in a way that
+# could be read as a new claim. Even when fabrication_guard passes at
+# the document level, the front-end should still surface these for an
+# explicit human check before Approve. tighten / quantify_existing /
+# reorder are mechanically safe; anything else from a confused model
+# falls through to `unsupported` so the user notices.
+_SAFE_CHANGE_TYPES = {"tighten", "quantify_existing", "reorder"}
+_REVIEW_CHANGE_TYPES = {"infer_wording"}
+
+
+def change_log_guard(
+    base: dict[str, Any], change_log: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Annotate each change_log entry with a `risk` field.
+
+    risk ∈ {safe, needs_review, unsupported}.
+
+    - safe          — change_type is tighten / quantify_existing / reorder
+                      AND `after` only contains substrings already in base.
+    - needs_review  — change_type is infer_wording, OR a "safe" entry
+                      introduced a quantitative token not in base.
+    - unsupported   — change_type is unknown, OR `source_evidence` is
+                      missing, OR `after` is missing.
+
+    Pure function — no IO, no LLM call. Cheap to run every customize.
+    The UI uses these risk levels to drive bullet-level chips and to
+    disable Approve when any row is `needs_review` or `unsupported`.
+    """
+    base_text = _flatten_text(base).lower()
+    annotated: list[dict[str, Any]] = []
+    for entry in change_log:
+        change_type = (entry.get("change_type") or "").strip()
+        after = (entry.get("after") or "").strip()
+        source_evidence = (entry.get("source_evidence") or "").strip()
+
+        if not change_type or not after:
+            risk = "unsupported"
+        elif change_type in _REVIEW_CHANGE_TYPES:
+            risk = "needs_review"
+        elif change_type in _SAFE_CHANGE_TYPES:
+            if not source_evidence:
+                risk = "needs_review"
+            elif _has_new_quantitative_token(after, base_text):
+                # A "tighten" that quietly surfaces a brand new percentage
+                # or dollar value is exactly the kind of subtle fab the
+                # red line targets — push it back to the user.
+                risk = "needs_review"
+            else:
+                risk = "safe"
+        else:
+            risk = "unsupported"
+
+        annotated.append({**entry, "risk": risk})
+    return annotated
+
+
+def _has_new_quantitative_token(after: str, base_text: str) -> bool:
+    """True if `after` contains a percent / money / year / large number
+    that doesn't appear in `base_text`. Mirrors fabrication_guard's
+    entity vocabulary so the two stay in sync."""
+    after_lower = after.lower()
+    for pattern in (_PERCENT_RE, _MONEY_RE, _YEAR_RE):
+        for hit in set(pattern.findall(after_lower)):
+            if hit not in base_text:
+                return True
+    for hit in set(_NUMBER_RE.findall(after_lower)):
+        try:
+            val = float(hit.replace(",", ""))
+        except ValueError:
+            continue
+        if val < 100:
+            continue
+        if hit not in base_text:
+            return True
+    return False
+
+
 def _flatten_text(obj: Any) -> str:
     """Recursively concatenate all string leaves of a JSON-like value."""
     if isinstance(obj, str):
@@ -243,16 +396,17 @@ async def build_from_scratch(
         )
         draft = _safe_json(resp.content)
 
-        # Save as v1 base.
-        new_id = await save_resume_version(
+        # Save as base — trigger assigns the version (typically 1 for a fresh
+        # account, but the user may already have other rows from a prior run,
+        # so we never hard-code 1).
+        new_id, assigned_v = await save_resume_version(
             user_id=user_id,
-            version=1,
             content_json=draft,
             parent_version_id=None,
             tailored_for_job=None,
             is_base=True,
         )
-        return {"draft": draft, "resume_id": str(new_id), "version": 1}
+        return {"draft": draft, "resume_id": str(new_id), "version": assigned_v}
 
 
 # ───────────────────────────────────────────────────────────────────────

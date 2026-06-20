@@ -202,6 +202,12 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
     // the final assistant turn once the stream settles. Mirrors what the
     // dock concatenates into m.text on the client.
     let assistantBuf = "";
+    // Synthesised task_graph (P2.1). Emitted once, on the first `intent`
+    // frame, based on a static plan template. When the Python coordinator
+    // grows a real planner it will start emitting `event: "task_graph"`
+    // itself; we'll let those override the synthesis (TODO once the
+    // upstream event lands).
+    let graphEmitted = false;
 
     try {
       while (true) {
@@ -217,6 +223,17 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
           split = buf.indexOf("\n\n");
           const payload = parseSseFrame(frame);
           if (!payload) continue;
+          // First `intent` frame is our cue to synthesise the plan.
+          // We do this BEFORE toNdjson so the plan card lands above the
+          // first agent_start row in the dock.
+          if (!graphEmitted && payload.event === "intent") {
+            const intent = (payload.intent as string) || "";
+            const graph = planForIntent(intent, prompt);
+            if (graph) {
+              graphEmitted = true;
+              await out.write(JSON.stringify({ kind: "task_graph", graph }) + "\n");
+            }
+          }
           for (const line of toNdjson(payload, seenAgents)) {
             // Peek the frame so we can build a faithful assistant text
             // record for history without re-parsing later. We accumulate
@@ -398,15 +415,24 @@ function toNdjson(
     const action = payload.action as string | undefined;
     if (action && action !== "reply") {
       const route = routeFor(agent, action);
-      out.push(
-        JSON.stringify({
-          kind: "result",
-          title: humanizeAction(agent, action),
-          sub: describeAction(payload),
-          action: ctaFor(agent, action),
-          ...(route ? { route } : {}),
-        }),
-      );
+      const artifact = buildArtifact(agent, action, payload, route ?? undefined);
+      if (artifact) {
+        out.push(JSON.stringify({ kind: "artifact", artifact }));
+      } else {
+        // Fallback to the legacy result frame when we don't yet have an
+        // artifact template for this (agent, action) — keeps strange or
+        // not-yet-categorised actions visible instead of silently
+        // dropping them.
+        out.push(
+          JSON.stringify({
+            kind: "result",
+            title: humanizeAction(agent, action),
+            sub: describeAction(payload),
+            action: ctaFor(agent, action),
+            ...(route ? { route } : {}),
+          }),
+        );
+      }
     }
     return out;
   }
@@ -462,6 +488,252 @@ function routeFor(agent: string, action: string): string | null {
   if (agent === "jobmatch_agent") return "/app/applications";
   if (agent === "appprep_agent") return "/app/applications";
   return null;
+}
+
+// ─── Artifact envelope (P2.2) ──────────────────────────────────────────
+//
+// One shape for every agent output. Per audit §4.2 — the front-end
+// renders a single ArtifactCard for all artifact_types; the agent
+// declares confidence, evidence, HITL gate and primary actions inline.
+// We synthesise from the existing upstream `result` payload so the
+// Python agents don't need to ship a new contract first.
+
+interface ArtifactSource {
+  label: string;
+  route?: string;
+}
+interface ArtifactAction {
+  kind: "approve" | "tweak" | "discard" | "open";
+  label: string;
+  route?: string;
+}
+interface ArtifactOut {
+  artifact_type:
+    | "resume_version"
+    | "job_match_set"
+    | "application_package"
+    | "interview_session"
+    | "cover_letter"
+    | "market_snapshot";
+  id: string;
+  title: string;
+  sub: string;
+  confidence?: number;
+  needs_user_review?: boolean;
+  source_evidence?: ArtifactSource[];
+  next_actions?: ArtifactAction[];
+}
+
+function buildArtifact(
+  agent: string,
+  action: string,
+  payload: Record<string, unknown>,
+  route: string | undefined,
+): ArtifactOut | null {
+  const id =
+    (payload.artifact_id as string) ??
+    `art-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const title = humanizeAction(agent, action);
+  const sub = describeAction(payload);
+  const confidence =
+    typeof payload.confidence === "number" ? (payload.confidence as number) : undefined;
+  // Evidence may come back from the agent (preferred) or get synthesised
+  // when not present — keep at least a "View source" anchor on every
+  // artifact so the audit's "可解释" goal isn't lost on day one.
+  const evidenceFromPayload = Array.isArray(payload.source_evidence)
+    ? (payload.source_evidence as Array<{ label?: string; route?: string }>)
+        .filter((e): e is { label: string; route?: string } => typeof e?.label === "string")
+        .map((e) => ({ label: e.label, route: e.route }))
+    : undefined;
+
+  // Per-action template. Add new ones as agents start emitting them.
+  if (agent === "resume_agent" && (action === "customize" || action === "update_field")) {
+    return {
+      artifact_type: "resume_version",
+      id,
+      title,
+      sub,
+      confidence,
+      needs_user_review: true,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "Open résumé", route: route ?? "/app/studio/resume" },
+        { kind: "tweak", label: "Tweak in studio", route: "/app/studio/resume" },
+      ],
+    };
+  }
+  if (agent === "appprep_agent" && action === "draft_cover_letter") {
+    return {
+      artifact_type: "cover_letter",
+      id,
+      title,
+      sub,
+      confidence,
+      needs_user_review: true,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "Open draft", route: route ?? "/app/applications" },
+        { kind: "discard", label: "Discard", route: undefined },
+      ],
+    };
+  }
+  if (agent === "appprep_agent") {
+    return {
+      artifact_type: "application_package",
+      id,
+      title,
+      sub,
+      confidence,
+      needs_user_review: true,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "Open prep", route: route ?? "/app/applications" },
+      ],
+    };
+  }
+  if (agent === "jobmatch_agent") {
+    return {
+      artifact_type: "job_match_set",
+      id,
+      title,
+      sub,
+      confidence,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "See matches", route: route ?? "/app/applications" },
+      ],
+    };
+  }
+  if (agent === "interview_agent") {
+    return {
+      artifact_type: "interview_session",
+      id,
+      title,
+      sub,
+      confidence,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "Open mock", route: route ?? "/app/studio/mock" },
+      ],
+    };
+  }
+  if (agent === "trend_agent") {
+    return {
+      artifact_type: "market_snapshot",
+      id,
+      title,
+      sub,
+      confidence,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "View trends", route: route ?? "/app/today" },
+      ],
+    };
+  }
+  return null;
+}
+
+// ─── Task graph plan templates (P2.1) ─────────────────────────────────
+//
+// The synthesised plan we emit before the agents start running. Keeps
+// the UI honest about what's about to happen even though the Python
+// coordinator currently routes to a single agent per turn. Each
+// template lists the agent steps in declared order; when the real
+// planner ships, the upstream `event: "task_graph"` will replace this.
+
+interface PlannedStep {
+  step: string;
+  agent: string;
+  label: string;
+  requires_review?: boolean;
+}
+interface SynthGraph {
+  task_id: string;
+  user_goal: string;
+  plan: PlannedStep[];
+}
+
+// Stable plan templates per known intent. When intent is missing or
+// unknown we return null and the dock will fall back to the bare
+// agent_start rows — no false plan.
+const PLAN_TEMPLATES: Record<string, PlannedStep[]> = {
+  tailor_resume: [
+    {
+      step: "fetch_jd",
+      agent: "jobmatch_agent",
+      label: "Pull the job description and key requirements.",
+    },
+    {
+      step: "customize_resume",
+      agent: "resume_agent",
+      label: "Tailor a new résumé version against the JD.",
+      requires_review: true,
+    },
+  ],
+  customize_resume: [
+    {
+      step: "customize_resume",
+      agent: "resume_agent",
+      label: "Tailor your résumé to the target role.",
+      requires_review: true,
+    },
+  ],
+  find_matches: [
+    {
+      step: "find_matches",
+      agent: "jobmatch_agent",
+      label: "Surface roles that fit your profile right now.",
+    },
+  ],
+  daily_snapshot: [
+    {
+      step: "daily_snapshot",
+      agent: "trend_agent",
+      label: "Pull today's market snapshot for your stack.",
+    },
+  ],
+  draft_cover_letter: [
+    {
+      step: "draft_cover_letter",
+      agent: "appprep_agent",
+      label: "Draft a cover letter grounded in your résumé.",
+      requires_review: true,
+    },
+  ],
+  build_mock_graph: [
+    {
+      step: "intel",
+      agent: "interview_agent",
+      label: "Load the company / role interview intel.",
+    },
+    {
+      step: "mock_session",
+      agent: "interview_agent",
+      label: "Generate the mock session you can step through.",
+      requires_review: true,
+    },
+  ],
+  update_field: [
+    {
+      step: "update_field",
+      agent: "resume_agent",
+      label: "Apply the requested résumé edit.",
+      requires_review: true,
+    },
+  ],
+};
+
+function planForIntent(intent: string, prompt: string): SynthGraph | null {
+  const plan = PLAN_TEMPLATES[intent];
+  if (!plan) return null;
+  return {
+    task_id: `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    // Truncate the user prompt so the dock header doesn't get a wall of
+    // text when someone pastes a JD. previewText is the same helper the
+    // /recent rail uses, keeping copy consistent across the two surfaces.
+    user_goal: previewText(prompt, 100),
+    plan,
+  };
 }
 
 export default routes;
