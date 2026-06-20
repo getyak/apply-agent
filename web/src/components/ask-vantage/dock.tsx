@@ -73,11 +73,18 @@ const CHIPS_EXPLORE_RESUME_STUDIO: SuggestionChip[] = [
 // `prompt` is the original verbose instruction so the resume_agent sees
 // the same input it always has; `display` is the action-style English
 // short line the user sees on the card.
+// H1 (round-1): every chip in this group must repeat the no-fabrication
+// red line in its prompt. Until round 1 only "Tailor this résumé to a JD"
+// carried the constraint, leaving the other three free to invent skills,
+// re-interpret bullet metrics, or surface non-existent companies — direct
+// violations of vision.md §"诚实是底线". The phrasing is deliberately
+// uniform so prompt-eval can grep for the same red-line string across the
+// whole group instead of three different rewordings.
 const CHIPS_THIS_RESUME: SuggestionChip[] = [
   {
     display: "Find my résumé's 3 weakest spots",
     prompt:
-      "Analyze this résumé and tell me the three weakest spots — be specific about which bullet or section, and what to change.",
+      "Analyze this résumé and tell me the three weakest spots — be specific about which bullet or section, and what to change. Critique only what is actually written; do not invent skills, employers, dates, or metrics that aren't in the résumé.",
   },
   {
     display: "Tailor this résumé to a JD",
@@ -87,12 +94,12 @@ const CHIPS_THIS_RESUME: SuggestionChip[] = [
   {
     display: "Map my next 1–2 career moves",
     prompt:
-      "Read my résumé's trajectory and tell me what the next one or two career moves should look like, plus which skills I'd need to close to get there.",
+      "Read my résumé's trajectory and tell me what the next one or two career moves should look like, plus which skills I'd need to close to get there. Base every suggestion on roles and skills that are actually in the résumé — do not invent companies I haven't worked at or skills I haven't demonstrated.",
   },
   {
     display: "Surface roles that match this résumé",
     prompt:
-      "Based on this résumé, suggest five roles that would be a strong match right now — and explain in one line why each fits.",
+      "Based on this résumé, suggest five roles that would be a strong match right now — and explain in one line why each fits. Only cite skills, titles, and experiences that appear in the résumé; do not invent qualifications to make a role look like a better fit.",
   },
 ];
 
@@ -1037,6 +1044,31 @@ export function AskVantageDock() {
       useDock.setState({ state: "closed" });
     }
   }, [hintedCollapse, state]);
+
+  // C1 (round-1): isolate dock messages per effective thread.
+  // The dock owns a single in-memory `messages` array that previously
+  // followed the user across surfaces — so resume_studio turns from one
+  // résumé leaked into the lifetime ask_vantage thread on the next page,
+  // and vice versa. vantage-ui-mapping.md §2.6 explicitly promises that
+  // the dock conversation is *scoped* on /app/studio/resume — the
+  // subtitle changes, the chips change, but until now the message
+  // history kept appending. This effect clears the in-memory list when
+  // the effective thread changes, so each thread starts visually clean
+  // and PostgresSaver-backed history is re-fetched on the next user
+  // turn. recentAnchors live on the store and survive — they're the
+  // lifetime ask_vantage rail and are explicitly cross-thread by design.
+  const effectiveThread = useMemo(() => {
+    return pathname?.startsWith("/app/studio/resume") && resumeStudioThread
+      ? resumeStudioThread
+      : "ask_vantage";
+  }, [pathname, resumeStudioThread]);
+  const prevEffectiveThread = useRef<string>(effectiveThread);
+  useEffect(() => {
+    if (prevEffectiveThread.current !== effectiveThread) {
+      prevEffectiveThread.current = effectiveThread;
+      useDock.getState().reset();
+    }
+  }, [effectiveThread]);
 
   // Unmount-time SSE cleanup. The dock is re-mounted by AppLayout every time
   // `screen` flips between the workspace and an overlay (review / extension /

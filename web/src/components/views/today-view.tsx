@@ -14,6 +14,29 @@ import { today as todayApi, type TodayAction } from "@/lib/api";
 import { sendAsk } from "@/lib/ask-stream";
 import { useDock } from "@/lib/ask-vantage-store";
 
+// H2 (round-1): turn the server's `priority` score (0–100) into a
+// human-readable "why is this the top of my queue" hint. The route
+// already ranks rows by score (api/src/routes/today.ts:43,84,129) but
+// until now the score never reached the UI — users were left guessing
+// why one row beat another. Each rule maps the existing kind + priority
+// inputs into a short mono label rendered to the right of the row, so
+// scanning the queue tells you both *what* and *why*.
+function whyThisCard(a: TodayAction): string {
+  if (a.kind === "interview") {
+    // priority is max(80, 100 - days*3) on the route side, so anything
+    // ≥97 is tomorrow-or-today and deserves the louder label.
+    return a.priority >= 97 ? "Interview imminent" : "Interview this week";
+  }
+  if (a.kind === "prepare") {
+    // priority is 70 + min(20, age_days*2), so ≥85 means the draft has
+    // been sitting ≥7 days (15 + age component). Call that out so the
+    // user sees the queue is nudging them to unblock it.
+    return a.priority >= 85 ? "Draft aging" : "Open draft";
+  }
+  if (a.kind === "follow_up") return "Awaiting reply";
+  return "Skill-gap signal";
+}
+
 // Small status chip for action queue rows. Distinct color tracks let
 // the user scan "prep / interview / learn" at a glance without reading
 // titles — matches the dock's TaskGraphStepPill aesthetic.
@@ -260,6 +283,17 @@ export function TodayView() {
                     </span>
                     <span className="block font-body text-[12.5px] text-ink-light mt-[2px]">
                       {a.sub}
+                    </span>
+                    <span
+                      className="block font-mono mt-[4px]"
+                      style={{
+                        fontSize: 9.5,
+                        letterSpacing: 0.6,
+                        textTransform: "uppercase",
+                        color: "#A38A60",
+                      }}
+                    >
+                      Why this · {whyThisCard(a)}
                     </span>
                   </span>
                   <ActionKindPill kind={a.kind} />
