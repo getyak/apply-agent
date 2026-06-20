@@ -20,8 +20,8 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import structlog
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -33,6 +33,7 @@ from agents.harness.checkpointer import (
     get_checkpointer,
     mock_thread_id,
 )
+from agents.harness.guards import BudgetExhausted
 from agents.harness.state import InterviewMode
 from agents.nodes import interview_agent, resume_agent
 from agents.tools.auto import pg_query
@@ -63,6 +64,80 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Relay Agents", version="0.1.0", lifespan=_lifespan)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Global error envelope (round-5)
+#
+# Round-5 audit flagged two problems with how this layer reports errors:
+#   API1: no global exception handler — uncaught exceptions surface as
+#         FastAPI's default {"detail": "Internal Server Error"} with no
+#         trace_id, making prod debugging a guessing game.
+#   API2: SSE error frames embed the raw `str(exc)` text, leaking internal
+#         stack details (file paths, "session cost 12.4567c > 50.0c", etc.)
+#         and giving the frontend no machine-readable code to act on.
+#
+# These handlers + _error_envelope() centralise the shape (`code`, `message`,
+# `trace_id`) and choose a user-safe message per exception category. The SSE
+# error path uses the same helper so the dock and the JSON envelopes stay in
+# sync — one place to localise, one shape for the frontend to match.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _error_envelope(exc: BaseException, trace_id: str) -> dict[str, Any]:
+    """Map an exception to a sanitized {code, message, trace_id} envelope.
+
+    The message must be safe to show end-users: no file paths, no balance
+    digits, no internal field names. The log line (caller's responsibility)
+    keeps the raw text for support to correlate via trace_id.
+    """
+    if isinstance(exc, BudgetExhausted):
+        # CostGuard hit — translatable copy, no "12.34c > 50.0c" detail.
+        return {
+            "code": "budget_exhausted",
+            "message": "Your session budget is used up. Try again later or contact support.",
+            "trace_id": trace_id,
+        }
+    if isinstance(exc, HTTPException):
+        # FastAPI's own 4xx — keep the upstream detail (it's already
+        # author-controlled in our routes) but normalise the shape.
+        detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
+        return {
+            "code": f"http_{exc.status_code}",
+            "message": detail,
+            "trace_id": trace_id,
+        }
+    # Catch-all — never leak str(exc). Support reads the log via trace_id.
+    return {
+        "code": "internal_error",
+        "message": "Something went wrong on our side. We've logged this — please retry shortly.",
+        "trace_id": trace_id,
+    }
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    trace_id = uuid4().hex
+    log.warning("http_exception", trace_id=trace_id, status=exc.status_code, detail=str(exc.detail))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_envelope(exc, trace_id),
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    trace_id = uuid4().hex
+    # Log the full exception text so support can correlate; the response body
+    # only carries the sanitized envelope.
+    log.error("unhandled_exception", trace_id=trace_id, error=str(exc), kind=type(exc).__name__)
+    status = 402 if isinstance(exc, BudgetExhausted) else 500
+    return JSONResponse(
+        status_code=status,
+        content=_error_envelope(exc, trace_id),
+        headers={"X-Trace-Id": trace_id},
+    )
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -161,8 +236,20 @@ async def ask_stream(
                 assistant_text=_result_summary(result),
             )
         except Exception as exc:  # noqa: BLE001 boundary
-            log.error("ask_stream.dispatch_failed", error=str(exc))
-            yield _sse({"event": "error", "message": str(exc)})
+            # round-5 API2: stop leaking raw str(exc) into the SSE error
+            # frame. Reuse the same envelope helper the JSON handlers do, so
+            # the dock can branch on `code` (budget_exhausted, http_403,
+            # internal_error, …) and we have a single trace_id to grep for
+            # when a user reports the error.
+            trace_id = uuid4().hex
+            log.error(
+                "ask_stream.dispatch_failed",
+                trace_id=trace_id,
+                error=str(exc),
+                kind=type(exc).__name__,
+            )
+            envelope = _error_envelope(exc, trace_id)
+            yield _sse({"event": "error", **envelope})
 
         yield _sse({"event": "done"})
 

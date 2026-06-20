@@ -521,8 +521,19 @@ export function ResumeView() {
             <span style={{ width: 6, height: 6, borderRadius: 999, background: "#4C7A3F" }} />
             Saved
           </span>
-          <button onClick={() => setCompareOn((v) => !v)} style={chromeBtnStyle(compareOn)}>
-            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <button
+            onClick={() => setCompareOn((v) => !v)}
+            style={chromeBtnStyle(compareOn)}
+            // A11Y2 (round-5): the visible label flips ("Compare" ↔ "Exit
+            // compare") so sighted users see state; screen-reader users
+            // need aria-pressed to be told the same thing. Without it, a
+            // user toggles once and the SR just announces the new label,
+            // not the fact that they just turned a *mode* on or off.
+            // (Round-5 a11y audit, WCAG 2.1 AA § 1.3.1.)
+            aria-pressed={compareOn}
+            aria-label={compareOn ? "Exit compare mode" : "Enter compare mode"}
+          >
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 3v18" />
               <path d="M5 7l-2 2 2 2M19 7l2 2-2 2" />
               <path d="M3 9h6M15 9h6" />
