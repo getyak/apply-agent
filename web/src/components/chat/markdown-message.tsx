@@ -130,6 +130,17 @@ export function MarkdownMessage({ content, variant = "body" }: MarkdownMessagePr
   return (
     <div className={variant === "subline" ? "vt-md vt-md-subline" : "vt-md"}>
       <ReactMarkdown
+        // MD1 (round-11): the round-11 markdown audit pointed out that
+        // we were rendering assistant + résumé text through ReactMarkdown
+        // with no HTML guard, so an LLM-emitted `<img onerror=...>` or
+        // `<script>` would actually evaluate. `skipHtml` stops every raw
+        // HTML fragment at parse time — react-markdown drops the tags
+        // and only emits its own Markdown→React tree. We deliberately
+        // don't pull in rehype-sanitize because we never need *any* raw
+        // HTML in our chat surfaces; this is the simpler, dependency-
+        // free posture (round-12 will revisit if the product ever wants
+        // sanitized inline HTML, e.g. for embed cards).
+        skipHtml={true}
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
         components={{
@@ -146,7 +157,14 @@ export function MarkdownMessage({ content, variant = "body" }: MarkdownMessagePr
           a: ({ children, href }) => (
             <a
               className="vt-md-a"
-              href={href}
+              // MD3 (round-11): href came straight out of the LLM /
+              // user text. `safeHref` strips `javascript:`, `data:`,
+              // `vbscript:`, and other actively-dangerous schemes —
+              // anything that survives becomes a regular http(s) link
+              // that the existing rel="noopener noreferrer" already
+              // sandboxes. A rejected href becomes undefined so React
+              // omits the attribute entirely (the text still renders).
+              href={safeHref(href)}
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -166,4 +184,38 @@ export function MarkdownMessage({ content, variant = "body" }: MarkdownMessagePr
       </ReactMarkdown>
     </div>
   );
+}
+
+// MD3 (round-11): a tiny scheme allow-list. We deliberately don't
+// import a URL library — the input here is either a relative path, a
+// real http(s) URL, or a `mailto:` / `tel:` link. Anything else (most
+// importantly `javascript:` / `data:` / `vbscript:` / `file:`) gets
+// dropped. We strip whitespace/control chars before comparing the
+// scheme so `j\tavascript:` and `\njavascript:` can't slip past.
+export function safeHref(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return undefined;
+  // Relative paths and fragment links — always safe.
+  if (
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("?")
+  )
+    return trimmed;
+  // Collapse any embedded whitespace / control chars before sniffing
+  // the scheme. \s in a JS regex covers space, tab, newline, CR, and
+  // form-feed — exactly the characters used to obfuscate the colon.
+  const collapsed = trimmed.replace(/\s+/g, "");
+  const lower = collapsed.toLowerCase();
+  if (
+    lower.startsWith("http:") ||
+    lower.startsWith("https:") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("tel:")
+  ) {
+    // Keep the user's original casing/spacing on accepted hrefs.
+    return trimmed;
+  }
+  return undefined;
 }

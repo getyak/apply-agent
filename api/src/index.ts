@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { config } from "./config";
+import { installDbShutdownHandlers, pingDbAtBoot } from "./db";
 import { errorHandler } from "./errors";
 import { requestId, requestLogger } from "./middleware/observability";
 import {
@@ -57,6 +58,15 @@ app.route("/api/ask", askRoutes);
 app.route("/api", healthRoutes);
 
 app.onError(errorHandler);
+
+// DB-bundle (round-11): wire the PG pool's lifecycle to the process
+// lifecycle so SIGTERM/SIGINT drain in-flight queries instead of
+// killing them mid-transaction, and so a startup with the wrong
+// DATABASE_URL leaves a loud breadcrumb instead of a quiet 5xx on the
+// first request. The ping is fire-and-forget — the readiness route is
+// the source of truth for whether the gateway should receive traffic.
+installDbShutdownHandlers();
+void pingDbAtBoot();
 
 const port = config.API_PORT;
 
