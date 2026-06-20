@@ -490,8 +490,18 @@ export async function sendAsk(
   // the live controller. A newer send (which calls cancelStream then
   // installs its own controller) must not have its state wiped by the
   // abandoned old stream's terminal/finally path.
+  //
+  // P2 (round-3): the original guard handled the abandonment case
+  // (newer stream has installed its own controller) but missed the
+  // *orphan* case — when this stream was the most recent one but its
+  // controller was already cleared by cancelStream() (user cancel,
+  // unmount cleanup). In that orphan case `abortController === null`,
+  // the equality check fails, and `streaming` stays true forever.
+  // Treating both "we still own it" and "no one owns it" as safe-to-clear
+  // closes the rapid-fire race the round-3 SSE audit flagged.
   const clearOwnedStreamState = () => {
-    if (useDock.getState().abortController === controller) {
+    const current = useDock.getState().abortController;
+    if (current === controller || current === null) {
       useDock.setState({ streaming: false, abortController: null });
     }
   };

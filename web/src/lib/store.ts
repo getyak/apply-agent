@@ -13,6 +13,11 @@ import {
   setChatSessionId,
   clearChatSessionId,
 } from "./api";
+// P1 (round-3): the workspace slice owns signOut() but the dock state
+// lives in a separate store. Importing it here is safe because
+// ask-vantage-store does not import this file (confirmed by grep on
+// round-3 audit) — no cycle.
+import { useDock } from "./ask-vantage-store";
 
 export type Screen = "onboarding" | "app" | "review" | "extension" | "builder" | "mock";
 export type Nav = "chat" | "today" | "apps" | "settings";
@@ -1012,6 +1017,27 @@ export const useVantage = create<VantageState>((set, get) => ({
     // Drop the persisted chat session too, or the next user to log in on this
     // browser would resume the previous user's conversation.
     clearChatSessionId();
+    // P1 (round-3): wipe dock state too. The dock store outlives this
+    // slice on shared browsers (kiosk, family laptop, school lab). Before
+    // round-3 we left dock.messages and dock.recentAnchors intact on
+    // signOut — so the next user opening the dock could see the prior
+    // user's prompt history. That's a real privacy leak flagged by the
+    // round-3 auth-audit pass. reset() empties the in-memory
+    // conversation; the explicit set() also wipes recentAnchors (the
+    // lifetime ask_vantage rail) and the persisted thread id, both of
+    // which are user-scoped.
+    try {
+      useDock.getState().reset();
+      useDock.setState({ recentAnchors: [], threadId: null });
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("vantage.dock.thread");
+      }
+    } catch (err) {
+      // signOut must never throw — it's the user's escape hatch. If the
+      // dock store hasn't been touched yet this session (rare during
+      // tests / unmounted layout) the call is harmless to skip.
+      console.warn("[signOut] dock state clear failed:", err);
+    }
     set({
       currentUser: null,
       currentResumeId: null,
