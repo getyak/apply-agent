@@ -691,6 +691,12 @@ function VersionRail({
               key={v.id}
               onClick={() => onSelect(v.id)}
               style={railRowStyle(isCurrent)}
+              // A11Y1 (round-6): announce which row is the active version
+              // to screen readers. railRowStyle paints the visual cue;
+              // aria-current="true" is the semantic equivalent so SR users
+              // learn from the rail what sighted users learn from the
+              // background colour (WCAG 2.1 AA § 1.3.1 / § 4.1.2).
+              aria-current={isCurrent ? "true" : undefined}
               onMouseEnter={(e) => {
                 if (!isCurrent) e.currentTarget.style.background = "#F5EDE3";
               }}
@@ -787,6 +793,10 @@ function VersionRail({
             onClick={() => onSelect(v.id)}
             className="ds-card"
             style={{ cursor: "pointer", padding: 12, textAlign: "left", transition: "border-color .14s" }}
+            // A11Y1 (round-6): same aria-current contract as the master
+            // rail above — the active variant card is visually highlighted
+            // by the ds-card hover style; SR users need the semantic flag.
+            aria-current={v.id === selectedId ? "true" : undefined}
             onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#D6CEC0")}
             onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#EDE8DF")}
           >

@@ -221,6 +221,16 @@ export function SettingsView() {
         setSalaryError("Enter a whole, non-negative number.");
         return;
       }
+      // S1 (round-6): mirror the server-side cap from
+      // api/src/schemas.ts UserPreferencesSchema (10_000_000). Before
+      // round-6 the client only rejected negatives, so values >10M were
+      // silently rejected by the server with a generic "Could not save"
+      // toast and no field-level cue. Catch it here so the same inline
+      // salaryError surfaces and onSave can short-circuit cheaply.
+      if (n > 10_000_000) {
+        setSalaryError("Salary must be at most 10,000,000.");
+        return;
+      }
       parsedSalary = n;
     }
 

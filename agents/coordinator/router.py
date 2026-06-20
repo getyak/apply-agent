@@ -24,6 +24,13 @@ from agents.harness.llm import pick_model
 
 log = structlog.get_logger("agents.coordinator.router")
 
+# DISP5 (round-6): every LLM call in this module is wrapped with this
+# timeout so a hanging upstream (OpenRouter, DeepSeek, GLM) can never
+# stall the SSE stream indefinitely. The round-6 audit flagged that
+# both classify_intent and _smalltalk_reply called ainvoke unguarded;
+# a 30s deadline matches the upper bound stated in agent-harness.md.
+_ROUTER_LLM_TIMEOUT_S = float(os.environ.get("RELAY_ROUTER_LLM_TIMEOUT_S", "30"))
+
 INTENT_PROMPT = (Path(__file__).parent.parent / "prompts" / "coordinator" / "intent_classifier.v1.md").read_text()
 
 
@@ -185,10 +192,20 @@ def _extract_args(message: str) -> dict[str, Any]:
 
 async def llm_intent_classifier(message: str) -> Intent:
     """Fallback when regex misses. Always returns something; defaults to 'other'."""
+    import asyncio as _asyncio  # local import keeps formatter from dropping it
+
     model = pick_model("fast", temperature=0.0, max_tokens=256)
     try:
-        resp = await model.ainvoke(
-            [SystemMessage(content=INTENT_PROMPT), HumanMessage(content=message[:2000])]
+        # DISP5 (round-6): wrap the LLM call in a hard timeout so a
+        # hanging upstream can never stall the SSE dispatch above this
+        # frame. asyncio.TimeoutError flows into the same except below
+        # and yields the same "other / confidence=0" fallback the
+        # original handler produced for any other exception class.
+        resp = await _asyncio.wait_for(
+            model.ainvoke(
+                [SystemMessage(content=INTENT_PROMPT), HumanMessage(content=message[:2000])]
+            ),
+            timeout=_ROUTER_LLM_TIMEOUT_S,
         )
         parsed = _safe_json(resp.content)
         intent = parsed.get("intent", "other")
@@ -201,7 +218,7 @@ async def llm_intent_classifier(message: str) -> Intent:
             via="llm",
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        log.error("llm_intent_classifier.failed", error=str(exc))
+        log.error("llm_intent_classifier.failed", error=str(exc), kind=type(exc).__name__)
         return Intent(intent="other", confidence=0.0, args={}, via="llm")
 
 
@@ -418,14 +435,32 @@ async def _smalltalk_reply(
             f"<active_resume>\n{resume_block}\n</active_resume>"
         )
 
+    import asyncio as _asyncio  # local import — see DISP5 note at top of file
+
     model = pick_model("fast", temperature=0.7, max_tokens=400)
-    resp = await model.ainvoke(
-        [
-            SystemMessage(content="\n\n".join(system_parts)),
-            *history,
-            HumanMessage(content=message[:1000]),
-        ]
-    )
+    try:
+        # DISP5 (round-6): same hard timeout as llm_intent_classifier so
+        # a stuck OpenRouter call can't hold the SSE stream open. Failure
+        # here returns a friendly fallback rather than propagating up,
+        # because this is the small-talk path — the user just asked a
+        # casual question, not a high-stakes agent action.
+        resp = await _asyncio.wait_for(
+            model.ainvoke(
+                [
+                    SystemMessage(content="\n\n".join(system_parts)),
+                    *history,
+                    HumanMessage(content=message[:1000]),
+                ]
+            ),
+            timeout=_ROUTER_LLM_TIMEOUT_S,
+        )
+    except Exception as exc:  # noqa: BLE001 boundary
+        log.error("smalltalk_reply.failed", error=str(exc), kind=type(exc).__name__)
+        return {
+            "agent": "coordinator",
+            "action": "reply",
+            "text": "Sorry — I couldn't respond just now. Please try again in a moment.",
+        }
     return {"agent": "coordinator", "action": "reply", "text": str(resp.content)}
 
 
