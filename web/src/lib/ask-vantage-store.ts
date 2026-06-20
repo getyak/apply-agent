@@ -359,3 +359,44 @@ export function hydrateDockFromStorage() {
     state: narrow ? "closed" : readPersistedState(),
   });
 }
+
+// M2 (round-4): keep the dock honest under dynamic viewport changes
+// (window resize on desktop, rotation on tablet, browser dev-tools open
+// and squeeze the main pane). hydrateDockFromStorage runs once on mount
+// and never re-evaluates, so a user who rotates a tablet from landscape
+// (≥1024px → docked) to portrait (768px → still docked) would get the
+// 372px panel chewing the main pane. This listener installs the same
+// narrow-viewport guard as a MediaQueryList subscriber: every transition
+// in/out of "narrow" re-applies the rule. We still defer to the
+// localStorage preference on desktop, so the user's saved
+// docked/full/closed choice survives a resize back to wide.
+//
+// Returns a teardown so the caller can detach on unmount.
+export function installDockViewportWatcher(): () => void {
+  if (typeof window === "undefined") return () => {};
+  const mql = window.matchMedia("(max-width: 1023px)");
+  const apply = (matches: boolean) => {
+    if (matches) {
+      // Narrow → force the launcher. Don't persist; the next wide
+      // viewport restores the saved preference automatically.
+      if (useDock.getState().state !== "closed") {
+        useDock.setState({ state: "closed" });
+      }
+    } else {
+      // Wide → re-honour the user's persisted preference. Only nudge if
+      // we're currently in the auto-forced "closed" state; if the user
+      // explicitly opened the dock at some point while narrow we'd see
+      // "docked"/"full" and respect that.
+      const persisted = readPersistedState();
+      if (useDock.getState().state === "closed" && persisted !== "closed") {
+        useDock.setState({ state: persisted });
+      }
+    }
+  };
+  // Initial sync — covers the case where this runs after a resize that
+  // happened between mount and listener install.
+  apply(mql.matches);
+  const handler = (e: MediaQueryListEvent) => apply(e.matches);
+  mql.addEventListener("change", handler);
+  return () => mql.removeEventListener("change", handler);
+}

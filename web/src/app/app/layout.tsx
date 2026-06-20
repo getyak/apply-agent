@@ -22,6 +22,7 @@ import { AskVantageDock } from "@/components/ask-vantage/dock";
 import {
   bootDockThread,
   hydrateDockFromStorage,
+  installDockViewportWatcher,
   useDock,
 } from "@/lib/ask-vantage-store";
 
@@ -41,6 +42,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     hydrateDockFromStorage();
   }, []);
+  // M2 (round-4): keep the dock state honest under viewport changes
+  // (window resize on desktop, rotation on tablet, browser dev-tools
+  // opening). hydrateDockFromStorage() above only runs once on mount;
+  // installDockViewportWatcher subscribes to the same matchMedia query
+  // so transitions in/out of "narrow" auto-collapse / restore the dock.
+  // Returns a teardown so HMR / route change / signOut cleanups don't
+  // leak listeners.
+  useEffect(() => installDockViewportWatcher(), []);
   useEffect(() => {
     bootDockThread(currentUser?.id ?? null);
   }, [currentUser?.id]);

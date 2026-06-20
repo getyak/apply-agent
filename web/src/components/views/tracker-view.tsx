@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
@@ -478,6 +478,18 @@ export function TrackerView() {
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<AppColumn | null>(null);
+  // K1+K5 (round-4): a transient error banner shown when a kanban drop
+  // PATCH fails. Before round-4 the drop handler awaited
+  // patchApplication() but discarded the {ok,error} result — failures
+  // silently rolled back via the optimistic-update path but the user
+  // saw no signal, just a card mysteriously snapping back. We also
+  // track an in-flight count so rapid drag-drop bursts (audit's K5
+  // race) trigger a single full reload after the last patch settles,
+  // re-syncing client state with whatever the server actually wrote.
+  // The counter is a ref because it never affects render — only the
+  // "last one out" check inside onColumnDrop's finally needs it.
+  const [dropError, setDropError] = useState<string | null>(null);
+  const pendingDropsRef = useRef(0);
   // N4 (round-2): dismissable info card explaining the client-side
   // delivery contract (vision.md + client-side-delivery.md §2). New users
   // land on this page with no understanding of where the "submit" step
@@ -574,7 +586,34 @@ export function TrackerView() {
     const prevColumn = prevStatus ? statusVisual(prevStatus).column : null;
     if (prevColumn === column) return;
     const nextStatus = COLUMN_DEFAULT_STATUS[column];
-    await patchApplication(id, { status: nextStatus });
+    // K1+K5: surface drop failures + recover from race interleaving.
+    // patchApplication already does optimistic update + rollback on
+    // failure, but the snapshot it rolls back to is stale relative to
+    // concurrent drops. We count in-flight patches; on the *last* one
+    // settling, fire a loadApplications() to re-sync against server
+    // truth. Errors get rendered in the banner below the header so the
+    // user knows the card "snap-back" wasn't a UI glitch.
+    pendingDropsRef.current += 1;
+    setDropError(null);
+    try {
+      const res = await patchApplication(id, { status: nextStatus });
+      if (!res.ok) {
+        setDropError(
+          res.error
+            ? `Couldn't update that card: ${res.error}`
+            : "Couldn't update that card. Try again.",
+        );
+      }
+    } finally {
+      pendingDropsRef.current -= 1;
+      // When the last in-flight drop settles, force a fresh fetch.
+      // Cheap (~one indexed query) and worth it to keep the kanban
+      // honest after the server may have rejected a status transition
+      // or seen patches arrive out of the order the user dragged.
+      if (pendingDropsRef.current === 0) {
+        void loadApplications();
+      }
+    }
   }
 
   return (
@@ -619,6 +658,30 @@ export function TrackerView() {
             className="shrink-0 cursor-pointer border-none bg-transparent text-ink-muted hover:text-ink p-1 rounded-[6px]"
           >
             <X className="w-[14px] h-[14px]" strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
+
+      {dropError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-center gap-3 rounded-[11px] px-4 py-3"
+          style={{
+            background: "#FBEDEA",
+            border: "1px solid #E8C4BC",
+            color: "#7A2A1F",
+          }}
+        >
+          <span className="font-body text-[13px] flex-1">{dropError}</span>
+          <button
+            type="button"
+            onClick={() => setDropError(null)}
+            title="Dismiss"
+            aria-label="Dismiss drop error"
+            className="shrink-0 cursor-pointer border-none bg-transparent p-1 rounded-[6px]"
+            style={{ color: "#7A2A1F" }}
+          >
+            <X className="w-[13px] h-[13px]" strokeWidth={1.8} />
           </button>
         </div>
       )}
