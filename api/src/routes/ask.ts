@@ -438,10 +438,19 @@ function toNdjson(
   }
 
   if (event === "error") {
+    // SSE4 (round-9): forward the Python global exception envelope
+    // (round-5 API1/API2) fields through to the frontend so the dock
+    // can branch on `code` rather than regexing the user-facing
+    // `message`. trace_id is the support correlation id we want to
+    // surface in error UI without having to ask the user.
     return [
       JSON.stringify({
         kind: "error",
         message: (payload.message as string) || "Upstream error",
+        ...(typeof payload.code === "string" ? { code: payload.code } : {}),
+        ...(typeof payload.trace_id === "string"
+          ? { trace_id: payload.trace_id }
+          : {}),
       }),
     ];
   }

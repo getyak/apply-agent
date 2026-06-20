@@ -113,7 +113,17 @@ type StreamFrame =
     }
   | { kind: "artifact"; artifact: Artifact }
   | { kind: "done" }
-  | { kind: "error"; message: string };
+  // SSE4 (round-9): `code` and `trace_id` come from the Python global
+  // exception envelope (round-5 API1/API2) and are forwarded by the
+  // gateway (api/src/routes/ask.ts). The dock branches on `code` so it
+  // can disable retry UI for `budget_exhausted`, prompt re-auth on
+  // `http_403`, and surface trace_id in support copy.
+  | {
+      kind: "error";
+      message: string;
+      code?: string;
+      trace_id?: string;
+    };
 
 const AGENT_LABELS: Record<string, string> = {
   resume_agent: "RÉSUMÉ AGENT",
@@ -237,8 +247,15 @@ export interface AskStreamCallbacks {
   // dock renders it instead of the generic "Lost connection" copy so the
   // user knows whether to retry or check that the agents host is up.
   onError: (
-    kind: "frame" | "timeout" | "disconnect" | "unreachable",
+    // SSE4 (round-9): two extra kinds derived from the upstream `code`
+    // field — `budget` means the user can't retry until their session
+    // budget recovers; `forbidden` means the request was authn/authz-
+    // rejected and re-auth is the right next step. Callers that don't
+    // care about the distinction can keep treating everything as
+    // `"frame"`.
+    kind: "frame" | "timeout" | "disconnect" | "unreachable" | "budget" | "forbidden",
     message: string,
+    meta?: { code?: string; trace_id?: string },
   ) => void;
 }
 
@@ -315,9 +332,20 @@ export async function runAskStream({
       case "done":
         cb.onDone();
         return "stop";
-      case "error":
-        cb.onError("frame", frame.message);
+      case "error": {
+        // SSE4 (round-9): map upstream `code` to a more specific kind
+        // when it matches a class the dock UI cares about; everything
+        // else falls back to "frame" so existing callers keep working.
+        const code = frame.code;
+        let kind: "frame" | "budget" | "forbidden" = "frame";
+        if (code === "budget_exhausted") kind = "budget";
+        else if (code === "http_403") kind = "forbidden";
+        cb.onError(kind, frame.message, {
+          ...(frame.code !== undefined ? { code: frame.code } : {}),
+          ...(frame.trace_id !== undefined ? { trace_id: frame.trace_id } : {}),
+        });
         return "stop";
+      }
       default:
         return "continue";
     }
@@ -629,9 +657,27 @@ export async function sendAsk(
       onDone: () => {
         clearOwnedStreamState();
       },
-      onError: (kind, message) => {
-        if (kind === "frame") {
-          updateAssistant(`\n\n_Something went wrong: ${message}_`);
+      onError: (kind, message, meta) => {
+        // SSE4 (round-9): map every error kind to a copy that tells the
+        // user whether retrying is worth it. trace_id (when present) is
+        // appended so support can correlate without quizzing the user.
+        const traceLine = meta?.trace_id
+          ? `\n_Reference: ${meta.trace_id}_`
+          : "";
+        if (kind === "budget") {
+          // The Python global handler renders a sanitized "session
+          // budget used up" string; show it verbatim because it is
+          // already user-safe (no debug paths or cent math leak through
+          // — see agents/api/server.py:_error_envelope).
+          updateAssistant(`\n\n_${message}_${traceLine}`);
+        } else if (kind === "forbidden") {
+          updateAssistant(
+            `\n\n_${message} You may need to sign in again._${traceLine}`,
+          );
+        } else if (kind === "frame") {
+          updateAssistant(
+            `\n\n_Something went wrong: ${message}_${traceLine}`,
+          );
         } else if (kind === "timeout") {
           updateAssistant("\n\n_Vantage stream timed out. Try again._");
         } else if (kind === "unreachable") {

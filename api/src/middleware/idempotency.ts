@@ -2,7 +2,7 @@ import type { Context, Next } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 import type { Redis } from "ioredis";
 import redis from "../redis";
-import { ValidationError } from "../errors";
+import { ConflictError, ValidationError } from "../errors";
 import type { AppEnv } from "../types";
 
 // Idempotency-Key middleware for non-idempotent mutation endpoints.
@@ -26,6 +26,23 @@ interface StoredResponse {
   status: number;
   body: string;
   contentType: string;
+  // IDEM3 (round-9): hex sha256 of the original request body, stored
+  // alongside the response so replays with a *different* request body
+  // get a 409 instead of silently returning the prior response. Old
+  // cache entries written before round-9 have no hash; we treat that
+  // as "back-compat replay" and skip the comparison.
+  requestHash?: string;
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input),
+  );
+  const bytes = new Uint8Array(buf);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return hex;
 }
 
 export interface IdempotencyOptions {
@@ -83,8 +100,31 @@ export function idempotency(options: IdempotencyOptions = {}) {
       return;
     }
 
+    // IDEM3 (round-9): hash the *current* request body so we can compare
+    // against whatever we stored on the first call. Reading the body
+    // here is safe because the handler hasn't run yet and Hono lets us
+    // clone the underlying Request. Bodyless requests (GET, DELETE) get
+    // an empty-string hash, which still works as a stable key.
+    let currentBody = "";
+    try {
+      currentBody = await c.req.raw.clone().text();
+    } catch {
+      currentBody = "";
+    }
+    const currentHash = await sha256Hex(currentBody);
+
     if (stored) {
-      // Replay the cached response without touching the handler.
+      // IDEM3 (round-9): the round-9 audit showed that without a body
+      // comparison, a client that reuses an Idempotency-Key but mutates
+      // the request body would silently get the *first* call's
+      // response, with no signal that the new body was ignored. Reject
+      // with 409 instead. Old entries (no requestHash, written before
+      // round-9) replay unchanged to avoid breaking in-flight keys.
+      if (stored.requestHash && stored.requestHash !== currentHash) {
+        throw new ConflictError(
+          "Idempotency-Key reused with a different request body. Pick a new key for a different payload.",
+        );
+      }
       return c.newResponse(stored.body, stored.status as StatusCode, {
         [REPLAY_HEADER]: "true",
         "Content-Type": stored.contentType,
@@ -111,6 +151,7 @@ export function idempotency(options: IdempotencyOptions = {}) {
       status: res.status,
       body,
       contentType,
+      requestHash: currentHash,
     };
 
     try {
