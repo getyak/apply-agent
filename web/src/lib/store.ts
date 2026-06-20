@@ -288,6 +288,14 @@ export interface ApiApplication {
   // overwritten silently.
   submitted_via?: string | null;
   created_at: string;
+  // P3.2 state machine. The persisted column lands once the reconcile
+  // cron ships; until then the API returns a derived value computed
+  // each request (see deriveNextAction in api/src/routes/applications.ts).
+  // Front-end prefers next_action when present, falls back to derived.
+  next_action?: string | null;
+  next_action_due?: string | null;
+  next_action_derived?: string | null;
+  next_action_due_derived?: string | null;
 }
 
 export interface TrendSnapshot {
@@ -303,6 +311,21 @@ export interface CurrentUser {
   id: string;
   email: string;
   displayName: string;
+}
+
+// One entry in a tailored résumé version's change log. Field names
+// mirror agents/nodes/resume_agent.py::_normalise_customize_envelope.
+// risk is appended client-side; values: safe / needs_review /
+// unsupported. Loose `string` typing keeps unknown enum values from
+// blowing up the renderer — the panel falls back to a neutral chip.
+export interface TailoredChangeLogEntry {
+  bullet_id: string;
+  change_type: string;
+  before?: string | null;
+  after?: string | null;
+  source_evidence?: string | null;
+  explanation?: string | null;
+  risk?: string | null;
 }
 
 interface VantageState {
@@ -338,6 +361,12 @@ interface VantageState {
   trendSnapshot: TrendSnapshot | null;
   currentResumeId: string | null;
   currentUser: CurrentUser | null;
+  // P2.3-UI — per-tailored-version change_log map. The Resume Studio
+  // panel reads this; the ask-stream artifact path (once wired) will
+  // call setTailoredChangeLog with the agent's payload. Keys are the
+  // tailored resume id. Empty map by default; panel hides itself when
+  // there's no entry for the current version.
+  tailoredChangeLogs: Record<string, TailoredChangeLogEntry[]>;
 
   // Onboarding parse state — driven by real upload/parse, no hardcoded resume.
   parsedResume: ParsedResume | null;
@@ -417,6 +446,8 @@ interface VantageState {
   loadCurrentUser: () => Promise<void>;
   signOut: () => void;
   submitApplication: (jobId: string) => Promise<void>;
+  // P2.3-UI. Setter is overwrite-by-key; pass [] to clear a row.
+  setTailoredChangeLog: (resumeId: string, log: TailoredChangeLogEntry[]) => void;
 }
 
 export const useVantage = create<VantageState>((set, get) => ({
@@ -456,6 +487,7 @@ export const useVantage = create<VantageState>((set, get) => ({
   trendSnapshot: null,
   currentResumeId: null,
   currentUser: null,
+  tailoredChangeLogs: {},
 
   parsedResume: null,
   parseError: null,
@@ -517,6 +549,14 @@ export const useVantage = create<VantageState>((set, get) => ({
   // Shared: kick off the async parse job, enter the workspace, begin polling.
   // Internal helper (not in the public interface) used by both upload paths.
   _startAsyncParse: async (source: string, sourceFileId?: string) => {
+    // In-flight guard. Without it, React strict mode's double-invoke,
+    // a user re-clicking "Upload" while a job is running, or a retry
+    // racing the previous attempt all start a SECOND /parse-async.
+    // Two jobs hitting the same resumes row at the same instant used to
+    // surface as the onboarding 23505 (migration 016 fixes the DB race;
+    // this guard prevents the wasted LLM call and the UI flicker).
+    const { parseJobStatus, parseJobId } = get();
+    if (parseJobStatus === "running" || parseJobId) return;
     try {
       const { job } = await resumesApi.parseAsync({
         markdown: source,
@@ -956,6 +996,14 @@ export const useVantage = create<VantageState>((set, get) => ({
     }
   },
 
+  setTailoredChangeLog: (resumeId, log) => {
+    // Empty array is a valid value (means "I've seen this version and
+    // there's nothing to review"), so we always overwrite — never merge.
+    set((s) => ({
+      tailoredChangeLogs: { ...s.tailoredChangeLogs, [resumeId]: log },
+    }));
+  },
+
   // Clear local auth and reset the in-memory user-scoped slices so the next
   // login starts on a clean slate. We DO NOT touch parsed-resume helpers like
   // tour state — those are per-browser, not per-session.
@@ -973,6 +1021,10 @@ export const useVantage = create<VantageState>((set, get) => ({
       chatMessages: [],
       chatSessionId: null,
       chatHydrating: false,
+      // Resume change logs are per-version and user-scoped; clear them
+      // on signOut so the next user on this browser can't see the
+      // outgoing user's review state.
+      tailoredChangeLogs: {},
       screen: "onboarding",
     });
   },

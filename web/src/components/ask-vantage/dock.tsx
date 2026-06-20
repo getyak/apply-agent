@@ -17,6 +17,7 @@ import {
   type AgentEvent,
   type DockAttachment,
   type DockMessage,
+  type ArtifactAction,
 } from "@/lib/ask-vantage-store";
 import { sendAsk } from "@/lib/ask-stream";
 import { useVantage } from "@/lib/store";
@@ -520,7 +521,311 @@ function MessageRow({
     );
   }
 
+  if (m.kind === "task_graph") {
+    return <TaskGraphCard m={m} />;
+  }
+
+  if (m.kind === "artifact") {
+    return <ArtifactCard m={m} />;
+  }
+
   return null;
+}
+
+// Generic artifact card. Renders title, confidence pill, evidence list
+// and primary actions. Per audit P2.2 — all agent outputs share one
+// shape, so we don't need a separate renderer per artifact_type. The
+// "Approve" / "Tweak" / "Discard" copy comes from next_actions[].
+function ArtifactCard({ m }: { m: DockMessage }) {
+  const a = m.artifact;
+  if (!a) return null;
+  const confPct = typeof a.confidence === "number" ? Math.round(a.confidence * 100) : null;
+  const confSpec = (() => {
+    if (confPct === null) return null;
+    if (confPct >= 80) return { text: `${confPct}% CONFIDENT`, fg: "#2F5722", bg: "#E2EED9" };
+    if (confPct >= 60) return { text: `${confPct}% CONFIDENT`, fg: "#5D3000", bg: "#FBEFD8" };
+    return { text: `${confPct}% — REVIEW`, fg: "#8A6A12", bg: "#FBEFD0" };
+  })();
+  return (
+    <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }} className="animate-pop">
+      <div style={{ width: 28, flexShrink: 0 }} />
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "#FFFBF4",
+          border: "1px solid #E8DCCA",
+          borderRadius: 12,
+          padding: 14,
+          display: "flex",
+          flexDirection: "column",
+          gap: 11,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div
+            style={{
+              fontFamily: "JetBrains Mono, ui-monospace, monospace",
+              fontSize: 9.5,
+              letterSpacing: 0.6,
+              textTransform: "uppercase",
+              color: "#A39F99",
+            }}
+          >
+            {a.artifactType.replace(/_/g, " ")}
+          </div>
+          {confSpec ? (
+            <span
+              style={{
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                fontSize: 9.5,
+                letterSpacing: 0.6,
+                padding: "2px 7px",
+                borderRadius: 999,
+                color: confSpec.fg,
+                background: confSpec.bg,
+              }}
+            >
+              {confSpec.text}
+            </span>
+          ) : null}
+          {a.needsUserReview ? (
+            <span
+              style={{
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                fontSize: 9.5,
+                letterSpacing: 0.6,
+                padding: "2px 7px",
+                borderRadius: 999,
+                color: "#7A2A1F",
+                background: "#F4D7D2",
+              }}
+            >
+              HITL
+            </span>
+          ) : null}
+        </div>
+        <div>
+          <div style={{ fontFamily: "Inter, system-ui, sans-serif", fontWeight: 600, fontSize: 14, color: "#2B2822" }}>
+            {a.artifactTitle}
+          </div>
+          {a.artifactSub ? (
+            <div style={{ marginTop: 2 }}>
+              <MarkdownMessage content={a.artifactSub} variant="subline" />
+            </div>
+          ) : null}
+        </div>
+        {a.sourceEvidence && a.sourceEvidence.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div
+              style={{
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                fontSize: 9.5,
+                letterSpacing: 0.6,
+                color: "#A39F99",
+              }}
+            >
+              EVIDENCE
+            </div>
+            <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+              {a.sourceEvidence.map((ev, i) => (
+                <li
+                  key={i}
+                  style={{
+                    fontFamily: "Inter, system-ui, sans-serif",
+                    fontSize: 12,
+                    color: "#5D5046",
+                  }}
+                >
+                  {ev.route ? (
+                    <a
+                      href={ev.route}
+                      style={{ color: "#5D3000", textDecoration: "underline" }}
+                    >
+                      {ev.label}
+                    </a>
+                  ) : (
+                    ev.label
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {a.nextActions && a.nextActions.length > 0 ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {a.nextActions.map((act, i) => (
+              <ArtifactActionButton key={i} action={act} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ArtifactActionButton({ action }: { action: ArtifactAction }) {
+  const onClick = action.route
+    ? () => {
+        if (typeof window !== "undefined") window.location.assign(action.route!);
+      }
+    : undefined;
+  // Three color tracks: primary (approve/open), neutral (tweak), warn
+  // (discard). Keeps the dock visually consistent with the result card
+  // while letting users see "this is the destructive one" at a glance.
+  const style: React.CSSProperties = (() => {
+    if (action.kind === "approve" || action.kind === "open") {
+      return {
+        background: "#5D3000",
+        color: "#FAF8F6",
+        border: "none",
+      };
+    }
+    if (action.kind === "discard") {
+      return {
+        background: "#FFFFFF",
+        color: "#7A2A1F",
+        border: "1px solid #E2C1BB",
+      };
+    }
+    return {
+      background: "#FFFFFF",
+      color: "#2B2822",
+      border: "1px solid #E8DCCA",
+    };
+  })();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      style={{
+        ...style,
+        cursor: onClick ? "pointer" : "not-allowed",
+        opacity: onClick ? 1 : 0.5,
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontWeight: 600,
+        fontSize: 12.5,
+        padding: "8px 12px",
+        borderRadius: 8,
+      }}
+    >
+      {action.label}
+    </button>
+  );
+}
+
+// Render the coordinator's plan as a row-per-step card. Each row mirrors
+// the (agent, label, status) tuple; the status pill animates as
+// updateTaskGraphStep mutates the row. We intentionally keep it visually
+// quieter than the result card so a typical 3-step plan doesn't crowd
+// out the conversation thread above and below it.
+function TaskGraphCard({ m }: { m: DockMessage }) {
+  if (!m.steps || m.steps.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }} className="animate-pop">
+      <div style={{ width: 28, flexShrink: 0 }} />
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "#FFFFFF",
+          border: "1px solid #EDE8DF",
+          borderRadius: 12,
+          padding: "12px 14px",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "JetBrains Mono, ui-monospace, monospace",
+            fontSize: 10,
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+            color: "#A39F99",
+            marginBottom: 6,
+          }}
+        >
+          PLAN · {m.steps.length} STEP{m.steps.length === 1 ? "" : "S"}
+        </div>
+        {m.userGoal ? (
+          <div
+            style={{
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+              fontSize: 13,
+              color: "#2B2822",
+              marginBottom: 9,
+            }}
+          >
+            {m.userGoal}
+          </div>
+        ) : null}
+        <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          {m.steps.map((s, i) => (
+            <li
+              key={s.step}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 12.5,
+                color: s.status === "pending" ? "#A39F99" : "#2B2822",
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                  fontSize: 10,
+                  width: 14,
+                  flexShrink: 0,
+                  color: "#A39F99",
+                }}
+              >
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>{s.label}</span>
+              <TaskGraphStepPill status={s.status} requiresReview={!!s.requires_review} />
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+function TaskGraphStepPill({
+  status,
+  requiresReview,
+}: {
+  status: "pending" | "running" | "done" | "review" | "failed";
+  requiresReview: boolean;
+}) {
+  const spec = (() => {
+    if (status === "running") return { text: "RUNNING", fg: "#5D3000", bg: "#FBEFD8", anim: true };
+    if (status === "done") return { text: "DONE", fg: "#2F5722", bg: "#E2EED9" };
+    if (status === "review") return { text: "REVIEW", fg: "#8A6A12", bg: "#FBEFD0" };
+    if (status === "failed") return { text: "FAILED", fg: "#7A2A1F", bg: "#F4D7D2" };
+    return { text: requiresReview ? "HITL" : "WAITING", fg: "#A39F99", bg: "#F4F0E8" };
+  })();
+  return (
+    <span
+      className={spec.anim ? "animate-pulse" : undefined}
+      style={{
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+        fontSize: 9.5,
+        letterSpacing: 0.6,
+        padding: "2px 7px",
+        borderRadius: 999,
+        color: spec.fg,
+        background: spec.bg,
+        flexShrink: 0,
+      }}
+    >
+      {spec.text}
+    </span>
+  );
 }
 
 function dockShellStyle(width: number): React.CSSProperties {

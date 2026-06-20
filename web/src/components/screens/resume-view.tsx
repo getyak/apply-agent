@@ -19,6 +19,7 @@ import ReactMarkdown from "react-markdown";
 import { resumes as resumesApi, files as filesApi } from "@/lib/api";
 import { useDock } from "@/lib/ask-vantage-store";
 import { useVantage } from "@/lib/store";
+import { ResumeChangeLogPanel } from "@/components/studio/resume-change-log-panel";
 
 type VersionRow = {
   id: string;
@@ -581,14 +582,43 @@ export function ResumeView() {
           }
         />
       </div>
+      <ResumeChangeLogSection currentVersion={currentVersion} />
       {doc?._source && sourceOpen ? (
+        // key on fileId lets React unmount/remount the drawer when the user
+        // swaps sources, so SourceDrawer's effect never has to setState() to
+        // reset its async download state — sidesteps React 19's
+        // react-hooks/set-state-in-effect rule.
         <SourceDrawer
+          key={doc._source.fileId}
           source={doc._source}
           onClose={() => setSourceOpen(false)}
           onReplace={askToUpload}
         />
       ) : null}
     </>,
+  );
+}
+
+// Hooks-only wrapper around ResumeChangeLogPanel — reads the store and
+// only renders for tailored variants that have an entry. Lifting this
+// into a small component keeps the parent's render free of conditional
+// `useVantage` calls and limits re-renders to the few times the map
+// changes.
+function ResumeChangeLogSection({
+  currentVersion,
+}: {
+  currentVersion: VersionRow | null;
+}) {
+  const log = useVantage((s) =>
+    currentVersion && !currentVersion.isBase
+      ? s.tailoredChangeLogs[currentVersion.id]
+      : undefined,
+  );
+  if (!currentVersion || currentVersion.isBase || !log) return null;
+  return (
+    <div style={{ padding: "0 26px 24px" }}>
+      <ResumeChangeLogPanel entries={log} />
+    </div>
   );
 }
 
@@ -1664,30 +1694,34 @@ function SourceDrawer({
   onClose: () => void;
   onReplace: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Combine the three async-status fields into one slice so we can reset them
+  // with a single setState during the effect body — React 19's hook rules flag
+  // multiple synchronous setStates as cascading renders.
+  type DownloadState = { url: string | null; loading: boolean; error: string | null };
+  const [download, setDownload] = useState<DownloadState>({ url: null, loading: true, error: null });
+  const { url, loading, error } = download;
   const isPdf = source.mime === "application/pdf" || source.fileName.toLowerCase().endsWith(".pdf");
 
+  // No reset in the effect body — the parent keys this drawer on fileId, so a
+  // new fileId remounts SourceDrawer with the initial useState slice already
+  // in place. The effect only owns the async download itself.
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
     filesApi
       .download(source.fileId)
       .then((res) => {
         if (!alive) return;
-        setUrl(res.url);
+        setDownload({ url: res.url, loading: false, error: null });
       })
       .catch((e: Error) => {
         if (!alive) return;
-        setError(
-          e.message ||
+        setDownload({
+          url: null,
+          loading: false,
+          error:
+            e.message ||
             "Couldn't fetch the original — the file may have been removed or storage is offline.",
-        );
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+        });
       });
     return () => {
       alive = false;

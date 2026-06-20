@@ -16,7 +16,9 @@ const SUGGESTIONS = [
 export function ChatView() {
   const router = useRouter();
   const chatLog = useVantage((s) => s.chatLog);
-  const sendChat = useVantage((s) => s.sendChat);
+  // `sendChat` was the empty-input demo trigger — removed per audit P1.
+  // `runFlow` is still used by the suggestion chips (legacy demo flows
+  // kept until P2 replaces chips with real ask-stream prompts).
   const runFlow = useVantage((s) => s.runFlow);
   const chatInput = useVantage((s) => s.chatInput);
   const setChatInput = useVantage((s) => s.setChatInput);
@@ -209,8 +211,13 @@ export function ChatView() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              // Empty-input fall-through used to trigger a demo `runFlow`
+              // ("find") which faked an agent run with no LLM call —
+              // confusing for users testing whether scout actually
+              // works. Per audit P1 "主聊天页存在两个聊天体系", empty
+              // submit is now a no-op; only real input goes to the
+              // backend.
               if (chatInput.trim()) sendRealChat();
-              else sendChat();
             }}
             className="flex items-center gap-[10px] bg-white border border-border-dark rounded-[13px] pl-[18px] pr-[7px] py-[7px] shadow-sm"
           >
@@ -221,8 +228,10 @@ export function ChatView() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
+                  // Same rule as the form-submit handler above: empty
+                  // input is a no-op so users never accidentally trigger
+                  // the demo flow when testing the real agent path.
                   if (chatInput.trim()) sendRealChat();
-                  else sendChat();
                 }
               }}
               placeholder="Ask anything, or launch a task…"

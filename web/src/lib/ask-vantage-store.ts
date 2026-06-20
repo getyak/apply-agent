@@ -36,7 +36,61 @@ export interface AgentEvent {
   ts: number;
 }
 
-export type DockMsgKind = "user" | "assistant" | "agents" | "result";
+export type DockMsgKind =
+  | "user"
+  | "assistant"
+  | "agents"
+  | "result"
+  | "task_graph"
+  | "artifact";
+
+// Subset of ask-stream's Artifact that the dock needs to render. We
+// deliberately don't pull the type from ask-stream.ts to keep the store
+// independent of the streaming layer (the same store powers /recent
+// rehydration which has no stream).
+export type ArtifactType =
+  | "resume_version"
+  | "job_match_set"
+  | "application_package"
+  | "interview_session"
+  | "cover_letter"
+  | "market_snapshot";
+
+export interface ArtifactSourceEvidence {
+  label: string;
+  route?: string;
+}
+
+export interface ArtifactAction {
+  kind: "approve" | "tweak" | "discard" | "open";
+  label: string;
+  route?: string;
+}
+
+export interface ArtifactPayload {
+  artifactType: ArtifactType;
+  artifactId: string;
+  artifactTitle: string;
+  artifactSub: string;
+  confidence?: number;
+  needsUserReview?: boolean;
+  sourceEvidence?: ArtifactSourceEvidence[];
+  nextActions?: ArtifactAction[];
+}
+
+// Per-step run state inside a task_graph message. The dock animates rows
+// as agent_start / agent_done frames arrive — the step is keyed on the
+// `agent` string the planner emitted, so coordinator-side reordering
+// doesn't break the UI.
+export type TaskGraphStepStatus = "pending" | "running" | "done" | "review" | "failed";
+
+export interface TaskGraphMsgStep {
+  step: string;
+  agent: string;
+  label: string;
+  requires_review?: boolean;
+  status: TaskGraphStepStatus;
+}
 
 export interface DockMessage {
   id: string;
@@ -47,6 +101,12 @@ export interface DockMessage {
   sub?: string;
   action?: string;
   onAction?: () => void;
+  // task_graph payload — present only when kind === "task_graph".
+  taskId?: string;
+  userGoal?: string;
+  steps?: TaskGraphMsgStep[];
+  // artifact payload — present only when kind === "artifact".
+  artifact?: ArtifactPayload;
 }
 
 // One entry in the dock's RECENT rail. Each anchor is a past user prompt
@@ -87,6 +147,19 @@ interface DockStateShape {
   setThreadId: (id: string) => void;
   setMode: (m: DockMode) => void;
   pushMessage: (m: Omit<DockMessage, "id"> & { id?: string }) => string;
+  // Generic mutator for an existing message — used by task_graph rendering
+  // and by future artifact / streaming partial updates. Quiet no-op if the
+  // id has been evicted (e.g. reset() between turns).
+  patchMessage: (id: string, patch: Partial<Omit<DockMessage, "id">>) => void;
+  // Drive the step animation as agent_start / agent_done frames stream in.
+  // `status` here is the post-event state (running on start, done on done,
+  // failed on agent_failed). The mutator is a quiet no-op if the message
+  // isn't a task_graph or the agent isn't listed in its plan.
+  updateTaskGraphStep: (
+    messageId: string,
+    agent: string,
+    status: TaskGraphStepStatus,
+  ) => void;
   updateAgentEvent: (e: AgentEvent) => void;
   addAttachment: (a: DockAttachment) => void;
   removeAttachment: (id: string) => void;
@@ -179,6 +252,28 @@ export const useDock = create<DockStateShape>((set, get) => ({
     set((s) => ({ messages: [...s.messages, { ...m, id }] }));
     return id;
   },
+  patchMessage: (id, patch) =>
+    set((s) => ({
+      messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    })),
+  updateTaskGraphStep: (messageId, agent, status) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.id !== messageId || m.kind !== "task_graph" || !m.steps) return m;
+        // Only touch the first matching agent row whose state isn't terminal —
+        // covers the (rare) case where the same agent appears twice in a plan
+        // (e.g. customise → recustomise) without losing earlier "done" rows.
+        let touched = false;
+        const next = m.steps.map((st) => {
+          if (touched) return st;
+          if (st.agent !== agent) return st;
+          if (st.status === "done" || st.status === "failed") return st;
+          touched = true;
+          return { ...st, status };
+        });
+        return touched ? { ...m, steps: next } : m;
+      }),
+    })),
   updateAgentEvent: (e) =>
     set((s) => ({ agentEvents: { ...s.agentEvents, [e.id]: e } })),
   addAttachment: (a) =>
