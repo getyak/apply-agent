@@ -468,6 +468,24 @@ export const ask = {
     ),
 };
 
+// Today action queue (P3.1). Mixes prep / interview / learn signals
+// into a single priority-sorted list — see api/src/routes/today.ts.
+export type TodayActionKind = "prepare" | "follow_up" | "interview" | "learn";
+export interface TodayAction {
+  id: string;
+  kind: TodayActionKind;
+  title: string;
+  sub: string;
+  due_at?: string;
+  priority: number;
+  route: string;
+  ask_prompt?: string;
+}
+export const today = {
+  queue: () =>
+    api<{ actions: TodayAction[]; generated_at: string }>("/api/today/queue"),
+};
+
 export const trends = {
   today: () =>
     api<{ snapshot: { totalJobs: number; newJobsThisWeek: number; topSkills: Array<{ skill: string; count: number }>; topRoles: Array<{ role_title: string; count: number }> } }>(

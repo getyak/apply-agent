@@ -24,6 +24,9 @@ interface TrackerCard {
   status: string;
   /** Demo "just submitted" highlight — only used by the seed entries. */
   isNew?: boolean;
+  /** P3.2 — what the user should do next on this row. Prefers the
+   *  persisted column; falls back to the API-derived value. */
+  nextAction?: string | null;
 }
 
 const COLUMN_TITLES: Record<AppColumn, string> = {
@@ -81,6 +84,36 @@ function relativeFrom(iso?: string | null): string {
   return `${w}w ago`;
 }
 
+// Compact "what's next on this row" chip (P3.2). Distinct color tracks
+// per action kind so the user can scan the column for "anything urgent
+// I need to do today" without reading every card.
+function NextActionBadge({ value }: { value: string }) {
+  const spec = (() => {
+    if (value === "interview") return { text: "INTERVIEW", fg: "#7A2A1F", bg: "#F4D7D2" };
+    if (value === "follow_up") return { text: "FOLLOW UP", fg: "#8A6A12", bg: "#FBEFD0" };
+    if (value === "submit") return { text: "READY", fg: "#2F5722", bg: "#E2EED9" };
+    if (value === "prep") return { text: "PREP", fg: "#5D3000", bg: "#FBEFD8" };
+    if (value === "close_loop") return { text: "WRAP UP", fg: "#5D5046", bg: "#F4F0E8" };
+    return null;
+  })();
+  if (!spec) return null;
+  return (
+    <span
+      style={{
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+        fontSize: 9,
+        letterSpacing: 0.5,
+        padding: "3px 7px",
+        borderRadius: 4,
+        color: spec.fg,
+        background: spec.bg,
+      }}
+    >
+      {spec.text}
+    </span>
+  );
+}
+
 function appliedToCard(a: Applied, i: number): TrackerCard {
   return {
     key: `seed-${a.co}-${i}`,
@@ -104,6 +137,7 @@ function apiToCard(a: ApiApplication): TrackerCard {
     role: a.role_title || "Role",
     when: relativeFrom(a.submitted_at || a.created_at),
     status: a.status,
+    nextAction: a.next_action ?? a.next_action_derived ?? null,
   };
 }
 
@@ -218,15 +252,18 @@ function Column({
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-[6px] flex-wrap">
                   <span className="font-mono text-[10px] tracking-[0.4px] uppercase text-ink-muted">
                     {card.when}
                   </span>
-                  <span
-                    className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
-                  >
-                    {card.isNew ? "Just sent" : v.label}
-                  </span>
+                  <div className="flex items-center gap-[5px]">
+                    {card.nextAction ? <NextActionBadge value={card.nextAction} /> : null}
+                    <span
+                      className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
+                    >
+                      {card.isNew ? "Just sent" : v.label}
+                    </span>
+                  </div>
                 </div>
               </button>
             );
@@ -467,10 +504,13 @@ export function TrackerView() {
     [apiApplications, selectedId],
   );
 
-  // Close the drawer if the selected row vanishes (e.g. server reload dropped it).
-  useEffect(() => {
-    if (selectedId && !selected) setSelectedId(null);
-  }, [selectedId, selected]);
+  // Drawer visibility is derived from `selected`, so when a row vanishes from
+  // the server reload the drawer auto-closes without a follow-up render. We
+  // intentionally keep `selectedId` set: if the row reappears (e.g. transient
+  // refetch dropped then restored it), the drawer comes back to where the
+  // user left it instead of forcing them to reselect. This sidesteps React
+  // 19's `react-hooks/set-state-in-effect` warning by removing the reconcile
+  // effect entirely.
 
   const totalReal = apiApplications.length;
   const hasInterviewing = cards.interviewing.length > 0;

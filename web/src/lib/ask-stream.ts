@@ -37,8 +37,70 @@ import {
   type DockAttachment,
 } from "./ask-vantage-store";
 
+// One step in the coordinator's plan. agent_id matches the same `agent`
+// string carried on agent_start/agent_done so the UI can light up each
+// row as the run progresses. requires_review is the audit's HITL signal
+// — the UI marks the step with a "review" pill instead of auto-green.
+export interface TaskGraphStep {
+  step: string;            // stable identifier (e.g. "customize_resume")
+  agent: string;           // the agent that will run this step
+  label: string;           // human-facing one-liner
+  requires_review?: boolean;
+}
+
+export interface TaskGraph {
+  task_id: string;
+  user_goal: string;
+  plan: TaskGraphStep[];
+}
+
+// A typed reference back to where this artifact lives once the user
+// approves it — used by both the View-evidence link and the redirect
+// after Approve.
+export type ArtifactType =
+  | "resume_version"
+  | "job_match_set"
+  | "application_package"
+  | "interview_session"
+  | "cover_letter"
+  | "market_snapshot";
+
+export interface SourceEvidence {
+  // Short, user-facing description (e.g. "Stripe JD · staff eng · 2026-04-12")
+  label: string;
+  // Optional same-origin route to view the evidence. ask-stream re-uses
+  // isSafeRoute before exposing it to the dock.
+  route?: string;
+}
+
+export interface ArtifactAction {
+  // One of "approve" | "tweak" | "discard" | "open". The dock renders
+  // approve in brown (primary), discard in muted red, tweak as a neutral
+  // outline button, and open as the default CTA.
+  kind: "approve" | "tweak" | "discard" | "open";
+  label: string;
+  route?: string;
+}
+
+export interface Artifact {
+  artifact_type: ArtifactType;
+  id: string;
+  title: string;
+  sub: string;
+  // 0–1 produced by the agent. Anything < 0.6 paints a yellow "low
+  // confidence" pill; the dock still renders the actions.
+  confidence?: number;
+  // True iff the artifact MUST get an explicit user approval before any
+  // side-effect (submit / send / write). Plays into vision.md's HITL
+  // red-line: submit / send / delete always need approval.
+  needs_user_review?: boolean;
+  source_evidence?: SourceEvidence[];
+  next_actions?: ArtifactAction[];
+}
+
 type StreamFrame =
   | { kind: "text"; delta: string }
+  | { kind: "task_graph"; graph: TaskGraph }
   | { kind: "agent_start"; agent: string; label: string }
   | { kind: "agent_done"; agent: string; statusText: string }
   | { kind: "agent_failed"; agent: string; statusText: string }
@@ -49,6 +111,7 @@ type StreamFrame =
       action: string;
       route?: string;
     }
+  | { kind: "artifact"; artifact: Artifact }
   | { kind: "done" }
   | { kind: "error"; message: string };
 
@@ -84,6 +147,31 @@ function isSafeRoute(route: string): boolean {
   );
 }
 
+// Gateway non-2xx envelope. Both AGENT_UNREACHABLE (503) and AGENT_FAILED
+// (502) share this shape; `code` is informational, `hint` is the user-
+// facing copy we want to render verbatim.
+interface AskErrorPayload {
+  error?: string;
+  code?: string;
+  hint?: string;
+  detail?: string;
+  status?: number;
+}
+
+async function readErrorPayload(res: Response): Promise<AskErrorPayload | null> {
+  try {
+    const text = await res.text();
+    if (!text) return null;
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed as AskErrorPayload;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function formatAttachmentsFooter(atts: DockAttachment[]): string {
   if (atts.length === 0) return "";
   // Carried as a human-readable footer until /api/ask/stream grows a
@@ -115,6 +203,12 @@ export interface SendAskOptions {
 export interface AskStreamCallbacks {
   // Streaming text delta for the current assistant turn.
   onAssistantDelta: (delta: string) => void;
+  // Coordinator's plan for the current turn. Fires once, before any
+  // agent_start. The dock renders it as a task-graph card so users see
+  // *what's about to happen* instead of waiting for opaque agent spinners.
+  // For backwards compatibility callers may omit this — runAskStream
+  // silently swallows task_graph frames when no callback is provided.
+  onTaskGraph?: (graph: TaskGraph) => void;
   // Agent task card lifecycle.
   onAgentStart: (agent: string, label: string) => void;
   onAgentDone: (agent: string, statusText: string) => void;
@@ -127,12 +221,25 @@ export interface AskStreamCallbacks {
     action: string;
     route?: string;
   }) => void;
+  // Rich artifact emission — supersedes onResult for new agents. Carries
+  // confidence, evidence and primary actions so the dock can render an
+  // "Approve / Tweak / Discard" card with traceability. When omitted by
+  // the caller (e.g. Resume Studio's local callback flow) we silently
+  // drop the frame, just like task_graph.
+  onArtifact?: (artifact: Artifact) => void;
   // Stream terminated normally.
   onDone: () => void;
   // Stream failed mid-flight. `kind` lets the caller distinguish a clean
-  // upstream "error" frame from a transport timeout/disconnect so it can
-  // surface different copy.
-  onError: (kind: "frame" | "timeout" | "disconnect", message: string) => void;
+  // upstream "error" frame, a transport timeout/disconnect, or a gateway-
+  // reported precondition failure (agent host offline → AGENT_UNREACHABLE,
+  // upstream returned non-2xx → AGENT_FAILED) so it can surface different
+  // copy. `unreachable` payloads carry the gateway's hint verbatim — the
+  // dock renders it instead of the generic "Lost connection" copy so the
+  // user knows whether to retry or check that the agents host is up.
+  onError: (
+    kind: "frame" | "timeout" | "disconnect" | "unreachable",
+    message: string,
+  ) => void;
 }
 
 export interface RunAskStreamArgs {
@@ -162,6 +269,12 @@ export async function runAskStream({
       case "text":
         cb.onAssistantDelta(frame.delta);
         return "continue";
+      case "task_graph":
+        // Silently drop if the caller didn't opt in. Resume Studio's
+        // local-callback flow doesn't show graphs yet; dropping keeps
+        // the contract additive.
+        if (cb.onTaskGraph) cb.onTaskGraph(frame.graph);
+        return "continue";
       case "agent_start":
         cb.onAgentStart(frame.agent, frame.label);
         return "continue";
@@ -178,6 +291,26 @@ export async function runAskStream({
           action: frame.action,
           route: frame.route && isSafeRoute(frame.route) ? frame.route : undefined,
         });
+        return "continue";
+      case "artifact":
+        if (cb.onArtifact) {
+          // Filter routes through isSafeRoute defensively — agents are
+          // trusted, but the dock will render these as anchor hrefs that
+          // navigate on click; same open-redirect surface as `result`.
+          const a = frame.artifact;
+          const safe: Artifact = {
+            ...a,
+            source_evidence: a.source_evidence?.map((e) => ({
+              label: e.label,
+              route: e.route && isSafeRoute(e.route) ? e.route : undefined,
+            })),
+            next_actions: a.next_actions?.map((n) => ({
+              ...n,
+              route: n.route && isSafeRoute(n.route) ? n.route : undefined,
+            })),
+          };
+          cb.onArtifact(safe);
+        }
         return "continue";
       case "done":
         cb.onDone();
@@ -239,7 +372,19 @@ export async function runAskStream({
     });
 
     if (!res.ok || !res.body) {
-      throw new Error(`/api/ask/stream returned ${res.status}`);
+      // Gateway emits a structured JSON body with `code` + `hint` when
+      // the agent host is unreachable (503) or upstream failed (502).
+      // Surfacing the hint verbatim lets the dock show "Reasoning engine
+      // is offline" instead of the generic "Lost connection. Try again."
+      // — which is what the audit (P1 "Agent 流式协议") flagged.
+      const payload = await readErrorPayload(res);
+      if (payload?.hint) {
+        cb.onError("unreachable", payload.hint);
+        return;
+      }
+      throw new Error(
+        `/api/ask/stream returned ${res.status}${payload?.detail ? `: ${payload.detail.slice(0, 200)}` : ""}`,
+      );
     }
 
     reader = res.body.getReader();
@@ -326,6 +471,13 @@ export async function sendAsk(
 
   let assistantBuf = "";
   const groupAgentIds: string[] = [];
+  // null until the coordinator emits its plan; once set, downstream
+  // agent_start/done frames also mutate the corresponding step row.
+  let taskGraphMsgId: string | null = null;
+  // Look up requires_review for the current step so onAgentDone can pick
+  // "review" instead of "done" when the step is HITL-gated. Keyed by
+  // agent string — same key the planner used.
+  const stepReviewMap = new Map<string, boolean>();
 
   // Guard against late writes from a stream that was superseded by a
   // newer send: if our assistant bubble no longer exists (a new turn
@@ -361,6 +513,25 @@ export async function sendAsk(
     abortController: controller,
     callbacks: {
       onAssistantDelta: updateAssistant,
+      onTaskGraph: (graph) => {
+        // Plan arrives once per turn, before any agent_start. Render it
+        // above the agent group so users see the *intent* of the run
+        // first — this is the "可解释任务图" the audit asked for.
+        const steps = graph.plan.map((p) => ({
+          step: p.step,
+          agent: p.agent,
+          label: p.label,
+          requires_review: p.requires_review,
+          status: "pending" as const,
+        }));
+        steps.forEach((s) => stepReviewMap.set(s.agent, !!s.requires_review));
+        taskGraphMsgId = dock.pushMessage({
+          kind: "task_graph",
+          taskId: graph.task_id,
+          userGoal: graph.user_goal,
+          steps,
+        });
+      },
       onAgentStart: (agent, label) => {
         const id = `ev-${agent}-${Date.now()}-${groupAgentIds.length}`;
         const ev: AgentEvent = {
@@ -373,6 +544,7 @@ export async function sendAsk(
         };
         dock.updateAgentEvent(ev);
         groupAgentIds.push(id);
+        if (taskGraphMsgId) dock.updateTaskGraphStep(taskGraphMsgId, agent, "running");
         useDock.setState((s) => ({
           messages: s.messages.map((m) =>
             m.id === agentGroupMsgId ? { ...m, agents: [...groupAgentIds] } : m,
@@ -386,8 +558,13 @@ export async function sendAsk(
           .filter(Boolean)
           .reverse()
           .find((e) => e.agent === agent && e.state === "running");
-        if (!target) return;
-        dock.updateAgentEvent({ ...target, state: "done", statusText });
+        if (target) dock.updateAgentEvent({ ...target, state: "done", statusText });
+        if (taskGraphMsgId) {
+          // HITL steps go to "review" — the user still has to approve.
+          // Non-HITL steps go straight to "done".
+          const next = stepReviewMap.get(agent) ? "review" : "done";
+          dock.updateTaskGraphStep(taskGraphMsgId, agent, next);
+        }
       },
       onAgentFailed: (agent, statusText) => {
         const events = useDock.getState().agentEvents;
@@ -396,8 +573,8 @@ export async function sendAsk(
           .filter(Boolean)
           .reverse()
           .find((e) => e.agent === agent && e.state === "running");
-        if (!target) return;
-        dock.updateAgentEvent({ ...target, state: "failed", statusText });
+        if (target) dock.updateAgentEvent({ ...target, state: "failed", statusText });
+        if (taskGraphMsgId) dock.updateTaskGraphStep(taskGraphMsgId, agent, "failed");
       },
       onResult: ({ title, sub, action, route }) => {
         dock.pushMessage({
@@ -412,6 +589,33 @@ export async function sendAsk(
             : undefined,
         });
       },
+      onArtifact: (a) => {
+        // Map ask-stream's Artifact (snake_case wire format) to the
+        // store's ArtifactPayload (camelCase, matches the rest of zustand
+        // conventions). Storing it on the message lets every later
+        // render derive button state, evidence list and confidence pill
+        // from one source of truth.
+        dock.pushMessage({
+          kind: "artifact",
+          artifact: {
+            artifactType: a.artifact_type,
+            artifactId: a.id,
+            artifactTitle: a.title,
+            artifactSub: a.sub,
+            confidence: a.confidence,
+            needsUserReview: a.needs_user_review,
+            sourceEvidence: a.source_evidence?.map((e) => ({
+              label: e.label,
+              route: e.route,
+            })),
+            nextActions: a.next_actions?.map((n) => ({
+              kind: n.kind,
+              label: n.label,
+              route: n.route,
+            })),
+          },
+        });
+      },
       onDone: () => {
         clearOwnedStreamState();
       },
@@ -420,6 +624,12 @@ export async function sendAsk(
           updateAssistant(`\n\n_Something went wrong: ${message}_`);
         } else if (kind === "timeout") {
           updateAssistant("\n\n_Vantage stream timed out. Try again._");
+        } else if (kind === "unreachable") {
+          // Gateway hint is already user-facing copy ("…engine is offline.
+          // Try again in a moment — if this persists, check that the
+          // agents host is running."). Render it verbatim so the user
+          // can distinguish "agent host down" from "network blip".
+          updateAssistant(`\n\n_${message}_`);
         } else {
           updateAssistant("\n\n_Lost connection to Vantage. Try again._");
         }

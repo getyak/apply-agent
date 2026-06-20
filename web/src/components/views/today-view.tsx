@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useVantage, JOBS, type ApiJob } from "@/lib/store";
 import { firstNameOf, fullGreeting, formatToday } from "@/lib/dates";
 import {
@@ -9,6 +10,37 @@ import {
   Clock,
   Sparkles,
 } from "lucide-react";
+import { today as todayApi, type TodayAction } from "@/lib/api";
+import { sendAsk } from "@/lib/ask-stream";
+import { useDock } from "@/lib/ask-vantage-store";
+
+// Small status chip for action queue rows. Distinct color tracks let
+// the user scan "prep / interview / learn" at a glance without reading
+// titles — matches the dock's TaskGraphStepPill aesthetic.
+function ActionKindPill({ kind }: { kind: TodayAction["kind"] }) {
+  const spec = (() => {
+    if (kind === "interview") return { text: "INTERVIEW", fg: "#7A2A1F", bg: "#F4D7D2" };
+    if (kind === "prepare") return { text: "PREP", fg: "#5D3000", bg: "#FBEFD8" };
+    if (kind === "follow_up") return { text: "FOLLOW UP", fg: "#8A6A12", bg: "#FBEFD0" };
+    return { text: "LEARN", fg: "#2F5722", bg: "#E2EED9" };
+  })();
+  return (
+    <span
+      className="flex-shrink-0"
+      style={{
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+        fontSize: 9.5,
+        letterSpacing: 0.6,
+        padding: "3px 8px",
+        borderRadius: 999,
+        color: spec.fg,
+        background: spec.bg,
+      }}
+    >
+      {spec.text}
+    </span>
+  );
+}
 
 function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => void }) {
   // `matchScore` may be undefined when the matcher hasn't scored this job yet
@@ -101,6 +133,44 @@ export function TodayView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Action queue (P3.1). Fire-and-forget on mount; the page renders
+  // happily without it (this is *additive* — the existing live-matches
+  // section is the historical default). Setting `loaded` lets the empty
+  // and the loading shell render differently so we don't claim "no
+  // actions" while we're still fetching.
+  const [actionQueue, setActionQueue] = useState<TodayAction[]>([]);
+  const [queueLoaded, setQueueLoaded] = useState(false);
+  const router = useRouter();
+  useEffect(() => {
+    let alive = true;
+    todayApi
+      .queue()
+      .then((res) => {
+        if (alive) {
+          setActionQueue(res.actions ?? []);
+          setQueueLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (alive) setQueueLoaded(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const runAction = (a: TodayAction) => {
+    if (a.ask_prompt) {
+      // Open the dock if it's collapsed so the run is visible, then
+      // queue the prompt through the same ask-stream pipeline the dock
+      // composer uses. We don't await — sendAsk owns its own streaming
+      // state via the dock store.
+      useDock.getState().open();
+      void sendAsk(a.ask_prompt, [], { surface: "dock" });
+    }
+    if (a.route) router.push(a.route);
+  };
+
   const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
   const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
   const fitLabel = (m: number) => (m >= 95 ? "Excellent" : m >= 90 ? "Strong" : m >= 85 ? "Good" : "Fair");
@@ -164,6 +234,46 @@ export function TodayView() {
           </div>
         </div>
       </div>
+
+      {actionQueue.length > 0 && (
+        <div className="mb-[34px]">
+          <div className="flex items-baseline justify-between mb-[14px]">
+            <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
+              Today, {actionQueue.length} {actionQueue.length === 1 ? "thing" : "things"} move you forward
+            </h2>
+            <span className="font-body text-[13px] text-ink-muted">Tap to start</span>
+          </div>
+          <ol className="flex flex-col gap-[10px] list-none m-0 p-0">
+            {actionQueue.map((a, i) => (
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => runAction(a)}
+                  className="w-full text-left bg-white border border-border rounded-[12px] px-[16px] py-[13px] shadow-sm hover:border-brown transition-colors flex items-center gap-[14px] cursor-pointer"
+                >
+                  <span className="font-mono text-[10px] tracking-[0.8px] text-ink-muted w-[18px] flex-shrink-0">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-body font-semibold text-[14px] text-ink leading-tight">
+                      {a.title}
+                    </span>
+                    <span className="block font-body text-[12.5px] text-ink-light mt-[2px]">
+                      {a.sub}
+                    </span>
+                  </span>
+                  <ActionKindPill kind={a.kind} />
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {queueLoaded && actionQueue.length === 0 && (
+        <div className="mb-[34px] font-body text-[13px] text-ink-muted">
+          Nothing on the action queue yet — applications, interviews and learn signals will surface here automatically.
+        </div>
+      )}
 
       {apiJobs.length > 0 && (
         <>
