@@ -4,6 +4,7 @@ import { query } from "../db";
 import { ConflictError, UpstreamError } from "../errors";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
+import { rateLimit } from "../middleware/rate-limit";
 import { validateBody } from "../middleware/validate";
 import {
   PrepareApplicationSchema,
@@ -19,6 +20,22 @@ import type { AppEnv } from "../types";
 
 const app = new Hono<AppEnv>();
 app.use("*", authMiddleware);
+
+// API_RL1 (round-7): /prepare-from-jd fans out to the Python agent layer,
+// which then chains parse_jd → customize → cover → form (each one an LLM
+// call). Before round-7 it had no per-user rate ceiling — a single
+// authenticated user could trivially burn the LLM budget by replaying the
+// request in a tight loop. authMiddleware above resolves c.get("userId"),
+// so we key the limit on the user (defaultActorKey already prefers
+// user:<id> over ip:<ip>), and apply only to this endpoint so cheap
+// reads (list / detail / patch) stay unfettered. 5 starts/minute leaves
+// honest interactive use unaffected; the round-7 audit (API_RL1) wanted
+// any ceiling at all on this path.
+const prepareJdLimiter = rateLimit({
+  scope: "apps_prepare_jd",
+  limit: 5,
+  windowSeconds: 60,
+});
 
 // Route-scoped idempotency: preparing a draft creates a DB row — duplicate
 // requests with the same Idempotency-Key replay the first response instead.
@@ -45,6 +62,7 @@ app.post("/prepare", idempotency(), validateBody(PrepareApplicationSchema), asyn
 // from the canonical PG row and forward the auth-resolved user id.
 app.post(
   "/prepare-from-jd",
+  prepareJdLimiter,
   idempotency(),
   validateBody(PrepareFromJDSchema),
   async (c) => {

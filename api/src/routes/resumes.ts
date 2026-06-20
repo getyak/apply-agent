@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { query } from "../db";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
+import { rateLimit } from "../middleware/rate-limit";
 import { validateBody } from "../middleware/validate";
 import {
   CreateResumeSchema,
@@ -27,6 +28,17 @@ import type { AppEnv } from "../types";
 
 const app = new Hono<AppEnv>();
 app.use("*", authMiddleware);
+
+// API_RL1 (round-7): /parse-async kicks off an LLM-backed background
+// parse job. Before round-7 it had no per-user ceiling, so a misbehaving
+// client (or a malicious one) could enqueue jobs as fast as it could
+// fire requests. 8 starts/minute leaves room for the realistic "user
+// re-uploads after a bad result" pattern but rules out runaway loops.
+const parseAsyncLimiter = rateLimit({
+  scope: "resume_parse_async",
+  limit: 8,
+  windowSeconds: 60,
+});
 
 // Prompt discipline (vision red line): the AI may rephrase and strengthen
 // existing experience, but MUST NOT invent roles, skills, metrics, or
@@ -209,7 +221,7 @@ interface ParseJobResult {
 // longer blocks on the LLM. It uploads → enters the workspace → polls
 // GET /parse/:jobId while the parse runs in the background. The parse never
 // fabricates — on LLM failure the job ends "failed" with an honest message.
-app.post("/parse-async", validateBody(ParseResumeAsyncSchema), async (c) => {
+app.post("/parse-async", parseAsyncLimiter, validateBody(ParseResumeAsyncSchema), async (c) => {
   const userId = c.get("userId");
   const { text, markdown, save, sourceFileId } = c.get(
     "validatedBody",

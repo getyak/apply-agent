@@ -25,9 +25,11 @@ Schema reference: infra/postgres/migrations/005_jobs.sql
 """
 from __future__ import annotations
 
+import ipaddress as _ipaddress
 import json
 import os
 import re
+import socket as _socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -330,7 +332,57 @@ def _company_from_url(url: str) -> str:
     return parts[0].replace("-", " ").title() if parts else "Unknown"
 
 
+
+# JD3+JD5 (round-7) — round-7 audit flagged two reliability/security gaps
+# in the JD fetcher: SSRF via user-supplied URL (pasting
+# http://169.254.169.254 / http://localhost:5432 / http://10.0.0.5 would
+# happily reach the agent's network) and unbounded response size (a 200MB
+# HTML response would soak up RAM and LLM tokens). These constants and
+# helpers gate every fetch in _http_get below.
+_JD_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB — well above any real JD HTML
+_JD_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _is_public_http_url(url: str) -> tuple[bool, str]:
+    """Return (ok, reason) — reject SSRF-adjacent URLs.
+
+    Rejects:
+      - non-http(s) schemes (file://, gopher://, ftp://, …)
+      - hosts that resolve to loopback / link-local / private / reserved IPs
+      - hosts that don't resolve at all (DNS failure is a fetch failure)
+    Accepts everything else, leaving robots.txt + TOS judgments to the
+    caller (see audit's JD1).
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        return False, f"urlparse failed: {exc}"
+    if parsed.scheme.lower() not in _JD_ALLOWED_SCHEMES:
+        return False, f"scheme {parsed.scheme!r} is not http/https"
+    host = parsed.hostname
+    if not host:
+        return False, "URL has no hostname"
+    try:
+        infos = _socket.getaddrinfo(host, None)
+    except OSError as exc:
+        return False, f"DNS failure for {host!r}: {exc}"
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = _ipaddress.ip_address(addr.split("%")[0])
+        except ValueError:
+            continue
+        # is_global == "publicly routable" — covers loopback,
+        # link-local, private, multicast, reserved in one shot.
+        if not ip.is_global:
+            return False, f"{host} resolves to non-public {ip}"
+    return True, ""
+
+
 async def _http_get(url: str, client: httpx.AsyncClient | None) -> bytes:
+    ok, reason = _is_public_http_url(url)
+    if not ok:
+        raise JDFetchError(f"refusing to fetch {url}: {reason}")
     timeout = httpx.Timeout(15.0, connect=5.0)
     headers = {"User-Agent": "Vantage/0.1 (+https://relay.example/agent)"}
     if client is not None:
@@ -340,7 +392,26 @@ async def _http_get(url: str, client: httpx.AsyncClient | None) -> bytes:
             resp = await fresh.get(url, timeout=timeout, headers=headers)
     if resp.status_code >= 400:
         raise JDFetchError(f"{url} → HTTP {resp.status_code}")
-    return resp.content
+    # Cheap pre-flight: trust an honest Content-Length header to short-
+    # circuit obviously oversized responses before we load .content. A
+    # lying / missing header falls through to the post-hoc len() guard
+    # below, which catches the loaded-into-memory size.
+    declared = resp.headers.get("content-length")
+    if declared is not None:
+        try:
+            n = int(declared)
+            if n > _JD_MAX_BYTES:
+                raise JDFetchError(
+                    f"refusing {url}: content-length {n} > {_JD_MAX_BYTES} bytes"
+                )
+        except ValueError:
+            pass  # bad header, fall through to the post-hoc check
+    body = resp.content
+    if len(body) > _JD_MAX_BYTES:
+        raise JDFetchError(
+            f"refusing {url}: body {len(body)} > {_JD_MAX_BYTES} bytes"
+        )
+    return body
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
