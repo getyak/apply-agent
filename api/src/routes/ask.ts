@@ -95,6 +95,30 @@ function previewText(s: string, max = 80): string {
   return out + "…";
 }
 
+// PT3 (round-10): the round-10 audit pointed out that this gateway
+// stored the assistant buffer into conversation_messages.content with
+// no truncation, while the Python persister capped each row at 8000
+// chars. Mirror the same cap here so a 50KB+ tailored-résumé reply
+// doesn't bloat the conversation_messages row past what the dock
+// will ever render. The trailing marker matches the Python helper so
+// readers (audit, support, the rail preview) can tell truncation apart
+// from "the user actually typed an ellipsis".
+const PERSIST_TURN_MAX_CHARS = 8000;
+const PERSIST_TRUNC_MARKER = "…(truncated)";
+function truncateForHistory(text: string): string {
+  if (!text) return "";
+  // Same codepoint-safe iteration pattern as previewText so an emoji
+  // sitting on the boundary doesn't split into half a surrogate pair.
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > PERSIST_TURN_MAX_CHARS - PERSIST_TRUNC_MARKER.length) {
+      return out + PERSIST_TRUNC_MARKER;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 routes.use("/stream", authMiddleware);
 routes.post("/stream", validateBody(AskBody), async (c) => {
   const { prompt, thread_id, surface } = c.get("validatedBody") as z.infer<
@@ -124,7 +148,7 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
            (session_id, role, content)
          VALUES ($1, 'user', $2)
          RETURNING id`,
-        [askSessionId, prompt],
+        [askSessionId, truncateForHistory(prompt)],
       );
       userMessageId = ins.rows[0].id;
     } catch (err) {
@@ -275,7 +299,11 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
             `INSERT INTO conversation_messages
                (session_id, role, content, metadata)
              VALUES ($1, 'assistant', $2, $3)`,
-            [askSessionId, assistantBuf, JSON.stringify({ agent: "coordinator", surface: surface ?? "dock" })],
+            [
+              askSessionId,
+              truncateForHistory(assistantBuf),
+              JSON.stringify({ agent: "coordinator", surface: surface ?? "dock" }),
+            ],
           );
           await query(
             `UPDATE conversation_sessions

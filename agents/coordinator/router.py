@@ -646,6 +646,33 @@ async def load_recent_turns(thread_id: str, limit: int = 6) -> list[BaseMessage]
     return msgs
 
 
+# PT3 (round-10): both this Python persister and the TS gateway's
+# /api/ask/stream history insert (api/src/routes/ask.ts) must agree on
+# the persisted-text cap or one side silently grows unbounded. 8000 was
+# already the de-facto cap here; lift it to a constant so the TS side
+# can mirror it. Append an explicit marker when we truncate so support
+# (and round-N audits) can tell "the user actually wrote this" apart
+# from "we cut the tail". A trailing ellipsis alone would be ambiguous
+# because real users do type "..."; "…(truncated)" is unique enough.
+_PERSIST_TURN_MAX_CHARS = 8000
+_PERSIST_TRUNC_MARKER = "…(truncated)"
+
+
+def _truncate_for_history(text: str, max_chars: int = _PERSIST_TURN_MAX_CHARS) -> str:
+    """Codepoint-safe truncation with a visible marker.
+
+    Python's [:N] slice already works in codepoints, so the leftover
+    string is always valid UTF-8. The marker tells future readers (and
+    audits) that the tail is missing.
+    """
+    if text is None:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    keep = max_chars - len(_PERSIST_TRUNC_MARKER)
+    return text[:keep] + _PERSIST_TRUNC_MARKER
+
+
 async def persist_turn(
     thread_id: str, user_id: UUID, user_message: str, assistant_text: str
 ) -> None:
@@ -693,7 +720,12 @@ async def persist_turn(
                 await cur.execute(
                     "INSERT INTO conversation_messages (session_id, role, content) "
                     "VALUES (%s, 'user', %s), (%s, 'assistant', %s)",
-                    (session_id, user_message[:8000], session_id, assistant_text[:8000]),
+                    (
+                        session_id,
+                        _truncate_for_history(user_message),
+                        session_id,
+                        _truncate_for_history(assistant_text),
+                    ),
                 )
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — boundary, never break the reply

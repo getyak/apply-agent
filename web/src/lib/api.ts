@@ -137,7 +137,15 @@ export async function api<T = unknown>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, extractErrorMessage(body));
+    // API_E1 (round-10): parse the envelope twice — extractErrorMessage
+    // returns the user-safe string we've always shown, extractErrorMeta
+    // pulls the structured fields so callers can branch on `.code` and
+    // surface `.traceId` in support copy.
+    throw new ApiError(
+      res.status,
+      extractErrorMessage(body),
+      extractErrorMeta(body),
+    );
   }
 
   return res.json();
@@ -168,13 +176,55 @@ function extractErrorMessage(body: unknown): string {
   return "Request failed";
 }
 
+// API_E1 (round-10): the round-5 (API1/API2) Python error envelope and the
+// round-9 (SSE4) frontend SSE handler already plumb `code` + `trace_id` end
+// to end on the streaming path. Plain JSON responses still got the round-3
+// `extractErrorMessage` summary string and dropped the structured fields,
+// so anything that fetched with `apiRequest` (which is most of the app)
+// lost the ability to branch on a stable machine-readable error class.
+// Extract them once here and stash on ApiError so every caller can pick
+// them up — and surface the trace id in support copy without having to
+// quiz the user. The envelope from the Bun gateway is one of:
+//   { error: { code, message, traceId } }   (newer routes)
+//   { error: "..." }                         (auth/older routes — no code)
+// Both shapes flow through; missing fields become undefined.
+function extractErrorMeta(body: unknown): {
+  code?: string;
+  traceId?: string;
+} {
+  if (!body || typeof body !== "object" || !("error" in body)) return {};
+  const e = (body as { error: unknown }).error;
+  if (!e || typeof e !== "object") return {};
+  const obj = e as { code?: unknown; traceId?: unknown; trace_id?: unknown };
+  const code = typeof obj.code === "string" ? obj.code : undefined;
+  const traceId =
+    typeof obj.traceId === "string"
+      ? obj.traceId
+      : typeof obj.trace_id === "string"
+        ? obj.trace_id
+        : undefined;
+  return { ...(code ? { code } : {}), ...(traceId ? { traceId } : {}) };
+}
+
 export class ApiError extends Error {
+  // API_E1 (round-10): `code` and `traceId` are populated from the
+  // server's `{ error: { code, message, traceId } }` envelope when the
+  // gateway provides them. Callers that don't care about them can keep
+  // reading `.message` exactly as before; callers that do — the auth
+  // page already branches on `status === 429`, settings on negative-
+  // salary errors, etc. — can branch on `.code === "budget_exhausted"`
+  // / "http_403" / "rate_limited" without regexing the message text.
+  public code?: string;
+  public traceId?: string;
   constructor(
     public status: number,
     message: string,
+    meta?: { code?: string; traceId?: string },
   ) {
     super(message);
     this.name = "ApiError";
+    if (meta?.code) this.code = meta.code;
+    if (meta?.traceId) this.traceId = meta.traceId;
   }
 }
 
@@ -237,7 +287,11 @@ export const users = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
-      throw new ApiError(res.status, extractErrorMessage(body));
+      throw new ApiError(
+        res.status,
+        extractErrorMessage(body),
+        extractErrorMeta(body),
+      );
     }
   },
 };
@@ -356,7 +410,11 @@ export const files = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
-      throw new ApiError(res.status, body.error?.message || body.error || "Upload failed");
+      throw new ApiError(
+        res.status,
+        body.error?.message || body.error || "Upload failed",
+        extractErrorMeta(body),
+      );
     }
     return res.json();
   },
