@@ -60,6 +60,7 @@ jobs:
             web:
               - 'web/**'
               - 'scripts/web-hydration-smoke.mjs'
+              - 'scripts/web-route-smoke.mjs'
             extension:
               - 'apps/extension/**'
             infra:
@@ -292,6 +293,13 @@ jobs:
 
       - name: Hydration smoke — assert __reactFiber* on /, /auth, /legal/privacy
         run: node scripts/web-hydration-smoke.mjs --base-url http://127.0.0.1:3010
+
+      # HTTP-only smoke (P0-E). Catches the 2026-06-19 audit's `/auth`
+      # hang regression at the cheapest possible layer — if any entry
+      # route stops returning HTML inside 10s, CI fails before we even
+      # try to drive a browser. Re-uses the same 3010 prod server.
+      - name: Route smoke — / + /auth + /legal/privacy HTTP 200 within 10s
+        run: node scripts/web-route-smoke.mjs --base-url http://127.0.0.1:3010
 
       - name: Hydration smoke — stop prod server
         if: always()
