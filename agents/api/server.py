@@ -23,7 +23,7 @@ import structlog
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from langgraph.types import Command
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from agents.api.deps import UserDep
 from agents.coordinator.router import classify_intent, dispatch, persist_turn
@@ -570,8 +570,18 @@ async def mock_start(payload: MockStartPayload, user_id: UserDep) -> dict[str, A
 
 
 class MockResumePayload(BaseModel):
-    thread_id: str
-    answer: str
+    # HITL_R3 (round-8): the round-8 audit flagged that thread_id and
+    # answer were untyped beyond `str`, leaving the door open for an
+    # attacker (or a buggy client) to POST a 10 MB string and crash
+    # downstream consumers via RecursionError in json.dumps. The thread
+    # cap is 128 because the longest legitimate value today is
+    # `build_resume:{uuid4}:{uuid4}` (~57 chars) — generous headroom
+    # without inviting abuse. The answer cap is 50 000 chars: ~10 000
+    # words of actual prose, far beyond what any honest interview answer
+    # needs, while still well below the body-size limit the gateway
+    # enforces upstream.
+    thread_id: str = Field(min_length=1, max_length=128)
+    answer: str = Field(min_length=1, max_length=50_000)
 
 
 @app.post("/mock/resume")
@@ -583,6 +593,23 @@ async def mock_resume(payload: MockResumePayload, user_id: UserDep) -> dict[str,
     snapshot = checkpointer.get(config)
     if not snapshot:
         raise HTTPException(status_code=404, detail="thread not found")
+    # HITL_R4 (round-8): the round-8 HITL audit flagged that this endpoint
+    # would happily resume any thread_id whose checkpoint we could load,
+    # without verifying the auth'd user owned it. An attacker who learnt
+    # another user's mock thread_id (e.g. accidentally leaked in a log)
+    # could replay an answer on the victim's session. Cross-check the
+    # state's stored user_id against the auth-resolved one and return 403
+    # on mismatch. Both UUID and str representations are accepted because
+    # different code paths may persist either.
+    stored_user = snapshot["channel_values"].get("user_id")  # type: ignore[index]
+    if str(stored_user) != str(user_id):
+        log.warning(
+            "mock_resume.user_mismatch",
+            thread_id=payload.thread_id,
+            requested_by=str(user_id),
+            stored_owner=str(stored_user),
+        )
+        raise HTTPException(status_code=403, detail="thread is not yours")
     mode: InterviewMode = snapshot["channel_values"]["mode"]  # type: ignore[index]
     graph = interview_agent.build_mock_graph(mode)
     state = await graph.ainvoke(Command(resume={"answer": payload.answer}), config=config)
@@ -601,12 +628,54 @@ async def mock_resume(payload: MockResumePayload, user_id: UserDep) -> dict[str,
 
 
 class BuildResumeResumePayload(BaseModel):
-    thread_id: str
-    value: Any  # str | list[str]
+    # HITL_R3 (round-8): build_resume's `value` field used to be
+    # `Any`, accepting nested dicts, circular references, and arbitrary
+    # binary blobs. The audit pointed out this is a prompt-injection vector
+    # since the value lands in a chip's string state and is then fed to
+    # downstream LLM calls. Constrain to the two shapes the workflow
+    # actually consumes: a single string (target_role, recent_role) or a
+    # list of strings (top_3_wins). Caps mirror the MockResumePayload sizes
+    # so the same body-size envelope holds across both /resume endpoints.
+    thread_id: str = Field(min_length=1, max_length=128)
+    value: str | list[str] = Field(...)
+
+    @field_validator("value")
+    @classmethod
+    def _bound_value(cls, v: str | list[str]) -> str | list[str]:
+        if isinstance(v, str):
+            if len(v) > 10_000:
+                raise ValueError("value string exceeds 10000 characters")
+            return v
+        # list[str]
+        if len(v) > 50:
+            raise ValueError("value list exceeds 50 items")
+        for i, item in enumerate(v):
+            if not isinstance(item, str):
+                raise ValueError(f"value[{i}] is not a string")
+            if len(item) > 2_000:
+                raise ValueError(f"value[{i}] exceeds 2000 characters")
+        return v
 
 
 @app.post("/build_resume/resume")
 async def build_resume_resume(payload: BuildResumeResumePayload, user_id: UserDep) -> dict[str, Any]:
+    # HITL_R4 (round-8): the build_resume thread_id is structured as
+    # `build_resume:{user_id}:{session_id}` (see checkpointer.py); we can
+    # verify ownership cheaply by parsing the embedded user_id. The audit
+    # showed the prior version would resume any thread the caller named,
+    # opening an IDOR vector — an attacker who guessed a victim's
+    # session_id could nudge the workflow past an interrupt. The parse is
+    # tolerant: any thread_id that doesn't match the expected shape is
+    # rejected outright (403) so future thread_id changes can't silently
+    # bypass this check.
+    parts = payload.thread_id.split(":")
+    if len(parts) != 3 or parts[0] != "build_resume" or parts[1] != str(user_id):
+        log.warning(
+            "build_resume_resume.user_mismatch",
+            thread_id=payload.thread_id,
+            requested_by=str(user_id),
+        )
+        raise HTTPException(status_code=403, detail="thread is not yours")
     graph = build_from_scratch_graph()
     config = {"configurable": {"thread_id": payload.thread_id}}
     state = await graph.ainvoke(Command(resume={"value": payload.value}), config=config)
