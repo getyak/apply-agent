@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Vantage — Relay Client",
+  "short_name": "Vantage",
+  "version": "0.1.0",
+  "description": "Detects ATS job-application forms on Greenhouse, Lever, and Ashby and lets you fill them with Vantage. See docs/architecture/client-side-delivery.md.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://boards.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://jobs.ashbyhq.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://boards.greenhouse.io/*",
+        "https://jobs.lever.co/*",
+        "https://jobs.ashbyhq.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Vantage"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8081 https://api.relay.example"
+  }
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, Check, AlertCircle, Download, Trash2 } from "lucide-react";
 import {
@@ -141,22 +141,72 @@ export function SettingsView() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // S3 (round-5): unsaved-changes guard. The form is unguarded until
+  // round-5 — a user could edit five fields, navigate away, and silently
+  // lose every change. We store the loaded baseline as a JSON snapshot in
+  // a ref (no re-renders) and a live snapshot in a separate ref kept in
+  // sync from a small effect (so we never touch ref.current during render).
+  // beforeunload then compares the two at fire time and asks the browser
+  // to show its native confirm dialog when they differ.
+  const baselineRef = useRef<string | null>(null);
+  const snapshotRef = useRef<string>("");
+  useEffect(() => {
+    snapshotRef.current = JSON.stringify({
+      targetRoles,
+      skills,
+      locations,
+      minSalary,
+      remote,
+      crowdsourceOptIn,
+    });
+  }, [targetRoles, skills, locations, minSalary, remote, crowdsourceOptIn]);
+
   useEffect(() => {
     users
       .getMe()
       .then(({ user }) => {
         setMe(user);
         const p: UserPreferences = user.preferences ?? {};
-        setTargetRoles(p.targetRoles ?? []);
-        setSkills(p.skills ?? []);
-        setLocations(p.locations ?? []);
-        setMinSalary(p.minSalary != null ? String(p.minSalary) : "");
-        setRemote(remoteFromBool(p.remote));
-        setCrowdsourceOptIn(p.crowdsourceOptIn === true);
+        const loadedTargetRoles = p.targetRoles ?? [];
+        const loadedSkills = p.skills ?? [];
+        const loadedLocations = p.locations ?? [];
+        const loadedMinSalary = p.minSalary != null ? String(p.minSalary) : "";
+        const loadedRemote = remoteFromBool(p.remote);
+        const loadedCrowdsource = p.crowdsourceOptIn === true;
+        setTargetRoles(loadedTargetRoles);
+        setSkills(loadedSkills);
+        setLocations(loadedLocations);
+        setMinSalary(loadedMinSalary);
+        setRemote(loadedRemote);
+        setCrowdsourceOptIn(loadedCrowdsource);
+        // Snapshot the just-loaded values as the "clean" baseline. Any
+        // subsequent edit flips isDirty true; saving (below) resets it.
+        baselineRef.current = JSON.stringify({
+          targetRoles: loadedTargetRoles,
+          skills: loadedSkills,
+          locations: loadedLocations,
+          minSalary: loadedMinSalary,
+          remote: loadedRemote,
+          crowdsourceOptIn: loadedCrowdsource,
+        });
       })
       .catch((err) => {
         setLoadError(err instanceof ApiError ? err.message : "Could not load your profile.");
       });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      const base = baselineRef.current;
+      if (base === null || base === snapshotRef.current) return;
+      // Modern browsers ignore the custom string but honour
+      // preventDefault + returnValue to show their own confirm dialog.
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
   const onSave = async () => {
@@ -169,6 +219,16 @@ export function SettingsView() {
       const n = Number(minSalary);
       if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
         setSalaryError("Enter a whole, non-negative number.");
+        return;
+      }
+      // S1 (round-6): mirror the server-side cap from
+      // api/src/schemas.ts UserPreferencesSchema (10_000_000). Before
+      // round-6 the client only rejected negatives, so values >10M were
+      // silently rejected by the server with a generic "Could not save"
+      // toast and no field-level cue. Catch it here so the same inline
+      // salaryError surfaces and onSave can short-circuit cheaply.
+      if (n > 10_000_000) {
+        setSalaryError("Salary must be at most 10,000,000.");
         return;
       }
       parsedSalary = n;
@@ -193,6 +253,18 @@ export function SettingsView() {
       setMe(user);
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 3000);
+      // S3 (round-5): re-baseline so isDirty flips back to false and the
+      // beforeunload listener stops nagging. Recompute from current form
+      // state (which already matches what we just persisted) so a follow-up
+      // edit re-marks dirty correctly.
+      baselineRef.current = JSON.stringify({
+        targetRoles,
+        skills,
+        locations,
+        minSalary,
+        remote,
+        crowdsourceOptIn,
+      });
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : "Could not save your preferences.");
     } finally {

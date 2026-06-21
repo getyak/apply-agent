@@ -36,7 +36,61 @@ export interface AgentEvent {
   ts: number;
 }
 
-export type DockMsgKind = "user" | "assistant" | "agents" | "result";
+export type DockMsgKind =
+  | "user"
+  | "assistant"
+  | "agents"
+  | "result"
+  | "task_graph"
+  | "artifact";
+
+// Subset of ask-stream's Artifact that the dock needs to render. We
+// deliberately don't pull the type from ask-stream.ts to keep the store
+// independent of the streaming layer (the same store powers /recent
+// rehydration which has no stream).
+export type ArtifactType =
+  | "resume_version"
+  | "job_match_set"
+  | "application_package"
+  | "interview_session"
+  | "cover_letter"
+  | "market_snapshot";
+
+export interface ArtifactSourceEvidence {
+  label: string;
+  route?: string;
+}
+
+export interface ArtifactAction {
+  kind: "approve" | "tweak" | "discard" | "open";
+  label: string;
+  route?: string;
+}
+
+export interface ArtifactPayload {
+  artifactType: ArtifactType;
+  artifactId: string;
+  artifactTitle: string;
+  artifactSub: string;
+  confidence?: number;
+  needsUserReview?: boolean;
+  sourceEvidence?: ArtifactSourceEvidence[];
+  nextActions?: ArtifactAction[];
+}
+
+// Per-step run state inside a task_graph message. The dock animates rows
+// as agent_start / agent_done frames arrive — the step is keyed on the
+// `agent` string the planner emitted, so coordinator-side reordering
+// doesn't break the UI.
+export type TaskGraphStepStatus = "pending" | "running" | "done" | "review" | "failed";
+
+export interface TaskGraphMsgStep {
+  step: string;
+  agent: string;
+  label: string;
+  requires_review?: boolean;
+  status: TaskGraphStepStatus;
+}
 
 export interface DockMessage {
   id: string;
@@ -47,6 +101,22 @@ export interface DockMessage {
   sub?: string;
   action?: string;
   onAction?: () => void;
+  // task_graph payload — present only when kind === "task_graph".
+  taskId?: string;
+  userGoal?: string;
+  steps?: TaskGraphMsgStep[];
+  // artifact payload — present only when kind === "artifact".
+  artifact?: ArtifactPayload;
+}
+
+// One entry in the dock's RECENT rail. Each anchor is a past user prompt
+// in the lifetime ask_vantage thread. Clicking an anchor doesn't switch
+// threads — it scrolls the dock back to that turn (anchors-only model,
+// vantage-ui-mapping §1.2). `id` is the conversation_messages.id from PG.
+export interface RecentAnchor {
+  id: string;
+  preview: string;
+  createdAt: string; // ISO from PG
 }
 
 interface DockStateShape {
@@ -61,6 +131,11 @@ interface DockStateShape {
   threadId: string | null;
   streaming: boolean;
   abortController: AbortController | null;
+  // Server-backed history rail. Loaded on mount via GET /api/ask/recent
+  // and prepended to optimistically on each new user turn. We don't
+  // dedupe by id on the client — server is the source of truth, the
+  // next refresh from /recent will return the canonical row.
+  recentAnchors: RecentAnchor[];
 
   open: () => void;
   close: () => void;
@@ -72,12 +147,31 @@ interface DockStateShape {
   setThreadId: (id: string) => void;
   setMode: (m: DockMode) => void;
   pushMessage: (m: Omit<DockMessage, "id"> & { id?: string }) => string;
+  // Generic mutator for an existing message — used by task_graph rendering
+  // and by future artifact / streaming partial updates. Quiet no-op if the
+  // id has been evicted (e.g. reset() between turns).
+  patchMessage: (id: string, patch: Partial<Omit<DockMessage, "id">>) => void;
+  // Drive the step animation as agent_start / agent_done frames stream in.
+  // `status` here is the post-event state (running on start, done on done,
+  // failed on agent_failed). The mutator is a quiet no-op if the message
+  // isn't a task_graph or the agent isn't listed in its plan.
+  updateTaskGraphStep: (
+    messageId: string,
+    agent: string,
+    status: TaskGraphStepStatus,
+  ) => void;
   updateAgentEvent: (e: AgentEvent) => void;
   addAttachment: (a: DockAttachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
   cancelStream: () => void;
   setStreaming: (v: boolean) => void;
+  setRecentAnchors: (items: RecentAnchor[]) => void;
+  // Optimistic append for a freshly-sent user prompt — we don't yet know
+  // the persisted message id, so the caller passes a temp `id` (the
+  // in-memory DockMessage id is fine). A later refresh from /recent will
+  // overwrite the rail with canonical rows.
+  prependRecentAnchor: (a: RecentAnchor) => void;
   reset: () => void;
 }
 
@@ -116,6 +210,7 @@ export const useDock = create<DockStateShape>((set, get) => ({
   threadId: null,
   streaming: false,
   abortController: null,
+  recentAnchors: [],
 
   open: () => {
     if (typeof window !== "undefined")
@@ -157,6 +252,28 @@ export const useDock = create<DockStateShape>((set, get) => ({
     set((s) => ({ messages: [...s.messages, { ...m, id }] }));
     return id;
   },
+  patchMessage: (id, patch) =>
+    set((s) => ({
+      messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    })),
+  updateTaskGraphStep: (messageId, agent, status) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.id !== messageId || m.kind !== "task_graph" || !m.steps) return m;
+        // Only touch the first matching agent row whose state isn't terminal —
+        // covers the (rare) case where the same agent appears twice in a plan
+        // (e.g. customise → recustomise) without losing earlier "done" rows.
+        let touched = false;
+        const next = m.steps.map((st) => {
+          if (touched) return st;
+          if (st.agent !== agent) return st;
+          if (st.status === "done" || st.status === "failed") return st;
+          touched = true;
+          return { ...st, status };
+        });
+        return touched ? { ...m, steps: next } : m;
+      }),
+    })),
   updateAgentEvent: (e) =>
     set((s) => ({ agentEvents: { ...s.agentEvents, [e.id]: e } })),
   addAttachment: (a) =>
@@ -170,6 +287,14 @@ export const useDock = create<DockStateShape>((set, get) => ({
     set({ abortController: null, streaming: false });
   },
   setStreaming: (v) => set({ streaming: v }),
+  setRecentAnchors: (items) => set({ recentAnchors: items }),
+  prependRecentAnchor: (a) =>
+    set((s) => ({
+      // Cap at 20 entries in memory so a long session doesn't grow the
+      // rail unboundedly. The server query also caps; this is belt and
+      // braces.
+      recentAnchors: [a, ...s.recentAnchors].slice(0, 20),
+    })),
   reset: () =>
     set({
       messages: [],
@@ -222,8 +347,56 @@ export function bootDockThread(userId: string | null) {
 // out of the create() defaults keeps SSR happy — defaults render the
 // same on server and first client paint, then this catches up.
 export function hydrateDockFromStorage() {
+  // Narrow viewports can't host the 372px docked panel alongside the main
+  // content (QA bug #8 — sidebar + main + dock fight for ~390px). Force the
+  // launcher state below the lg breakpoint regardless of the stored value;
+  // desktop users keep their preference.
+  const narrow =
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 1023px)").matches;
   useDock.setState({
     width: readPersistedWidth(),
-    state: readPersistedState(),
+    state: narrow ? "closed" : readPersistedState(),
   });
+}
+
+// M2 (round-4): keep the dock honest under dynamic viewport changes
+// (window resize on desktop, rotation on tablet, browser dev-tools open
+// and squeeze the main pane). hydrateDockFromStorage runs once on mount
+// and never re-evaluates, so a user who rotates a tablet from landscape
+// (≥1024px → docked) to portrait (768px → still docked) would get the
+// 372px panel chewing the main pane. This listener installs the same
+// narrow-viewport guard as a MediaQueryList subscriber: every transition
+// in/out of "narrow" re-applies the rule. We still defer to the
+// localStorage preference on desktop, so the user's saved
+// docked/full/closed choice survives a resize back to wide.
+//
+// Returns a teardown so the caller can detach on unmount.
+export function installDockViewportWatcher(): () => void {
+  if (typeof window === "undefined") return () => {};
+  const mql = window.matchMedia("(max-width: 1023px)");
+  const apply = (matches: boolean) => {
+    if (matches) {
+      // Narrow → force the launcher. Don't persist; the next wide
+      // viewport restores the saved preference automatically.
+      if (useDock.getState().state !== "closed") {
+        useDock.setState({ state: "closed" });
+      }
+    } else {
+      // Wide → re-honour the user's persisted preference. Only nudge if
+      // we're currently in the auto-forced "closed" state; if the user
+      // explicitly opened the dock at some point while narrow we'd see
+      // "docked"/"full" and respect that.
+      const persisted = readPersistedState();
+      if (useDock.getState().state === "closed" && persisted !== "closed") {
+        useDock.setState({ state: persisted });
+      }
+    }
+  };
+  // Initial sync — covers the case where this runs after a resize that
+  // happened between mount and listener install.
+  apply(mql.matches);
+  const handler = (e: MediaQueryListEvent) => apply(e.matches);
+  mql.addEventListener("change", handler);
+  return () => mql.removeEventListener("change", handler);
 }

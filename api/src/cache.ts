@@ -59,18 +59,75 @@ export class Cache {
   /**
    * Return the cached value if present, otherwise run `loader`, cache its
    * result, and return it. `loader` runs at most once per miss.
+   *
+   * CACHE_S3 (round-19): the round-19 audit found that when `loader`
+   * throws (an LLM 500, a transient PG error, an upstream timeout)
+   * we wrote nothing to the cache, so the next request retried
+   * immediately — a single failing key under load amplified into a
+   * stampede that hammered the upstream as fast as the API could
+   * accept new requests. Write a short-lived error sentinel into the
+   * cache for `errorTtlSeconds` (default 30 s, gated by NEGATIVE_TTL)
+   * so a transient outage doesn't keep replaying. On the next call we
+   * spot the sentinel and re-throw a recognisable `CachedFailure`
+   * without touching the upstream, then the sentinel expires and a
+   * single retry attempt is allowed through.
    */
   async getOrSet<T>(
     ns: CacheNamespace,
     parts: (string | number)[],
     loader: () => Promise<T>,
     ttlSeconds: number = DEFAULT_TTL[ns],
+    errorTtlSeconds: number = NEGATIVE_TTL,
   ): Promise<T> {
-    const hit = await this.get<T>(ns, parts);
-    if (hit !== null) return hit;
-    const value = await loader();
-    await this.set(ns, parts, value, ttlSeconds);
-    return value;
+    const hit = await this.get<unknown>(ns, parts);
+    if (hit !== null) {
+      if (isErrorSentinel(hit)) {
+        // Last loader attempt failed within `errorTtlSeconds`. Surface
+        // a recognisable error so the caller can map it to the same
+        // upstream status without paying for another fetch.
+        throw new CachedFailure(hit.__cached_error__);
+      }
+      return hit as T;
+    }
+    try {
+      const value = await loader();
+      await this.set(ns, parts, value, ttlSeconds);
+      return value;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.set(
+        ns,
+        parts,
+        { __cached_error__: message } satisfies ErrorSentinel,
+        errorTtlSeconds,
+      );
+      throw err;
+    }
+  }
+}
+
+// CACHE_S3 (round-19): a short TTL for the negative sentinel — long
+// enough to break a tight stampede loop, short enough that a real
+// outage recovery is visible to users within a single page reload.
+const NEGATIVE_TTL = 30; // seconds
+
+interface ErrorSentinel {
+  __cached_error__: string;
+}
+
+function isErrorSentinel(value: unknown): value is ErrorSentinel {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "__cached_error__" in value &&
+    typeof (value as ErrorSentinel).__cached_error__ === "string"
+  );
+}
+
+export class CachedFailure extends Error {
+  constructor(message: string) {
+    super(`cached upstream failure: ${message}`);
+    this.name = "CachedFailure";
   }
 }
 

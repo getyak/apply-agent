@@ -20,25 +20,125 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import structlog
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from langgraph.types import Command
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from agents.api.deps import UserDep
 from agents.coordinator.router import classify_intent, dispatch, persist_turn
 from agents.coordinator.workflows import build_from_scratch_graph
+from agents.harness.audit import redact_exception_text
 from agents.harness.checkpointer import (
     ask_vantage_thread_id,
     get_checkpointer,
     mock_thread_id,
 )
+from agents.harness.guards import BudgetExhausted
 from agents.harness.state import InterviewMode
 from agents.nodes import interview_agent, resume_agent
 from agents.tools.auto import pg_query
 
 log = structlog.get_logger("agents.api")
-app = FastAPI(title="Relay Agents", version="0.1.0")
+
+
+# Lifespan: start the application:submitted consumers in the background so the
+# T8 flywheel plumbing exists from boot. They are log-only today and tolerate
+# a missing Redis (subscribe() returns silently), so wiring this in carries
+# zero risk in dev / hermetic CI.
+from contextlib import asynccontextmanager  # noqa: E402 — needs `app` below
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from agents.events.consumers import start_in_background
+
+    task = start_in_background()
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass  # noqa: BLE001 — clean shutdown path
+
+
+app = FastAPI(title="Relay Agents", version="0.1.0", lifespan=_lifespan)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Global error envelope (round-5)
+#
+# Round-5 audit flagged two problems with how this layer reports errors:
+#   API1: no global exception handler — uncaught exceptions surface as
+#         FastAPI's default {"detail": "Internal Server Error"} with no
+#         trace_id, making prod debugging a guessing game.
+#   API2: SSE error frames embed the raw `str(exc)` text, leaking internal
+#         stack details (file paths, "session cost 12.4567c > 50.0c", etc.)
+#         and giving the frontend no machine-readable code to act on.
+#
+# These handlers + _error_envelope() centralise the shape (`code`, `message`,
+# `trace_id`) and choose a user-safe message per exception category. The SSE
+# error path uses the same helper so the dock and the JSON envelopes stay in
+# sync — one place to localise, one shape for the frontend to match.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _error_envelope(exc: BaseException, trace_id: str) -> dict[str, Any]:
+    """Map an exception to a sanitized {code, message, trace_id} envelope.
+
+    The message must be safe to show end-users: no file paths, no balance
+    digits, no internal field names. The log line (caller's responsibility)
+    keeps the raw text for support to correlate via trace_id.
+    """
+    if isinstance(exc, BudgetExhausted):
+        # CostGuard hit — translatable copy, no "12.34c > 50.0c" detail.
+        return {
+            "code": "budget_exhausted",
+            "message": "Your session budget is used up. Try again later or contact support.",
+            "trace_id": trace_id,
+        }
+    if isinstance(exc, HTTPException):
+        # FastAPI's own 4xx — keep the upstream detail (it's already
+        # author-controlled in our routes) but normalise the shape.
+        detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
+        return {
+            "code": f"http_{exc.status_code}",
+            "message": detail,
+            "trace_id": trace_id,
+        }
+    # Catch-all — never leak str(exc). Support reads the log via trace_id.
+    return {
+        "code": "internal_error",
+        "message": "Something went wrong on our side. We've logged this — please retry shortly.",
+        "trace_id": trace_id,
+    }
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    trace_id = uuid4().hex
+    log.warning("http_exception", trace_id=trace_id, status=exc.status_code, detail=str(exc.detail))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_envelope(exc, trace_id),
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    trace_id = uuid4().hex
+    # Log the full exception text so support can correlate; the response body
+    # only carries the sanitized envelope.
+    log.error("unhandled_exception", trace_id=trace_id, error=redact_exception_text(str(exc)), kind=type(exc).__name__)
+    status = 402 if isinstance(exc, BudgetExhausted) else 500
+    return JSONResponse(
+        status_code=status,
+        content=_error_envelope(exc, trace_id),
+        headers={"X-Trace-Id": trace_id},
+    )
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -88,6 +188,7 @@ async def ask_stream(
     user_id: UserDep,
     x_relay_thread_id: Annotated[str | None, Header()] = None,
     x_relay_surface: Annotated[str | None, Header()] = None,
+    x_request_id: Annotated[str | None, Header()] = None,
 ) -> StreamingResponse:
     """SSE stream — classifies intent, runs the dispatched agent, emits task cards.
 
@@ -104,7 +205,21 @@ async def ask_stream(
     # logged for observability and reserved for future per-surface context
     # tuning in the router.
     surface = (x_relay_surface or "dock").lower()
-    log.info("ask_stream.start", thread_id=thread_id, surface=surface)
+    # OBS3 (round-12): bind the gateway-issued request id to structlog so
+    # every subsequent log line in this turn carries it. The round-12
+    # observability audit pointed out that Python logs were context-free
+    # w.r.t. the originating request — a 5xx in agent_tasks could not be
+    # traced back to the browser-visible X-Request-Id. structlog's
+    # contextvars-based binding scopes the override to the current
+    # asyncio task so concurrent requests don't cross-contaminate.
+    if x_request_id:
+        structlog.contextvars.bind_contextvars(request_id=x_request_id)
+    log.info(
+        "ask_stream.start",
+        thread_id=thread_id,
+        surface=surface,
+        request_id=x_request_id,
+    )
 
     async def gen() -> AsyncIterator[str]:
         yield _sse({"event": "thinking", "agent": "coordinator"})
@@ -122,7 +237,11 @@ async def ask_stream(
 
         try:
             result = await dispatch(
-                intent, user_id=user_id, message=payload.message, thread_id=thread_id
+                intent,
+                user_id=user_id,
+                message=payload.message,
+                thread_id=thread_id,
+                surface=surface,
             )
             yield _sse({"event": "result", **result})
             # Persist the turn so the next dock prompt has context.
@@ -133,8 +252,20 @@ async def ask_stream(
                 assistant_text=_result_summary(result),
             )
         except Exception as exc:  # noqa: BLE001 boundary
-            log.error("ask_stream.dispatch_failed", error=str(exc))
-            yield _sse({"event": "error", "message": str(exc)})
+            # round-5 API2: stop leaking raw str(exc) into the SSE error
+            # frame. Reuse the same envelope helper the JSON handlers do, so
+            # the dock can branch on `code` (budget_exhausted, http_403,
+            # internal_error, …) and we have a single trace_id to grep for
+            # when a user reports the error.
+            trace_id = uuid4().hex
+            log.error(
+                "ask_stream.dispatch_failed",
+                trace_id=trace_id,
+                error=redact_exception_text(str(exc)),
+                kind=type(exc).__name__,
+            )
+            envelope = _error_envelope(exc, trace_id)
+            yield _sse({"event": "error", **envelope})
 
         yield _sse({"event": "done"})
 
@@ -173,21 +304,16 @@ async def resume_upload(payload: ResumeUploadPayload, user_id: UserDep) -> dict[
 
     from agents.tools.notify import save_resume_version
 
-    # Compute next version number for this user.
-    rows = await pg_query(
-        "SELECT COALESCE(MAX(version), 0) AS v FROM resumes WHERE user_id = %s",
-        (str(user_id),),
-    )
-    next_v = int(rows[0]["v"]) + 1 if rows else 1
-    new_id = await save_resume_version(
+    # version is assigned atomically by migration 016's trigger — no
+    # app-level SELECT MAX(version)+1 race.
+    new_id, assigned_v = await save_resume_version(
         user_id=user_id,
-        version=next_v,
         content_json=parsed,
         parent_version_id=None,
         tailored_for_job=None,
         is_base=True,
     )
-    return {"resume_id": str(new_id), "version": next_v, "parsed": parsed}
+    return {"resume_id": str(new_id), "version": assigned_v, "parsed": parsed}
 
 
 class ResumeCustomizePayload(BaseModel):
@@ -214,15 +340,244 @@ async def resume_customize(payload: ResumeCustomizePayload, user_id: UserDep) ->
 
 
 # ───────────────────────────────────────────────────────────────────────
+# Applications — delivery loop (docs/architecture/delivery-loop-plan.md)
+# ───────────────────────────────────────────────────────────────────────
+
+
+class PrepareApplicationPayload(BaseModel):
+    jd_url: str
+    base_resume_id: UUID
+    base_resume_content: dict[str, Any]
+    base_resume_version: int = 1
+    form_fields: list[dict[str, Any]] = []  # ATS field descriptors; may be empty
+    application_id: UUID | None = None       # idempotency: reuse a draft row
+
+
+@app.post("/applications/prepare")
+async def applications_prepare(
+    payload: PrepareApplicationPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Run the full delivery-loop saga and return everything the UI needs.
+
+    Drives TTAR (delivery-loop-plan.md § 1). Stage-level fallbacks live in
+    workflows.run_prepare_application — this endpoint just shapes the
+    response and surfaces the TTAR-relevant fields.
+    """
+    from agents.coordinator.workflows import run_prepare_application
+
+    return await run_prepare_application(
+        user_id=user_id,
+        jd_url=payload.jd_url,
+        base_resume_id=payload.base_resume_id,
+        base_resume_content=payload.base_resume_content,
+        base_resume_version=payload.base_resume_version,
+        form_fields=payload.form_fields,
+        application_id=payload.application_id,
+    )
+
+
+class ApplicationSubmittedPayload(BaseModel):
+    """Posted by the extension after the user clicks the ATS Submit button.
+
+    Body shape stays minimal — anything the consumers need is queryable from
+    the application_drafts / jobs tables given the id. We keep `company` /
+    `role_title` in the event itself so log-only consumers (T8 phase 1) have
+    something readable without doing a JOIN.
+    """
+
+    company: str | None = None
+    role_title: str | None = None
+    submitted_via: str = "client_extension"
+
+
+@app.post("/applications/{application_id}/submitted")
+async def applications_submitted(
+    application_id: UUID,
+    payload: ApplicationSubmittedPayload,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    """Mark an application as submitted + emit application:submitted event.
+
+    Flywheel pre-wiring (delivery-loop-plan.md § 2.1 + T8). The event powers
+    the interview_agent_preheat / trend_agent_signal consumers wired in
+    agents/events/consumers.py.
+
+    DB write is best-effort (it's how we transition status=submitted) but
+    the event fire is the real product surface — if PG is down for some
+    reason we still emit so the consumers see the submit.
+    """
+    from agents.events.bus import publish
+    from agents.tools.auto import pg_query
+
+    # Best-effort DB update — drop the application into 'submitted' state
+    # and stamp submitted_at. If the row is owned by another user we
+    # silently no-op (don't leak existence).
+    try:
+        await pg_query(
+            "UPDATE application_drafts "
+            "   SET status = 'submitted', "
+            "       submitted_at = COALESCE(submitted_at, now()), "
+            "       submitted_via = COALESCE(submitted_via, %s), "
+            "       updated_at = now() "
+            " WHERE id = %s AND user_id = %s",
+            (payload.submitted_via, str(application_id), str(user_id)),
+        )
+    except Exception as exc:  # noqa: BLE001 boundary
+        log.warning("applications.submitted.db_write_failed", error=redact_exception_text(str(exc)))
+
+    entry_id = await publish(
+        "application:submitted",
+        {
+            "user_id": str(user_id),
+            "application_id": str(application_id),
+            "company": payload.company,
+            "role_title": payload.role_title,
+            "submitted_via": payload.submitted_via,
+        },
+    )
+    return {"ok": True, "event_id": entry_id, "application_id": str(application_id)}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Extension — cloud field mapping (delivery-loop-plan.md § 3 T7)
+# ───────────────────────────────────────────────────────────────────────
+
+
+class ExtensionMapFieldsPayload(BaseModel):
+    """Subset of CloudFillRequest from apps/extension/src/cloud-fill.ts.
+
+    EXT_MF1 / EXT_MF2 (round-18): the round-18 audit found this payload
+    was the only LLM-bound POST that still accepted unbounded input —
+    MockResumePayload (HITL_R3, round-8), MockStartPayload (MOCK_S1,
+    round-15), and most of the other agent endpoints have moved to
+    Field(max_length=…) by now. A buggy or hostile extension could POST
+    a 1 MB jd_url, a 10 000-element fields array, or a deeply-nested
+    context dict, and we'd serialize all of it into the LLM context
+    (paying tokens) and into structured log lines (paying memory).
+    Pin every leaf with the same pattern the round-15 work set:
+      jd_url ≤ 2 000  (typical careers URLs are 200-400 chars; 2 000
+                       leaves room for tracking params without
+                       inviting megabyte abuse).
+      fields ≤ 500    (real ATS forms top out around 50-80 fields;
+                       500 is a generous ceiling).
+      context dict is capped indirectly by Pydantic's default validation
+      cycle plus the gateway's 1 MB body cap (round-7 SEC1).
+    """
+
+    context: dict[str, Any]  # ATSContext shape, but we only read jdUrl + source
+    jd_url: str = Field(max_length=2000)
+    fields: list[dict[str, Any]] = Field(max_length=500)
+
+    # pydantic v2: accept both camelCase from the extension and snake_case.
+    model_config = {"populate_by_name": True}
+
+
+@app.post("/extension/map-fields")
+async def extension_map_fields(
+    payload: ExtensionMapFieldsPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Map ATS form fields the local filler couldn't handle.
+
+    Drives the "+25% fields" half of docs/architecture/client-side-delivery.md
+    plan B. The extension calls this with whatever planLocalFill() left as
+    `unmatched`; we look up the user's base résumé, fetch the parsed JD via
+    jobmatch_agent, and hand both to appprep_agent.generate_form_answers.
+
+    Returned shape matches CloudFillResponse:
+      {
+        "fills":     [{ selector, profileKey, value, type, confidence }, ...],
+        "unmatched": [DetectedField, ...]   // fields the model declined / skipped
+      }
+    """
+    from agents.nodes import appprep_agent, jobmatch_agent
+    from agents.tools.auto import pg_query
+
+    if not payload.fields:
+        return {"fills": [], "unmatched": []}
+
+    # 1. Look up the user's base résumé. Without one we have nothing to
+    #    ground answers in; degrade rather than crash.
+    rows = await pg_query(
+        "SELECT content FROM resumes "
+        "WHERE user_id = %s AND is_base = TRUE "
+        "ORDER BY version DESC LIMIT 1",
+        (str(user_id),),
+    )
+    if not rows:
+        # No base résumé → return all fields as unmatched so the user fills
+        # them manually. Don't 422 — the extension would just look broken.
+        return {"fills": [], "unmatched": payload.fields}
+
+    base_resume = rows[0]["content"]
+    if isinstance(base_resume, str):
+        import json as _json
+
+        base_resume = _json.loads(base_resume)
+
+    # 2. Parse the JD (cached UPSERT — cheap when the same job has been
+    #    seen before).
+    try:
+        parsed = await jobmatch_agent.parse_jd_from_url(
+            payload.jd_url, user_id=user_id, persist=True
+        )
+        parsed_jd = parsed.parsed
+    except jobmatch_agent.JDFetchError:
+        parsed_jd = {}
+
+    # 3. Ask AppPrep for answers per field.
+    answers = await appprep_agent.generate_form_answers(
+        tailored_resume=base_resume,
+        parsed_jd=parsed_jd,
+        fields=payload.fields,
+        user_id=user_id,
+    )
+
+    # 4. Convert FormFieldAnswer → FillInstruction (or unmatched).
+    fields_by_id = {str(f.get("id") or ""): f for f in payload.fields}
+    fills: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = []
+    for ans in answers:
+        f = fields_by_id.get(ans.id)
+        if ans.skip or not ans.answer or not f:
+            if f:
+                unmatched.append(f)
+            continue
+        fills.append(
+            {
+                "selector": f.get("selector", ""),
+                "profileKey": "cloud_llm",  # extension uses this only for highlight metadata
+                "value": ans.answer,
+                "type": f.get("type", "text"),
+                "confidence": ans.confidence,
+            }
+        )
+
+    return {"fills": fills, "unmatched": unmatched}
+
+
+# ───────────────────────────────────────────────────────────────────────
 # Mock
 # ───────────────────────────────────────────────────────────────────────
 
 
 class MockStartPayload(BaseModel):
-    mode_slug: str
-    company: str | None = None
-    role: str | None = None
-    round_type: str | None = None
+    # MOCK_S1 (round-15): the round-15 audit found that MockResumePayload
+    # got Field bounds from HITL_R3 (round-8) but MockStartPayload was
+    # left as bare `str` everywhere. Mirror the same posture so a buggy
+    # client (or attacker) can't POST a 1 MB role string that blows up
+    # downstream `intel_brief:<company>:<role>:<round>` cache keys and
+    # the structured-log lines that include those values. Caps:
+    #   mode_slug ≤ 64  (longest legit slug today is "scene_recreation"
+    #                    = 16 chars; 64 leaves room for future modes
+    #                    without inviting 1 MB body abuse).
+    #   company / role ≤ 200  (longest honest company names are ~60-80
+    #                    chars; 200 is a generous ceiling).
+    #   round_type ≤ 64 (mirrors the 009 migration CHECK constraint's
+    #                    enum values, all single-word identifiers).
+    mode_slug: str = Field(min_length=1, max_length=64)
+    company: str | None = Field(default=None, max_length=200)
+    role: str | None = Field(default=None, max_length=200)
+    round_type: str | None = Field(default=None, max_length=64)
 
 
 @app.post("/mock/start")
@@ -262,8 +617,18 @@ async def mock_start(payload: MockStartPayload, user_id: UserDep) -> dict[str, A
 
 
 class MockResumePayload(BaseModel):
-    thread_id: str
-    answer: str
+    # HITL_R3 (round-8): the round-8 audit flagged that thread_id and
+    # answer were untyped beyond `str`, leaving the door open for an
+    # attacker (or a buggy client) to POST a 10 MB string and crash
+    # downstream consumers via RecursionError in json.dumps. The thread
+    # cap is 128 because the longest legitimate value today is
+    # `build_resume:{uuid4}:{uuid4}` (~57 chars) — generous headroom
+    # without inviting abuse. The answer cap is 50 000 chars: ~10 000
+    # words of actual prose, far beyond what any honest interview answer
+    # needs, while still well below the body-size limit the gateway
+    # enforces upstream.
+    thread_id: str = Field(min_length=1, max_length=128)
+    answer: str = Field(min_length=1, max_length=50_000)
 
 
 @app.post("/mock/resume")
@@ -275,6 +640,23 @@ async def mock_resume(payload: MockResumePayload, user_id: UserDep) -> dict[str,
     snapshot = checkpointer.get(config)
     if not snapshot:
         raise HTTPException(status_code=404, detail="thread not found")
+    # HITL_R4 (round-8): the round-8 HITL audit flagged that this endpoint
+    # would happily resume any thread_id whose checkpoint we could load,
+    # without verifying the auth'd user owned it. An attacker who learnt
+    # another user's mock thread_id (e.g. accidentally leaked in a log)
+    # could replay an answer on the victim's session. Cross-check the
+    # state's stored user_id against the auth-resolved one and return 403
+    # on mismatch. Both UUID and str representations are accepted because
+    # different code paths may persist either.
+    stored_user = snapshot["channel_values"].get("user_id")  # type: ignore[index]
+    if str(stored_user) != str(user_id):
+        log.warning(
+            "mock_resume.user_mismatch",
+            thread_id=payload.thread_id,
+            requested_by=str(user_id),
+            stored_owner=str(stored_user),
+        )
+        raise HTTPException(status_code=403, detail="thread is not yours")
     mode: InterviewMode = snapshot["channel_values"]["mode"]  # type: ignore[index]
     graph = interview_agent.build_mock_graph(mode)
     state = await graph.ainvoke(Command(resume={"answer": payload.answer}), config=config)
@@ -293,12 +675,54 @@ async def mock_resume(payload: MockResumePayload, user_id: UserDep) -> dict[str,
 
 
 class BuildResumeResumePayload(BaseModel):
-    thread_id: str
-    value: Any  # str | list[str]
+    # HITL_R3 (round-8): build_resume's `value` field used to be
+    # `Any`, accepting nested dicts, circular references, and arbitrary
+    # binary blobs. The audit pointed out this is a prompt-injection vector
+    # since the value lands in a chip's string state and is then fed to
+    # downstream LLM calls. Constrain to the two shapes the workflow
+    # actually consumes: a single string (target_role, recent_role) or a
+    # list of strings (top_3_wins). Caps mirror the MockResumePayload sizes
+    # so the same body-size envelope holds across both /resume endpoints.
+    thread_id: str = Field(min_length=1, max_length=128)
+    value: str | list[str] = Field(...)
+
+    @field_validator("value")
+    @classmethod
+    def _bound_value(cls, v: str | list[str]) -> str | list[str]:
+        if isinstance(v, str):
+            if len(v) > 10_000:
+                raise ValueError("value string exceeds 10000 characters")
+            return v
+        # list[str]
+        if len(v) > 50:
+            raise ValueError("value list exceeds 50 items")
+        for i, item in enumerate(v):
+            if not isinstance(item, str):
+                raise ValueError(f"value[{i}] is not a string")
+            if len(item) > 2_000:
+                raise ValueError(f"value[{i}] exceeds 2000 characters")
+        return v
 
 
 @app.post("/build_resume/resume")
 async def build_resume_resume(payload: BuildResumeResumePayload, user_id: UserDep) -> dict[str, Any]:
+    # HITL_R4 (round-8): the build_resume thread_id is structured as
+    # `build_resume:{user_id}:{session_id}` (see checkpointer.py); we can
+    # verify ownership cheaply by parsing the embedded user_id. The audit
+    # showed the prior version would resume any thread the caller named,
+    # opening an IDOR vector — an attacker who guessed a victim's
+    # session_id could nudge the workflow past an interrupt. The parse is
+    # tolerant: any thread_id that doesn't match the expected shape is
+    # rejected outright (403) so future thread_id changes can't silently
+    # bypass this check.
+    parts = payload.thread_id.split(":")
+    if len(parts) != 3 or parts[0] != "build_resume" or parts[1] != str(user_id):
+        log.warning(
+            "build_resume_resume.user_mismatch",
+            thread_id=payload.thread_id,
+            requested_by=str(user_id),
+        )
+        raise HTTPException(status_code=403, detail="thread is not yours")
     graph = build_from_scratch_graph()
     config = {"configurable": {"thread_id": payload.thread_id}}
     state = await graph.ainvoke(Command(resume={"value": payload.value}), config=config)

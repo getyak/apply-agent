@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useVantage, JOBS, type ApiJob } from "@/lib/store";
 import { firstNameOf, fullGreeting, formatToday } from "@/lib/dates";
 import {
@@ -9,9 +10,67 @@ import {
   Clock,
   Sparkles,
 } from "lucide-react";
+import { today as todayApi, type TodayAction } from "@/lib/api";
+import { sendAsk } from "@/lib/ask-stream";
+import { useDock } from "@/lib/ask-vantage-store";
+
+// H2 (round-1): turn the server's `priority` score (0–100) into a
+// human-readable "why is this the top of my queue" hint. The route
+// already ranks rows by score (api/src/routes/today.ts:43,84,129) but
+// until now the score never reached the UI — users were left guessing
+// why one row beat another. Each rule maps the existing kind + priority
+// inputs into a short mono label rendered to the right of the row, so
+// scanning the queue tells you both *what* and *why*.
+function whyThisCard(a: TodayAction): string {
+  if (a.kind === "interview") {
+    // priority is max(80, 100 - days*3) on the route side, so anything
+    // ≥97 is tomorrow-or-today and deserves the louder label.
+    return a.priority >= 97 ? "Interview imminent" : "Interview this week";
+  }
+  if (a.kind === "prepare") {
+    // priority is 70 + min(20, age_days*2), so ≥85 means the draft has
+    // been sitting ≥7 days (15 + age component). Call that out so the
+    // user sees the queue is nudging them to unblock it.
+    return a.priority >= 85 ? "Draft aging" : "Open draft";
+  }
+  if (a.kind === "follow_up") return "Awaiting reply";
+  return "Skill-gap signal";
+}
+
+// Small status chip for action queue rows. Distinct color tracks let
+// the user scan "prep / interview / learn" at a glance without reading
+// titles — matches the dock's TaskGraphStepPill aesthetic.
+function ActionKindPill({ kind }: { kind: TodayAction["kind"] }) {
+  const spec = (() => {
+    if (kind === "interview") return { text: "INTERVIEW", fg: "#7A2A1F", bg: "#F4D7D2" };
+    if (kind === "prepare") return { text: "PREP", fg: "#5D3000", bg: "#FBEFD8" };
+    if (kind === "follow_up") return { text: "FOLLOW UP", fg: "#8A6A12", bg: "#FBEFD0" };
+    return { text: "LEARN", fg: "#2F5722", bg: "#E2EED9" };
+  })();
+  return (
+    <span
+      className="flex-shrink-0"
+      style={{
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+        fontSize: 9.5,
+        letterSpacing: 0.6,
+        padding: "3px 8px",
+        borderRadius: 999,
+        color: spec.fg,
+        background: spec.bg,
+      }}
+    >
+      {spec.text}
+    </span>
+  );
+}
 
 function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => void }) {
-  const match = job.matchScore ?? 50;
+  // `matchScore` may be undefined when the matcher hasn't scored this job yet
+  // (server down, no résumé selected, etc.). Surface that honestly instead of
+  // bucketing every row as "Fair" with a fake 50% bar (QA bug #2).
+  const match = job.matchScore;
+  const scored = typeof match === "number";
   const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
   const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
   const fitLabel = (m: number) => (m >= 95 ? "Excellent" : m >= 90 ? "Strong" : m >= 85 ? "Good" : "Fair");
@@ -27,19 +86,31 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-[9px] mb-[3px]">
           <span className="font-body font-semibold text-[16px] text-ink">{job.role_title}</span>
-          <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px]" style={{ color: fitColor(match), background: fitBg(match) }}>
-            {fitLabel(match)}
-          </span>
+          {scored ? (
+            <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px]" style={{ color: fitColor(match), background: fitBg(match) }}>
+              {fitLabel(match)}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px] bg-[#F3F0EB] text-ink-muted">
+              Not scored
+            </span>
+          )}
         </div>
         <div className="font-body text-[13px] text-ink-light">
           {job.company}{location ? ` · ${location}` : ""}{salary ? ` · ${salary}` : ""}
         </div>
-        <div className="flex items-center gap-[10px] mt-[11px]">
-          <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
-            <div className="h-full rounded-full bg-green" style={{ width: `${match}%` }} />
+        {scored ? (
+          <div className="flex items-center gap-[10px] mt-[11px]">
+            <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
+              <div className="h-full rounded-full bg-green" style={{ width: `${match}%` }} />
+            </div>
+            <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
           </div>
-          <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
-        </div>
+        ) : (
+          <div className="font-mono text-[11px] text-ink-muted mt-[11px]">
+            Add or refresh your résumé so Vantage can score this match.
+          </div>
+        )}
         {job.matchedSkills && job.matchedSkills.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {job.matchedSkills.slice(0, 4).map((s) => (
@@ -85,6 +156,44 @@ export function TodayView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Action queue (P3.1). Fire-and-forget on mount; the page renders
+  // happily without it (this is *additive* — the existing live-matches
+  // section is the historical default). Setting `loaded` lets the empty
+  // and the loading shell render differently so we don't claim "no
+  // actions" while we're still fetching.
+  const [actionQueue, setActionQueue] = useState<TodayAction[]>([]);
+  const [queueLoaded, setQueueLoaded] = useState(false);
+  const router = useRouter();
+  useEffect(() => {
+    let alive = true;
+    todayApi
+      .queue()
+      .then((res) => {
+        if (alive) {
+          setActionQueue(res.actions ?? []);
+          setQueueLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (alive) setQueueLoaded(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const runAction = (a: TodayAction) => {
+    if (a.ask_prompt) {
+      // Open the dock if it's collapsed so the run is visible, then
+      // queue the prompt through the same ask-stream pipeline the dock
+      // composer uses. We don't await — sendAsk owns its own streaming
+      // state via the dock store.
+      useDock.getState().open();
+      void sendAsk(a.ask_prompt, [], { surface: "dock" });
+    }
+    if (a.route) router.push(a.route);
+  };
+
   const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
   const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
   const fitLabel = (m: number) => (m >= 95 ? "Excellent" : m >= 90 ? "Strong" : m >= 85 ? "Good" : "Fair");
@@ -101,7 +210,12 @@ export function TodayView() {
 
   // Real stats only — no fake fallbacks. Empty states are below.
   const totalJobs = trendSnapshot?.totalJobs ?? apiJobs.length;
-  const strongFits = apiJobs.filter((j) => (j.matchScore ?? 0) >= 85).length;
+  // Only count rows the matcher has actually scored. Treating an unscored job
+  // as "0" let us claim "0 strong fits" instead of "scoring not ready yet"
+  // (QA UX note — surface the empty state honestly).
+  const scoredJobs = apiJobs.filter((j) => typeof j.matchScore === "number");
+  const strongFits = scoredJobs.filter((j) => (j.matchScore ?? 0) >= 85).length;
+  const anyScored = scoredJobs.length > 0;
   const trackedSkills = trendSnapshot?.topSkills?.length ?? 0;
 
   return (
@@ -122,9 +236,17 @@ export function TodayView() {
         </div>
         <div className="w-px bg-border" />
         <div className="flex-1 px-[22px] py-[18px]">
-          <div className="font-display font-bold text-[26px] text-green">{strongFits}</div>
+          <div className={`font-display font-bold text-[26px] ${anyScored ? "text-green" : "text-ink-muted"}`}>
+            {anyScored ? strongFits : "—"}
+          </div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
-            {strongFits === 1 ? "strong fit, ready to send" : "strong fits, ready to send"}
+            {!anyScored
+              ? "no fits scored yet"
+              : strongFits === 0
+                ? "no strong fits — try broader filters"
+                : strongFits === 1
+                  ? "strong fit, ready to send"
+                  : "strong fits, ready to send"}
           </div>
         </div>
         <div className="w-px bg-border" />
@@ -136,13 +258,97 @@ export function TodayView() {
         </div>
       </div>
 
+      {actionQueue.length > 0 && (
+        <div className="mb-[34px]">
+          <div className="flex items-baseline justify-between mb-[14px]">
+            <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
+              Today, {actionQueue.length} {actionQueue.length === 1 ? "thing" : "things"} move you forward
+            </h2>
+            <span className="font-body text-[13px] text-ink-muted">Tap to start</span>
+          </div>
+          <ol className="flex flex-col gap-[10px] list-none m-0 p-0">
+            {actionQueue.map((a, i) => (
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => runAction(a)}
+                  className="w-full text-left bg-white border border-border rounded-[12px] px-[16px] py-[13px] shadow-sm hover:border-brown transition-colors flex items-center gap-[14px] cursor-pointer"
+                >
+                  <span className="font-mono text-[10px] tracking-[0.8px] text-ink-muted w-[18px] flex-shrink-0">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-body font-semibold text-[14px] text-ink leading-tight">
+                      {a.title}
+                    </span>
+                    <span className="block font-body text-[12.5px] text-ink-light mt-[2px]">
+                      {a.sub}
+                    </span>
+                    <span
+                      className="block font-mono mt-[4px]"
+                      style={{
+                        fontSize: 9.5,
+                        letterSpacing: 0.6,
+                        textTransform: "uppercase",
+                        color: "#A38A60",
+                      }}
+                    >
+                      Why this · {whyThisCard(a)}
+                    </span>
+                  </span>
+                  <ActionKindPill kind={a.kind} />
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {queueLoaded && actionQueue.length === 0 && (
+        // TODAY2 (round-12): the round-12 onboarding audit found that a
+        // brand-new account hit /app/today and saw a passive line —
+        // "applications, interviews and learn signals will surface here
+        // automatically" — which reads as "the service is broken" when
+        // the queue is empty *because the user hasn't uploaded anything
+        // yet*. Branch the copy on whether we know about a résumé: if
+        // we don't, surface a single concrete next step; if we do, the
+        // original passive line still applies (the queue really will
+        // populate as the user starts applying / scheduling interviews).
+        !parsedResume ? (
+          <div className="mb-[34px] flex items-start gap-3 rounded-[14px] border border-cream-border bg-cream px-[18px] py-[14px]">
+            <div className="font-body text-[13.5px] text-ink-dark flex-1">
+              <span className="font-semibold">Start with your résumé.</span>{" "}
+              Vantage builds the queue once it has something to match
+              against — upload or paste your résumé and matches, prep
+              actions, and skill signals start showing up here.
+            </div>
+            <button
+              type="button"
+              onClick={() => router.push("/app/studio/resume")}
+              className="font-body text-[13px] font-semibold text-paper bg-brown rounded-[8px] px-3 py-2 hover:bg-brown-light transition-colors whitespace-nowrap"
+            >
+              Upload résumé
+            </button>
+          </div>
+        ) : (
+          <div className="mb-[34px] font-body text-[13px] text-ink-muted">
+            Nothing on the action queue yet — applications, interviews
+            and learn signals will surface here automatically.
+          </div>
+        )
+      )}
+
       {apiJobs.length > 0 && (
         <>
           <div className="flex items-baseline justify-between mb-[14px]">
             <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
               Live matches
             </h2>
-            <span className="font-body text-[13px] text-ink-muted">From database · sorted by fit</span>
+            {/* Only claim "sorted by fit" when the matcher has actually scored
+                something. Otherwise the label fights the uniform "Not scored"
+                tags below it (QA bug #2). */}
+            <span className="font-body text-[13px] text-ink-muted">
+              {anyScored ? "From database · sorted by fit" : "From database · scoring pending"}
+            </span>
           </div>
           <div className="flex flex-col gap-[13px] mb-[34px]">
             {apiJobs.map((job) => (

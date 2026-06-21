@@ -14,7 +14,6 @@ from typing import Literal
 
 from langchain_openai import ChatOpenAI
 
-
 Tier = Literal["heavy", "general", "fast"]
 
 
@@ -48,6 +47,16 @@ def pick_model(tier: Tier, temperature: float = 0.3, max_tokens: int = 4096) -> 
         base_url=base_url,
         temperature=temperature,
         max_tokens=max_tokens,
+        # LLM1 (round-8): the round-8 audit found the prior config let a
+        # single OpenRouter 429 / 5xx / connection wobble propagate as a
+        # hard failure into the saga, even though langchain_openai already
+        # ships a tenacity-backed retry loop. Setting max_retries=3
+        # enables exponential backoff (~1s, 2s, 4s) for transient upstream
+        # errors. request_timeout matches the router's 30s wait_for so a
+        # hung provider can't outlive its enclosing asyncio.wait_for and
+        # leak file descriptors.
+        max_retries=3,
+        request_timeout=30,
         # Lock provider routing for stability on critical prompts (see
         # cicd-aiops-harness.md § 6 pitfall #2 — OpenRouter silent provider swaps).
         model_kwargs={"extra_body": {"provider": {"allow_fallbacks": True}}},

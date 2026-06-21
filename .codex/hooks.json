@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/xiongxinwei/data/mine/cubxxw/personal/apply-agent/.codex/hooks/pre-bash-protected-paths.sh'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/xiongxinwei/data/mine/cubxxw/personal/apply-agent/.codex/hooks/pre-write-migration-check.sh'"
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/xiongxinwei/data/mine/cubxxw/personal/apply-agent/.codex/hooks/pre-llm-call-cost-warn.sh'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/xiongxinwei/data/mine/cubxxw/personal/apply-agent/.codex/hooks/post-edit-prompt-check.sh'"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/xiongxinwei/data/mine/cubxxw/personal/apply-agent/.codex/hooks/session-start-context-loader.sh'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/xiongxinwei/data/mine/cubxxw/personal/apply-agent/.codex/hooks/post-commit-lint.sh'"
+          }
+        ]
+      }
+    ]
+  }
+}

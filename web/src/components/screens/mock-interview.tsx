@@ -24,6 +24,8 @@ import {
   INTERVIEWING_DATA,
 } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
+import { sendAsk } from "@/lib/ask-stream";
+import { users as usersApi } from "@/lib/api";
 import { initialsOf } from "@/lib/dates";
 
 type IntelStrategy =
@@ -152,10 +154,6 @@ function loopLabel(l: LoopBehavior): string {
       : "REPLAY REAL";
 }
 
-function modeDescriptor(m: BuiltInMode): string {
-  return `${intelLabel(m.intel)} · PRESSURE ${pressureLabel(m.pressure)}`;
-}
-
 type Stage = "modes" | "intel" | "live" | "debrief";
 
 interface TranslationFeedback {
@@ -176,6 +174,7 @@ export function MockScreen() {
   const backHome = useVantage((s) => s.backHome);
   const apiApplications = useVantage((s) => s.apiApplications);
   const currentUser = useVantage((s) => s.currentUser);
+  const parsedResume = useVantage((s) => s.parsedResume);
 
   const [stage, setStage] = useState<Stage>("modes");
   const [selectedSlug, setSelectedSlug] = useState<string>("scene_recreation");
@@ -223,7 +222,12 @@ export function MockScreen() {
       }
     : INTERVIEWING_DATA[0];
 
-  const initials = initialsOf(currentUser?.displayName ?? "");
+  // Same precedence as sidebar/dock: prefer the résumé's basics.name over
+  // auth display_name so the avatar never falls back to the email's first
+  // letter (QA bug #5).
+  const initials = initialsOf(
+    parsedResume?.basics?.name?.trim() || currentUser?.displayName?.trim() || "",
+  );
 
   const intel = {
     duration: "30 MIN",
@@ -1145,6 +1149,10 @@ function Debrief({
   onRestart: () => void;
   onDone: () => void;
 }) {
+  // P3.3 flywheel entry. Opens the opt-in modal on first click; once the
+  // user confirms (or declines) the modal's choice is persisted to
+  // preferences.crowdsourceOptIn so we never re-prompt on later sessions.
+  const [logRealOpen, setLogRealOpen] = useState(false);
   return (
     <div
       style={{
@@ -1258,6 +1266,7 @@ function Debrief({
             After the real {job.co} screen, come back and log what they actually asked. Vantage learns your real weak spots — not generic advice.
           </div>
           <button
+            onClick={() => setLogRealOpen(true)}
             style={{
               cursor: "pointer",
               border: `1px solid ${M.borderStrong}`,
@@ -1280,6 +1289,12 @@ function Debrief({
             Log the real interview
           </button>
         </div>
+        {logRealOpen ? (
+          <LogRealInterviewModal
+            company={job.co}
+            onClose={() => setLogRealOpen(false)}
+          />
+        ) : null}
 
         {/* Weak-spots focus — white surface with accent left rail, matching
             the translation card's TRY INSTEAD treatment from LiveStage. */}
@@ -1583,6 +1598,183 @@ function StartConfirmModal({
             </svg>
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Log-real-interview opt-in modal (P3.3) ─────────────────────────
+//
+// Two paths out of this modal:
+//
+//   1. "Just for me" — keeps everything local to the user's account.
+//      We still hand control to Ask Vantage so it can prompt the user
+//      through what actually got asked, but we do NOT toggle
+//      crowdsourceOptIn on (it stays at its current value).
+//
+//   2. "Yes, help the pool" — same Vantage hand-off, AND we PATCH the
+//      user's preferences.crowdsourceOptIn = true so subsequent
+//      sessions know they may anonymise + donate to the question pool
+//      (vantage-ui-mapping.md §3.5).
+//
+// Either way the closing action opens the dock and seeds a prompt so
+// the user lands in conversation, not a blank screen. The persistence
+// failure is intentionally silent — the dock conversation is the
+// primary outcome; a 4xx on the prefs PATCH (e.g. network blip) must
+// not block the user from logging the real interview.
+function LogRealInterviewModal({
+  company,
+  onClose,
+}: {
+  company: string;
+  onClose: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  async function persistAndHandoff(optIn: boolean) {
+    setSaving(true);
+    try {
+      if (optIn) {
+        try {
+          await usersApi.updateMe({ crowdsourceOptIn: true });
+        } catch (err) {
+          // Non-fatal — see comment above. We still hand off below.
+          console.warn("[mock] crowdsource opt-in patch failed:", err);
+        }
+      }
+      useDock.getState().open();
+      void sendAsk(
+        `I just finished the real ${company} interview. Let's log the actual questions they asked so Vantage can sharpen my next prep.`,
+        [],
+        { surface: "dock" },
+      );
+    } finally {
+      setSaving(false);
+      onClose();
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(43, 40, 34, 0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: M.surface,
+          border: `1px solid ${M.border}`,
+          borderRadius: 14,
+          maxWidth: 520,
+          width: "100%",
+          padding: 28,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
+        }}
+        className="animate-fade-up"
+      >
+        <div
+          style={{
+            fontFamily: "JetBrains Mono",
+            fontSize: 10.5,
+            letterSpacing: 1,
+            color: M.muted,
+            marginBottom: 10,
+            textTransform: "uppercase",
+          }}
+        >
+          Privacy first
+        </div>
+        <h2
+          style={{
+            fontFamily: "Inter",
+            fontWeight: 600,
+            fontSize: 22,
+            lineHeight: 1.25,
+            color: M.ink,
+            margin: "0 0 10px",
+          }}
+        >
+          Log what {company} actually asked
+        </h2>
+        <p
+          style={{
+            fontFamily: "Inter",
+            fontSize: 14.5,
+            lineHeight: 1.6,
+            color: M.body,
+            margin: "0 0 14px",
+          }}
+        >
+          We&apos;ll open Ask Vantage so you can walk through the real round
+          while it&apos;s fresh. Pick one — you can change it later in Settings.
+        </p>
+        <ul
+          style={{
+            fontFamily: "Inter",
+            fontSize: 13,
+            lineHeight: 1.65,
+            color: M.body,
+            margin: "0 0 22px",
+            padding: "0 0 0 20px",
+          }}
+        >
+          <li>
+            <b style={{ fontWeight: 600 }}>Just for me</b> — questions stay
+            on your account. We never share or aggregate them.
+          </li>
+          <li>
+            <b style={{ fontWeight: 600 }}>Help the pool</b> — same as above,
+            plus we anonymise the questions (no name, no company, no role
+            details) and add them to a shared bank so others get a closer
+            mock next time. You can opt out any time.
+          </li>
+        </ul>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            onClick={() => persistAndHandoff(false)}
+            disabled={saving}
+            style={{
+              ...secondaryBtnStyle(),
+              opacity: saving ? 0.6 : 1,
+              cursor: saving ? "wait" : "pointer",
+            }}
+          >
+            Just for me
+          </button>
+          <button
+            onClick={() => persistAndHandoff(true)}
+            disabled={saving}
+            style={{
+              ...primaryBtnStyle({ marginTop: 0, flex: 1 }),
+              opacity: saving ? 0.6 : 1,
+              cursor: saving ? "wait" : "pointer",
+            }}
+          >
+            Yes, help the pool
+          </button>
+        </div>
+        <button
+          onClick={onClose}
+          disabled={saving}
+          style={{
+            ...ghostBtnStyle(),
+            marginTop: 14,
+            width: "100%",
+          }}
+        >
+          Not now
+        </button>
       </div>
     </div>
   );

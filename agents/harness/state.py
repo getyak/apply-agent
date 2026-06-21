@@ -12,9 +12,8 @@ from __future__ import annotations
 from typing import Annotated, Literal, TypedDict
 from uuid import UUID
 
-from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
-
+from langgraph.graph.message import add_messages
 
 # Pluggable mode dimensions (mirror PG enum check constraints in 012).
 IntelStrategy = Literal["none", "jd_based", "crowdsourced", "recruiter_specific"]
@@ -101,3 +100,40 @@ class BuildResumeState(TypedDict, total=False):
     draft_resume_id: UUID | None
     total_cost_cents: float
     total_tokens: int
+
+
+# ── Prepare-application workflow state ──────────────────────────────────
+# Drives docs/architecture/delivery-loop-plan.md § 2.3 saga. The fields are
+# all `total=False` so partial state at each stage is valid — saga branches
+# check for `last_error` or stage results directly.
+class PrepareApplicationState(TypedDict, total=False):
+    user_id: UUID
+    application_id: UUID  # row in application_drafts; created on entry
+
+    # Inputs
+    jd_url: str
+    base_resume_id: UUID
+    base_resume_content: dict   # JSON Resume v1.0 dict
+    base_resume_version: int
+    form_fields: list[dict]      # ATS field descriptors, may be empty
+
+    # Stage outputs (set incrementally by nodes)
+    job_id: UUID | None
+    parsed_jd: dict | None       # canonical schema from jobmatch parse
+    company: str | None
+    role_title: str | None
+    tailored_resume: dict | None
+    tailored_resume_id: UUID | None
+    cover_letter: dict | None    # CoverLetter.to_dict()
+    form_answers: list[dict]     # [FormFieldAnswer.to_dict(), ...]
+
+    # Saga bookkeeping
+    fabrication_attempts: int
+    last_error: str | None
+    stage_status: dict           # {stage_name: "ok" | "fallback" | "failed"}
+
+    # TTAR per-stage timings — propagated through nodes (each returns the
+    # accumulated dict so LangGraph's default replace-on-update reducer
+    # keeps the union, not just the latest stage). Read out by
+    # workflows.run_prepare_application and pushed into the TTARRecord.
+    _stage_timings: dict         # {f"{stage}_ms": int}

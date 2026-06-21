@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { config } from "./config";
+import { installDbShutdownHandlers, pingDbAtBoot } from "./db";
+import { installRedisShutdownHandlers, pingRedisAtBoot } from "./redis";
 import { errorHandler } from "./errors";
 import { requestId, requestLogger } from "./middleware/observability";
 import {
@@ -20,6 +22,7 @@ import fileRoutes from "./routes/files";
 import healthRoutes from "./routes/health";
 import userRoutes from "./routes/users";
 import askRoutes from "./routes/ask";
+import todayRoutes from "./routes/today";
 
 const app = new Hono<AppEnv>();
 
@@ -43,6 +46,7 @@ app.route("/api/applications", applicationRoutes);
 app.route("/api/interviews", interviewRoutes);
 app.route("/api/chat", chatRoutes);
 app.route("/api/trends", trendRoutes);
+app.route("/api/today", todayRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/users", userRoutes);
 // Ask Vantage SSE relay → Python LangGraph host. Single mount-point;
@@ -55,6 +59,20 @@ app.route("/api/ask", askRoutes);
 app.route("/api", healthRoutes);
 
 app.onError(errorHandler);
+
+// DB-bundle (round-11): wire the PG pool's lifecycle to the process
+// lifecycle so SIGTERM/SIGINT drain in-flight queries instead of
+// killing them mid-transaction, and so a startup with the wrong
+// DATABASE_URL leaves a loud breadcrumb instead of a quiet 5xx on the
+// first request. The ping is fire-and-forget — the readiness route is
+// the source of truth for whether the gateway should receive traffic.
+installDbShutdownHandlers();
+void pingDbAtBoot();
+// REDIS-bundle (round-13): same lifecycle posture as PG above —
+// drain on SIGTERM/SIGINT, ping at boot. Round-11 closed the gap on
+// PG; round-13 closes the parallel gap on Redis.
+installRedisShutdownHandlers();
+void pingRedisAtBoot();
 
 const port = config.API_PORT;
 

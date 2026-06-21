@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
 import { statusVisual, type AppColumn } from "@/lib/status";
-import { Sparkles, Inbox, Compass, ArrowRight, X } from "lucide-react";
+import { Sparkles, Inbox, Compass, ArrowRight, X, ShieldCheck } from "lucide-react";
 
 /** Row shape rendered in any column. Unifies the demo "applied" entries (kept
  *  for the empty-state seed during dev) and real API applications under a
@@ -23,6 +24,9 @@ interface TrackerCard {
   status: string;
   /** Demo "just submitted" highlight — only used by the seed entries. */
   isNew?: boolean;
+  /** P3.2 — what the user should do next on this row. Prefers the
+   *  persisted column; falls back to the API-derived value. */
+  nextAction?: string | null;
 }
 
 const COLUMN_TITLES: Record<AppColumn, string> = {
@@ -80,6 +84,36 @@ function relativeFrom(iso?: string | null): string {
   return `${w}w ago`;
 }
 
+// Compact "what's next on this row" chip (P3.2). Distinct color tracks
+// per action kind so the user can scan the column for "anything urgent
+// I need to do today" without reading every card.
+function NextActionBadge({ value }: { value: string }) {
+  const spec = (() => {
+    if (value === "interview") return { text: "INTERVIEW", fg: "#7A2A1F", bg: "#F4D7D2" };
+    if (value === "follow_up") return { text: "FOLLOW UP", fg: "#8A6A12", bg: "#FBEFD0" };
+    if (value === "submit") return { text: "READY", fg: "#2F5722", bg: "#E2EED9" };
+    if (value === "prep") return { text: "PREP", fg: "#5D3000", bg: "#FBEFD8" };
+    if (value === "close_loop") return { text: "WRAP UP", fg: "#5D5046", bg: "#F4F0E8" };
+    return null;
+  })();
+  if (!spec) return null;
+  return (
+    <span
+      style={{
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+        fontSize: 9,
+        letterSpacing: 0.5,
+        padding: "3px 7px",
+        borderRadius: 4,
+        color: spec.fg,
+        background: spec.bg,
+      }}
+    >
+      {spec.text}
+    </span>
+  );
+}
+
 function appliedToCard(a: Applied, i: number): TrackerCard {
   return {
     key: `seed-${a.co}-${i}`,
@@ -103,6 +137,7 @@ function apiToCard(a: ApiApplication): TrackerCard {
     role: a.role_title || "Role",
     when: relativeFrom(a.submitted_at || a.created_at),
     status: a.status,
+    nextAction: a.next_action ?? a.next_action_derived ?? null,
   };
 }
 
@@ -217,15 +252,18 @@ function Column({
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-[6px] flex-wrap">
                   <span className="font-mono text-[10px] tracking-[0.4px] uppercase text-ink-muted">
                     {card.when}
                   </span>
-                  <span
-                    className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
-                  >
-                    {card.isNew ? "Just sent" : v.label}
-                  </span>
+                  <div className="flex items-center gap-[5px]">
+                    {card.nextAction ? <NextActionBadge value={card.nextAction} /> : null}
+                    <span
+                      className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
+                    >
+                      {card.isNew ? "Just sent" : v.label}
+                    </span>
+                  </div>
                 </div>
               </button>
             );
@@ -261,14 +299,47 @@ function DetailDrawer({
   busy: boolean;
   errorMsg: string | null;
 }) {
+  // A11Y_T3 (round-14): the round-14 a11y audit pointed out that this
+  // drawer correctly declared role="dialog" + aria-modal="true" but
+  // skipped both halves of the WAI-ARIA modal contract — Escape didn't
+  // close it (only backdrop click did), and the close button wasn't
+  // focused on open, so a keyboard user landed deep in the form
+  // controls instead of the obvious dismiss. We also move focus to
+  // the close button on mount and listen for Escape on the document
+  // so a stray click anywhere stays handled.
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    closeBtnRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const v = statusVisual(application.status);
-  return (
+  // The drawer used to render inline inside TrackerView, whose ancestor
+  // chain contains `animate-fade-up` (a residual `transform: matrix(...)`).
+  // Any non-`none` transform on an ancestor hijacks the containing block of
+  // a `position: fixed` child — so `fixed inset-0` was no longer relative
+  // to the viewport. The panel height collapsed to the ancestor's intrinsic
+  // height (~479px), the scroll area got squished, and the Cover-letter
+  // section was clipped. Portalling to `document.body` lifts the dialog
+  // out of that subtree entirely, restoring viewport-relative anchoring
+  // and aligning with the WAI-ARIA pattern for modal dialogs.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="application-drawer-title"
       onClick={onClose}
-      className="fixed inset-0 bg-ink/40 z-50 flex justify-end animate-fade-in"
+      // `h-[100dvh]` belt-and-braces alongside `inset-0`: on mobile the
+      // dynamic viewport unit survives URL bar collapse, which `100vh`
+      // cannot. Doesn't hurt on desktop.
+      className="fixed inset-0 h-[100dvh] bg-ink/40 z-50 flex justify-end animate-fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -302,6 +373,7 @@ function DetailDrawer({
             </div>
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             aria-label="Close"
@@ -311,7 +383,11 @@ function DetailDrawer({
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-6 flex flex-col gap-6">
+        {/* Scroll surface — `min-h-0` lets it actually shrink inside the
+            flex column; trailing `pb-8` is the safety inset so the last
+            section never touches the sticky footer (or kisses the bottom
+            of the viewport when there's no error frame). */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-8 flex flex-col gap-6">
           {/* Status field — primary edit. Backed by PATCH ?status=. */}
           <section>
             <label className="block font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2">
@@ -384,15 +460,22 @@ function DetailDrawer({
             />
           </section>
 
-          {/* Server feedback. */}
-          {errorMsg ? (
+        </div>
+
+        {/* Server feedback lives in its own non-scrolling footer slot so the
+            user can always see PATCH failures even after scrolling the form
+            content. Only rendered when there's something to say — no empty
+            chrome otherwise. */}
+        {errorMsg ? (
+          <div className="border-t border-border bg-paper px-6 py-4">
             <div className="bg-[#FBEDEA] border border-[#E8C4BC] rounded-[10px] p-3 font-body text-[12.5px] text-[#A23A2E]">
               {errorMsg}
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -416,6 +499,39 @@ export function TrackerView() {
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [hoveredColumn, setHoveredColumn] = useState<AppColumn | null>(null);
+  // K1+K5 (round-4): a transient error banner shown when a kanban drop
+  // PATCH fails. Before round-4 the drop handler awaited
+  // patchApplication() but discarded the {ok,error} result — failures
+  // silently rolled back via the optimistic-update path but the user
+  // saw no signal, just a card mysteriously snapping back. We also
+  // track an in-flight count so rapid drag-drop bursts (audit's K5
+  // race) trigger a single full reload after the last patch settles,
+  // re-syncing client state with whatever the server actually wrote.
+  // The counter is a ref because it never affects render — only the
+  // "last one out" check inside onColumnDrop's finally needs it.
+  const [dropError, setDropError] = useState<string | null>(null);
+  const pendingDropsRef = useRef(0);
+  // N4 (round-2): dismissable info card explaining the client-side
+  // delivery contract (vision.md + client-side-delivery.md §2). New users
+  // land on this page with no understanding of where the "submit" step
+  // actually happens — they reasonably assume Relay submits on their
+  // behalf, then get confused when nothing moves. This card sets the
+  // expectation up front. Persist dismissal so we don't nag returning
+  // users; default to shown so the first visit always gets the brief.
+  const DELIVERY_INFO_KEY = "vantage.applications.deliveryInfoSeen";
+  const [showDeliveryInfo, setShowDeliveryInfo] = useState(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.localStorage.getItem(DELIVERY_INFO_KEY) === "1") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowDeliveryInfo(false);
+    }
+  }, []);
+  const dismissDeliveryInfo = () => {
+    setShowDeliveryInfo(false);
+    if (typeof window !== "undefined")
+      window.localStorage.setItem(DELIVERY_INFO_KEY, "1");
+  };
 
   useEffect(() => {
     loadApplications();
@@ -442,10 +558,13 @@ export function TrackerView() {
     [apiApplications, selectedId],
   );
 
-  // Close the drawer if the selected row vanishes (e.g. server reload dropped it).
-  useEffect(() => {
-    if (selectedId && !selected) setSelectedId(null);
-  }, [selectedId, selected]);
+  // Drawer visibility is derived from `selected`, so when a row vanishes from
+  // the server reload the drawer auto-closes without a follow-up render. We
+  // intentionally keep `selectedId` set: if the row reappears (e.g. transient
+  // refetch dropped then restored it), the drawer comes back to where the
+  // user left it instead of forcing them to reselect. This sidesteps React
+  // 19's `react-hooks/set-state-in-effect` warning by removing the reconcile
+  // effect entirely.
 
   const totalReal = apiApplications.length;
   const hasInterviewing = cards.interviewing.length > 0;
@@ -488,7 +607,34 @@ export function TrackerView() {
     const prevColumn = prevStatus ? statusVisual(prevStatus).column : null;
     if (prevColumn === column) return;
     const nextStatus = COLUMN_DEFAULT_STATUS[column];
-    await patchApplication(id, { status: nextStatus });
+    // K1+K5: surface drop failures + recover from race interleaving.
+    // patchApplication already does optimistic update + rollback on
+    // failure, but the snapshot it rolls back to is stale relative to
+    // concurrent drops. We count in-flight patches; on the *last* one
+    // settling, fire a loadApplications() to re-sync against server
+    // truth. Errors get rendered in the banner below the header so the
+    // user knows the card "snap-back" wasn't a UI glitch.
+    pendingDropsRef.current += 1;
+    setDropError(null);
+    try {
+      const res = await patchApplication(id, { status: nextStatus });
+      if (!res.ok) {
+        setDropError(
+          res.error
+            ? `Couldn't update that card: ${res.error}`
+            : "Couldn't update that card. Try again.",
+        );
+      }
+    } finally {
+      pendingDropsRef.current -= 1;
+      // When the last in-flight drop settles, force a fresh fetch.
+      // Cheap (~one indexed query) and worth it to keep the kanban
+      // honest after the server may have rejected a status transition
+      // or seen patches arrive out of the order the user dragged.
+      if (pendingDropsRef.current === 0) {
+        void loadApplications();
+      }
+    }
   }
 
   return (
@@ -508,6 +654,58 @@ export function TrackerView() {
               : `${totalReal} ${totalReal === 1 ? "application" : "applications"} tracked`}
         </span>
       </div>
+
+      {showDeliveryInfo && (
+        <div className="mb-6 flex items-start gap-3 bg-white border border-border rounded-[13px] px-4 py-4">
+          <div className="w-[34px] h-[34px] rounded-[9px] bg-cream border border-cream-border flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-[16px] h-[16px] text-brown" strokeWidth={1.7} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-body font-semibold text-[13.5px] text-ink">
+              You submit · we prepare
+            </div>
+            <div className="font-body text-[12.5px] text-ink-light mt-[3px] leading-snug">
+              Vantage tailors your résumé, drafts the cover letter, and pre-fills
+              the form — but the final <strong className="font-semibold">Submit</strong>{" "}
+              click happens in your browser, under your login, on your IP.
+              Zero risk of bot-detection, no stored ATS passwords.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={dismissDeliveryInfo}
+            title="Got it — don't show again"
+            aria-label="Dismiss explanation"
+            className="shrink-0 cursor-pointer border-none bg-transparent text-ink-muted hover:text-ink p-1 rounded-[6px]"
+          >
+            <X className="w-[14px] h-[14px]" strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
+
+      {dropError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-center gap-3 rounded-[11px] px-4 py-3"
+          style={{
+            background: "#FBEDEA",
+            border: "1px solid #E8C4BC",
+            color: "#7A2A1F",
+          }}
+        >
+          <span className="font-body text-[13px] flex-1">{dropError}</span>
+          <button
+            type="button"
+            onClick={() => setDropError(null)}
+            title="Dismiss"
+            aria-label="Dismiss drop error"
+            className="shrink-0 cursor-pointer border-none bg-transparent p-1 rounded-[6px]"
+            style={{ color: "#7A2A1F" }}
+          >
+            <X className="w-[13px] h-[13px]" strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
 
       {hasInterviewing && (
         <div className="mb-6 flex items-center gap-3 bg-gold-bg border border-cream-border rounded-[13px] px-4 py-3">

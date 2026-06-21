@@ -1,0 +1,9 @@
+{
+  "id": 4071234,
+  "title": "Senior Software Engineer, Platform",
+  "company_name": "Synthetic Labs",
+  "company": {"name": "Synthetic Labs"},
+  "absolute_url": "https://boards.greenhouse.io/synthetic/jobs/4071234",
+  "content": "<p>About the role:</p><p>We are looking for a Senior Software Engineer to join our Platform team. You will own backend services in TypeScript and Go, working closely with infrastructure.</p><p><strong>Requirements:</strong></p><ul><li>5+ years of backend engineering experience</li><li>Strong TypeScript and Node.js skills</li><li>Experience with PostgreSQL and Redis</li><li>Experience deploying to AWS or GCP</li></ul><p><strong>Nice to have:</strong></p><ul><li>Go experience</li><li>Kubernetes</li></ul><p><strong>Location:</strong> San Francisco, CA (Hybrid, 3 days in office)</p><p><strong>Compensation:</strong> $180,000 - $230,000 USD base salary, plus equity</p>",
+  "location": {"name": "San Francisco, CA"}
+}

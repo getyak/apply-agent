@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useVantage } from "@/lib/store";
-import { getToken, auth as authApi, resumes as resumesApi } from "@/lib/api";
+import {
+  getToken,
+  auth as authApi,
+  resumes as resumesApi,
+  ask as askApi,
+} from "@/lib/api";
 import { Sidebar } from "@/components/layout/sidebar";
 import { OnboardingBanner } from "@/components/onboarding-banner";
 import { OnboardingTour } from "@/components/onboarding-tour";
@@ -17,6 +22,7 @@ import { AskVantageDock } from "@/components/ask-vantage/dock";
 import {
   bootDockThread,
   hydrateDockFromStorage,
+  installDockViewportWatcher,
   useDock,
 } from "@/lib/ask-vantage-store";
 
@@ -36,8 +42,40 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     hydrateDockFromStorage();
   }, []);
+  // M2 (round-4): keep the dock state honest under viewport changes
+  // (window resize on desktop, rotation on tablet, browser dev-tools
+  // opening). hydrateDockFromStorage() above only runs once on mount;
+  // installDockViewportWatcher subscribes to the same matchMedia query
+  // so transitions in/out of "narrow" auto-collapse / restore the dock.
+  // Returns a teardown so HMR / route change / signOut cleanups don't
+  // leak listeners.
+  useEffect(() => installDockViewportWatcher(), []);
   useEffect(() => {
     bootDockThread(currentUser?.id ?? null);
+  }, [currentUser?.id]);
+
+  // Hydrate the dock's RECENT rail from the server every time the user
+  // (re)resolves. Done in parallel with bootDockThread so the rail
+  // appears as soon as auth lands — feels instant on tab return.
+  // Anonymous threads have no server-side history, so we skip the fetch
+  // entirely and leave the rail in its empty state.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+    askApi
+      .recent(10)
+      .then((res) => {
+        if (cancelled) return;
+        useDock.getState().setRecentAnchors(res.items);
+      })
+      .catch((err) => {
+        // Recent rail is informational; failing to load shouldn't block
+        // the dock. Log so we notice in dev but otherwise stay silent.
+        console.warn("[ask] recent fetch failed:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser?.id]);
 
   // Mock live wants a quiet stage. Per vantage-ui-mapping.md §3.6 the dock

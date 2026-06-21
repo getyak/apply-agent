@@ -48,9 +48,50 @@ export function classifyKind(
   return null;
 }
 
+// MIME1 (round-16): the round-16 file-upload audit found that
+// classifyKind trusted the browser-reported MIME type + filename
+// extension without ever sniffing the actual bytes. An attacker
+// (or a confused copy-paste) could upload `evil.exe` renamed as
+// `resume.pdf` with the right MIME and we'd happily hand it to
+// unpdf. unpdf would probably fail to parse it and we'd throw, but
+// a polyglot file (a valid PDF that's also a valid ZIP, for example)
+// would slip past. Verify the leading bytes match the declared kind
+// before we even ask the parser. Text files pass automatically — UTF-8
+// has no magic bytes.
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46]; // "%PDF"
+const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // "PK\003\004" (DOCX is a ZIP)
+
+export function verifyMagicBytes(kind: SupportedKind, data: Uint8Array): boolean {
+  if (kind === "text") return true;
+  const want = kind === "pdf" ? PDF_MAGIC : ZIP_MAGIC;
+  if (data.length < want.length) return false;
+  for (let i = 0; i < want.length; i++) {
+    if (data[i] !== want[i]) return false;
+  }
+  return true;
+}
+
+// MIME3 (round-17): the round-16 file-upload audit pointed out that
+// once a file passes the magic-byte gate, unpdf is trusted to be fast
+// and tolerant. It mostly is — but a 5000-page PDF (or a malformed one
+// that confuses the parser into a slow path) will pin a worker for
+// many seconds and rack up memory. Real résumés are 1-5 pages; we cap
+// at 50 to leave plenty of room for genuinely long CVs without giving
+// an attacker an easy compute-DoS knob. The check uses the
+// PDFDocumentProxy.numPages property exposed by unpdf's underlying
+// pdfjs — a property read, not a parse, so the cap fires before we
+// pay for full-document extraction.
+const MAX_PDF_PAGES = 50;
+
 async function pdfToText(data: Uint8Array): Promise<string> {
   const { extractText, getDocumentProxy } = await import("unpdf");
   const pdf = await getDocumentProxy(new Uint8Array(data));
+  if (pdf.numPages > MAX_PDF_PAGES) {
+    throw new ExtractionError(
+      `PDF has ${pdf.numPages} pages — we cap résumé uploads at ${MAX_PDF_PAGES} ` +
+        "pages to keep parsing snappy. Split the file or paste the text instead.",
+    );
+  }
   const { text } = await extractText(pdf, { mergePages: true });
   return text;
 }
@@ -70,6 +111,15 @@ export async function extractText(
   data: Uint8Array,
   kind: SupportedKind,
 ): Promise<string> {
+  // MIME1 (round-16): refuse to even invoke the parser when the file's
+  // magic bytes don't match the declared kind. The MIME type and
+  // filename extension are both client-controlled and can lie.
+  if (!verifyMagicBytes(kind, data)) {
+    throw new ExtractionError(
+      `File contents don't match the declared ${kind} type. ` +
+        "Re-save it as a real PDF / DOCX / text file and try again.",
+    );
+  }
   let text: string;
   try {
     if (kind === "pdf") text = await pdfToText(data);

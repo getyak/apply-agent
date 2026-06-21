@@ -13,6 +13,11 @@ import {
   setChatSessionId,
   clearChatSessionId,
 } from "./api";
+// P1 (round-3): the workspace slice owns signOut() but the dock state
+// lives in a separate store. Importing it here is safe because
+// ask-vantage-store does not import this file (confirmed by grep on
+// round-3 audit) — no cycle.
+import { useDock } from "./ask-vantage-store";
 
 export type Screen = "onboarding" | "app" | "review" | "extension" | "builder" | "mock";
 export type Nav = "chat" | "today" | "apps" | "settings";
@@ -288,6 +293,14 @@ export interface ApiApplication {
   // overwritten silently.
   submitted_via?: string | null;
   created_at: string;
+  // P3.2 state machine. The persisted column lands once the reconcile
+  // cron ships; until then the API returns a derived value computed
+  // each request (see deriveNextAction in api/src/routes/applications.ts).
+  // Front-end prefers next_action when present, falls back to derived.
+  next_action?: string | null;
+  next_action_due?: string | null;
+  next_action_derived?: string | null;
+  next_action_due_derived?: string | null;
 }
 
 export interface TrendSnapshot {
@@ -303,6 +316,21 @@ export interface CurrentUser {
   id: string;
   email: string;
   displayName: string;
+}
+
+// One entry in a tailored résumé version's change log. Field names
+// mirror agents/nodes/resume_agent.py::_normalise_customize_envelope.
+// risk is appended client-side; values: safe / needs_review /
+// unsupported. Loose `string` typing keeps unknown enum values from
+// blowing up the renderer — the panel falls back to a neutral chip.
+export interface TailoredChangeLogEntry {
+  bullet_id: string;
+  change_type: string;
+  before?: string | null;
+  after?: string | null;
+  source_evidence?: string | null;
+  explanation?: string | null;
+  risk?: string | null;
 }
 
 interface VantageState {
@@ -338,6 +366,12 @@ interface VantageState {
   trendSnapshot: TrendSnapshot | null;
   currentResumeId: string | null;
   currentUser: CurrentUser | null;
+  // P2.3-UI — per-tailored-version change_log map. The Resume Studio
+  // panel reads this; the ask-stream artifact path (once wired) will
+  // call setTailoredChangeLog with the agent's payload. Keys are the
+  // tailored resume id. Empty map by default; panel hides itself when
+  // there's no entry for the current version.
+  tailoredChangeLogs: Record<string, TailoredChangeLogEntry[]>;
 
   // Onboarding parse state — driven by real upload/parse, no hardcoded resume.
   parsedResume: ParsedResume | null;
@@ -364,7 +398,7 @@ interface VantageState {
   setUploadText: (v: string) => void;
   parseFile: (file: File) => Promise<void>;
   parsePastedText: (text: string) => Promise<void>;
-  _startAsyncParse: (source: string) => Promise<void>;
+  _startAsyncParse: (source: string, sourceFileId?: string) => Promise<void>;
   pollParseJob: (jobId: string) => void;
   dismissParseBanner: () => void;
   startTour: () => void;
@@ -417,6 +451,21 @@ interface VantageState {
   loadCurrentUser: () => Promise<void>;
   signOut: () => void;
   submitApplication: (jobId: string) => Promise<void>;
+  // P2.3-UI. Setter is overwrite-by-key; pass [] to clear a row.
+  setTailoredChangeLog: (resumeId: string, log: TailoredChangeLogEntry[]) => void;
+}
+
+// PASTE5 (round-16): tiny helper used by parsePastedText below. Strip
+// the ASCII C0 controls (\x00-\x08, \x0b, \x0c, \x0e-\x1f) and the DEL
+// (\x7f) so a paste that smuggled a NUL byte or a vertical tab past the
+// trim() call can't reach the API / LLM / DB. We deliberately keep \t
+// (\x09), \n (\x0a), and \r (\x0d) — they're the legitimate
+// whitespace controls a real paste relies on. C1 controls (\x80-\x9f)
+// are valid UTF-8 first bytes and stripping them would mangle every
+// non-ASCII paste; the LLM tolerates them and the DB column is TEXT,
+// so they pass through unchanged.
+function stripControlChars(s: string): string {
+  return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
 export const useVantage = create<VantageState>((set, get) => ({
@@ -456,6 +505,7 @@ export const useVantage = create<VantageState>((set, get) => ({
   trendSnapshot: null,
   currentResumeId: null,
   currentUser: null,
+  tailoredChangeLogs: {},
 
   parsedResume: null,
   parseError: null,
@@ -497,13 +547,25 @@ export const useVantage = create<VantageState>((set, get) => ({
       return;
     }
     // Prefer the Markdown middle state for a richer parse; fall back to text.
-    await get()._startAsyncParse(up.markdown || up.text);
+    // Thread the uploaded file id through so the saved résumé can show a
+    // "Source · resume.pdf" chip in the studio.
+    await get()._startAsyncParse(up.markdown || up.text, up.file?.id);
   },
 
   // Paste/Link path: text is already in hand. Same optimistic flow — start the
   // async parse and enter the workspace; no blocking.
   parsePastedText: async (text) => {
-    const trimmed = text.trim();
+    // PASTE5 (round-16): round-15 audit flagged that paste content
+    // flowed through the LLM and into the database with no scrubbing of
+    // NUL bytes or other ASCII control characters. The most common
+    // sources are copy-paste from Word documents (smart-quotes are
+    // fine, but odd control codes occasionally tag along) and
+    // adversarial payloads aimed at breaking downstream parsers.
+    // Strip the ASCII C0/C1 controls except tab / newline / carriage
+    // return (those are legitimate in pasted text) before everything
+    // else so length/min-length checks see the clean string.
+    const cleaned = stripControlChars(text);
+    const trimmed = cleaned.trim();
     if (trimmed.length < 20) {
       set({ parseError: "Please paste a bit more of your résumé." });
       return;
@@ -514,9 +576,26 @@ export const useVantage = create<VantageState>((set, get) => ({
 
   // Shared: kick off the async parse job, enter the workspace, begin polling.
   // Internal helper (not in the public interface) used by both upload paths.
-  _startAsyncParse: async (source: string) => {
+  _startAsyncParse: async (source: string, sourceFileId?: string) => {
+    // In-flight guard. Without it, React strict mode's double-invoke,
+    // a user re-clicking "Upload" while a job is running, or a retry
+    // racing the previous attempt all start a SECOND /parse-async.
+    // Two jobs hitting the same resumes row at the same instant used to
+    // surface as the onboarding 23505 (migration 016 fixes the DB race;
+    // this guard prevents the wasted LLM call and the UI flicker).
+    const { parseJobStatus, parseJobId } = get();
+    if (parseJobStatus === "running" || parseJobId) return;
     try {
-      const { job } = await resumesApi.parseAsync({ markdown: source, save: false });
+      const { job } = await resumesApi.parseAsync({
+        markdown: source,
+        // Always persist; the workspace banner needs a stable resumeId to
+        // navigate to even when AI structuring failed. (Was previously
+        // `save: false` + a follow-up createResume in pollParseJob — fine
+        // for the legacy path, but it dropped sourceFileId because the
+        // resume row was created client-side via /resumes POST.)
+        save: true,
+        sourceFileId,
+      });
       set({
         parseJobId: job.id,
         parseJobStatus: "running",
@@ -548,8 +627,18 @@ export const useVantage = create<VantageState>((set, get) => ({
         set({ parseJobProgress: job.progress });
         if (job.status === "done" && job.result) {
           const resume = job.result.resume as ParsedResume;
-          set({ parseJobStatus: "done", parseJobProgress: 100, parsedResume: resume });
-          get().createResume(resume);
+          // The worker already persisted (save: true) and returned the row's
+          // id. Use it directly — avoids the legacy double-write that turned
+          // each re-upload into a new client-side row.
+          const result = job.result as { resume: ParsedResume; resumeId?: string };
+          set({
+            parseJobStatus: "done",
+            parseJobProgress: 100,
+            parsedResume: resume,
+            ...(result.resumeId ? { currentResumeId: result.resumeId } : {}),
+          });
+          // Fallback for older job results that don't carry a resumeId.
+          if (!result.resumeId) get().createResume(resume);
           return;
         }
         if (job.status === "failed") {
@@ -826,17 +915,22 @@ export const useVantage = create<VantageState>((set, get) => ({
     set({ apiJobsLoading: true });
     try {
       const res = await jobsApi.list({ limit: 20 });
-      const jobsWithScores = await Promise.all(
-        res.jobs.map(async (j) => {
+      const jobsWithScores: ApiJob[] = await Promise.all(
+        res.jobs.map(async (j): Promise<ApiJob> => {
           try {
             const m = await jobsApi.match(j.id);
             return { ...j, matchScore: m.match.score, matchedSkills: m.match.matchedSkills, missingSkills: m.match.missingSkills };
           } catch {
-            return { ...j, matchScore: 50 };
+            // Leave matchScore undefined when the engine can't score this job.
+            // The view distinguishes "Not scored yet" from a low score; a
+            // hardcoded 50 made every row look "Fair" (QA bug #2).
+            return { ...j };
           }
         }),
       );
-      jobsWithScores.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+      // Unscored rows sink to the bottom so real fits float up. Treat
+      // undefined as -1 so they sort after a genuine 0% match too.
+      jobsWithScores.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
       set({ apiJobs: jobsWithScores, apiJobsLoading: false });
     } catch {
       set({ apiJobsLoading: false });
@@ -930,6 +1024,14 @@ export const useVantage = create<VantageState>((set, get) => ({
     }
   },
 
+  setTailoredChangeLog: (resumeId, log) => {
+    // Empty array is a valid value (means "I've seen this version and
+    // there's nothing to review"), so we always overwrite — never merge.
+    set((s) => ({
+      tailoredChangeLogs: { ...s.tailoredChangeLogs, [resumeId]: log },
+    }));
+  },
+
   // Clear local auth and reset the in-memory user-scoped slices so the next
   // login starts on a clean slate. We DO NOT touch parsed-resume helpers like
   // tour state — those are per-browser, not per-session.
@@ -938,6 +1040,27 @@ export const useVantage = create<VantageState>((set, get) => ({
     // Drop the persisted chat session too, or the next user to log in on this
     // browser would resume the previous user's conversation.
     clearChatSessionId();
+    // P1 (round-3): wipe dock state too. The dock store outlives this
+    // slice on shared browsers (kiosk, family laptop, school lab). Before
+    // round-3 we left dock.messages and dock.recentAnchors intact on
+    // signOut — so the next user opening the dock could see the prior
+    // user's prompt history. That's a real privacy leak flagged by the
+    // round-3 auth-audit pass. reset() empties the in-memory
+    // conversation; the explicit set() also wipes recentAnchors (the
+    // lifetime ask_vantage rail) and the persisted thread id, both of
+    // which are user-scoped.
+    try {
+      useDock.getState().reset();
+      useDock.setState({ recentAnchors: [], threadId: null });
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("vantage.dock.thread");
+      }
+    } catch (err) {
+      // signOut must never throw — it's the user's escape hatch. If the
+      // dock store hasn't been touched yet this session (rare during
+      // tests / unmounted layout) the call is harmless to skip.
+      console.warn("[signOut] dock state clear failed:", err);
+    }
     set({
       currentUser: null,
       currentResumeId: null,
@@ -947,6 +1070,10 @@ export const useVantage = create<VantageState>((set, get) => ({
       chatMessages: [],
       chatSessionId: null,
       chatHydrating: false,
+      // Resume change logs are per-version and user-scoped; clear them
+      // on signOut so the next user on this browser can't see the
+      // outgoing user's review state.
+      tailoredChangeLogs: {},
       screen: "onboarding",
     });
   },

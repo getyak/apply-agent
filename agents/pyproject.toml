@@ -35,6 +35,15 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "deepeval>=1.5.0",
+    "pyyaml>=6.0",  # eval/delivery-loop/run.py reads golden.yaml
+]
+# Hidden MCP probe — see docs/architecture/agent-marketplace-deferred.md.
+# Kept out of main deps so a normal `uv sync` doesn't pull MCP SDK.
+# langchain-mcp-adapters bridges MCP tools into LangGraph create_react_agent
+# (used by tests/mcp_probe/test_e2e_live.py for the live OpenRouter round-trip).
+experimental = [
+    "mcp>=1.0.0",
+    "langchain-mcp-adapters>=0.1.0",
 ]
 
 [tool.setuptools]
@@ -49,6 +58,7 @@ packages = [
     "agents.coordinator",
     "agents.events",
     "agents.harness",
+    "agents.mcp_probe",
     "agents.nodes",
     "agents.tools",
 ]

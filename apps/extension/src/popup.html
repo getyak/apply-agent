@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vantage</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      body {
+        width: 340px;
+        margin: 0;
+        padding: 16px 18px;
+        font-size: 13px;
+        line-height: 1.45;
+        background: Canvas;
+        color: CanvasText;
+      }
+      h1 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 8px;
+        letter-spacing: 0.01em;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #fde047;
+        color: #0f172a;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 6px 0;
+      }
+      .dim {
+        color: color-mix(in srgb, CanvasText 60%, Canvas);
+      }
+      .ok {
+        color: #16a34a;
+      }
+      .err {
+        color: #dc2626;
+      }
+      .none {
+        font-size: 12px;
+        padding: 12px;
+        border: 1px dashed color-mix(in srgb, CanvasText 25%, Canvas);
+        border-radius: 6px;
+        text-align: center;
+        margin-top: 8px;
+      }
+      .field-list {
+        margin-top: 8px;
+        max-height: 180px;
+        overflow-y: auto;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 11.5px;
+        border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      }
+      .field {
+        padding: 6px 0;
+        border-bottom: 1px solid color-mix(in srgb, CanvasText 8%, Canvas);
+      }
+      .field strong {
+        font-weight: 600;
+      }
+      .field .type {
+        opacity: 0.6;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0 6px;
+      }
+      button {
+        font: inherit;
+        padding: 8px 12px;
+        border-radius: 6px;
+        border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+        background: Canvas;
+        color: CanvasText;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #0f172a;
+        color: #fde047;
+        border-color: #0f172a;
+      }
+      button.primary:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      label.toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11.5px;
+        color: color-mix(in srgb, CanvasText 70%, Canvas);
+      }
+      details {
+        margin-top: 10px;
+        border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+        padding-top: 8px;
+      }
+      details > summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .profile-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 8px;
+        margin-top: 8px;
+      }
+      .profile-grid input {
+        font: inherit;
+        padding: 5px 6px;
+        border-radius: 4px;
+        border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas);
+        background: Canvas;
+        color: CanvasText;
+      }
+      .profile-grid input.wide {
+        grid-column: span 2;
+      }
+      .summary {
+        margin-top: 10px;
+        font-size: 12px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: color-mix(in srgb, CanvasText 6%, Canvas);
+      }
+      .summary strong { font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <h1>Vantage <span class="badge">v0.1</span></h1>
+
+    <div class="row">
+      <span class="dim">Backend</span>
+      <span id="handshake" class="dim">checking…</span>
+    </div>
+
+    <div class="row">
+      <span class="dim">Page</span>
+      <span id="ats" class="dim">…</span>
+    </div>
+
+    <div class="row">
+      <span class="dim">Fields detected</span>
+      <strong id="field-count">—</strong>
+    </div>
+
+    <div class="actions">
+      <button id="fill-btn" class="primary">Fill with profile</button>
+      <label class="toggle">
+        <input type="checkbox" id="use-cloud" />
+        + use cloud LLM
+      </label>
+    </div>
+
+    <div id="summary" class="summary" hidden></div>
+
+    <div id="empty" class="none" hidden>
+      No application form detected on this page.<br />
+      Open a Greenhouse / Lever / Ashby job and re-open Vantage.
+    </div>
+
+    <div id="fields" class="field-list"></div>
+
+    <details>
+      <summary>Profile (stored locally)</summary>
+      <div class="profile-grid">
+        <input data-key="firstName" placeholder="First name" />
+        <input data-key="lastName" placeholder="Last name" />
+        <input class="wide" data-key="fullName" placeholder="Full name (optional)" />
+        <input class="wide" data-key="email" placeholder="Email" type="email" />
+        <input class="wide" data-key="phone" placeholder="Phone (+1…)" />
+        <input data-key="city" placeholder="City" />
+        <input data-key="state" placeholder="State / Region" />
+        <input class="wide" data-key="country" placeholder="Country" />
+        <input class="wide" data-key="linkedin" placeholder="LinkedIn URL" />
+        <input class="wide" data-key="github" placeholder="GitHub URL" />
+        <input class="wide" data-key="website" placeholder="Personal site" />
+        <input class="wide" data-key="portfolio" placeholder="Portfolio URL" />
+        <input class="wide" data-key="workAuthorization" placeholder="Work auth (e.g. US Citizen, F-1 OPT)" />
+      </div>
+      <p class="dim" style="margin-top:8px; font-size:11px;">
+        Stored only in chrome.storage.local. Never uploaded unless you tick "use cloud LLM" above.
+      </p>
+      <!--
+        PROFILE4 (round-18): explicit "wipe my profile" button so users can
+        exercise the GDPR "right to deletion" the privacy story relies on.
+        Wired to popup.ts → clearProfile() → chrome.storage.local.remove(),
+        which actually unsets the key (not just overwrites it with empty
+        strings the way a "save empty form" would). Confirms first.
+      -->
+      <button id="clear-profile-btn" style="margin-top:8px; font-size:11px;">
+        Clear profile
+      </button>
+    </details>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

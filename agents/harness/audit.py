@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -19,8 +20,58 @@ from uuid import UUID, uuid4
 
 import structlog
 
-
 log = structlog.get_logger("agents.audit")
+
+
+# AUDIT_PII1 (round-10): the round-10 PII audit flagged that
+# `record.error_message` was set to f"{type(exc).__name__}: {exc}" with
+# no redaction. The raw `str(exc)` from libraries often embeds absolute
+# file paths (e.g. /Users/.../agents/.venv/lib/python3.12/site-packages/...),
+# Postgres DSNs with passwords, OpenRouter API keys, or chunks of the
+# upstream HTTP body — all of which would land in `agent_tasks.error_message`
+# and stay there indefinitely (round-6 AUDIT5 already noted there is no
+# retention policy yet). These helpers scrub the obvious patterns and cap
+# the length before the record is persisted; the structured log line still
+# emits the full text so support can investigate via trace_id.
+_AUDIT_ERROR_MAX_CHARS = 500
+_AUDIT_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
+_AUDIT_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_\-]{32,}\b")
+_AUDIT_DSN_RE = re.compile(
+    r"\b(?:postgresql|postgres|redis|mongodb)://[^\s]+", re.IGNORECASE
+)
+
+
+def _redact_exception_text(raw: str) -> str:
+    """Strip filesystem paths, long opaque tokens, and connection strings
+    out of an exception message, then cap the length.
+
+    Conservative: only matches patterns that are reliably non-business.
+    Anything we miss is bounded by the length cap.
+    """
+    if not raw:
+        return raw
+    redacted = _AUDIT_DSN_RE.sub("<dsn>", raw)
+    redacted = _AUDIT_PATH_RE.sub("<path>", redacted)
+    redacted = _AUDIT_TOKEN_RE.sub("<token>", redacted)
+    if len(redacted) > _AUDIT_ERROR_MAX_CHARS:
+        # Keep the first half (where the exception class + message start)
+        # and the last sliver (where the proximate cause usually is).
+        head = redacted[: _AUDIT_ERROR_MAX_CHARS - 60]
+        tail = redacted[-50:]
+        redacted = f"{head}…{tail}"
+    return redacted
+
+
+# PT_INJ5 / WF_R3 (round-14): public alias so other modules — notably
+# agents/coordinator/router.py, which the round-13 baseline flagged as
+# emitting raw `str(exc)` into five `log.error` sites — can reuse the
+# same redaction policy without forking the implementation. The round-13
+# baseline stretch suggested extracting the helper into a new
+# `agents/harness/redact.py`; this lightweight alias keeps the file
+# count flat for now and closes the round-13 deferred item directly.
+# When round-15 or beyond actually splits the module, this alias can
+# stay for back-compat at zero cost.
+redact_exception_text = _redact_exception_text
 
 
 @dataclass
@@ -115,7 +166,18 @@ async def audit(
         record.status = "completed"
     except Exception as exc:
         record.status = "failed"
-        record.error_message = f"{type(exc).__name__}: {exc}"
+        raw_error = f"{type(exc).__name__}: {exc}"
+        record.error_message = _redact_exception_text(raw_error)
+        # Keep the unredacted text in the structured log so support can
+        # correlate via trace_id without persisting raw paths / tokens
+        # into agent_tasks.error_message.
+        log.warning(
+            "audit.exception",
+            agent_type=record.agent_type,
+            action=record.action,
+            kind=type(exc).__name__,
+            raw=raw_error,
+        )
         raise
     finally:
         record.latency_ms = int((time.perf_counter() - start) * 1000)

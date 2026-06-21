@@ -2,7 +2,7 @@ import type { Context, Next } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 import type { Redis } from "ioredis";
 import redis from "../redis";
-import { ValidationError } from "../errors";
+import { ConflictError, ValidationError } from "../errors";
 import type { AppEnv } from "../types";
 
 // Idempotency-Key middleware for non-idempotent mutation endpoints.
@@ -26,6 +26,60 @@ interface StoredResponse {
   status: number;
   body: string;
   contentType: string;
+  // IDEM3 (round-9): hex sha256 of the original request body, stored
+  // alongside the response so replays with a *different* request body
+  // get a 409 instead of silently returning the prior response. Old
+  // cache entries written before round-9 have no hash; we treat that
+  // as "back-compat replay" and skip the comparison.
+  requestHash?: string;
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input),
+  );
+  const bytes = new Uint8Array(buf);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
+// IDEM_N1 / IDEM_N2 (round-17): the round-9 hash compared raw body
+// strings, which meant a client that re-sent the same logical request
+// with a different object-key order (e.g. `{"a":1,"b":2}` vs
+// `{"b":2,"a":1}`) got a spurious 409 ConflictError — JS objects don't
+// guarantee key order, and a number of mainstream HTTP libraries
+// reorder keys on serialize. Canonicalize JSON bodies first: parse,
+// recursively sort object keys, then re-stringify. Arrays stay
+// order-sensitive because order is semantically meaningful in our
+// payloads (e.g. `formFields` reflects on-page order). Non-JSON
+// bodies (form-encoded, binary) fall back to the raw string so
+// behaviour is unchanged for those.
+function canonicalizeBody(raw: string): string {
+  if (raw.length === 0) return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  return JSON.stringify(parsed, replacerSortingKeys);
+}
+
+// JSON.stringify replacer that returns a key-sorted *plain object* for
+// non-null objects (arrays pass through unchanged). The recursive
+// behaviour comes for free: stringify walks the returned value and
+// re-invokes the replacer on each nested key/value pair.
+function replacerSortingKeys(_key: string, value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[k] = (value as Record<string, unknown>)[k];
+  }
+  return sorted;
 }
 
 export interface IdempotencyOptions {
@@ -83,8 +137,34 @@ export function idempotency(options: IdempotencyOptions = {}) {
       return;
     }
 
+    // IDEM3 (round-9): hash the *current* request body so we can compare
+    // against whatever we stored on the first call. Reading the body
+    // here is safe because the handler hasn't run yet and Hono lets us
+    // clone the underlying Request. Bodyless requests (GET, DELETE) get
+    // an empty-string hash, which still works as a stable key.
+    let currentBody = "";
+    try {
+      currentBody = await c.req.raw.clone().text();
+    } catch {
+      currentBody = "";
+    }
+    // IDEM_N1 / IDEM_N2 (round-17): canonicalize JSON bodies so a
+    // re-serialization with different object-key order doesn't trip the
+    // round-9 body-mismatch guard.
+    const currentHash = await sha256Hex(canonicalizeBody(currentBody));
+
     if (stored) {
-      // Replay the cached response without touching the handler.
+      // IDEM3 (round-9): the round-9 audit showed that without a body
+      // comparison, a client that reuses an Idempotency-Key but mutates
+      // the request body would silently get the *first* call's
+      // response, with no signal that the new body was ignored. Reject
+      // with 409 instead. Old entries (no requestHash, written before
+      // round-9) replay unchanged to avoid breaking in-flight keys.
+      if (stored.requestHash && stored.requestHash !== currentHash) {
+        throw new ConflictError(
+          "Idempotency-Key reused with a different request body. Pick a new key for a different payload.",
+        );
+      }
       return c.newResponse(stored.body, stored.status as StatusCode, {
         [REPLAY_HEADER]: "true",
         "Content-Type": stored.contentType,
@@ -111,6 +191,7 @@ export function idempotency(options: IdempotencyOptions = {}) {
       status: res.status,
       body,
       contentType,
+      requestHash: currentHash,
     };
 
     try {

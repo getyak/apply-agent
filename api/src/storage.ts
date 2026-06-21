@@ -102,12 +102,32 @@ export class StorageClient {
   /**
    * Generate a time-limited presigned download URL for `key`. Returns null when
    * storage is unconfigured (caller falls back to "unavailable").
+   *
+   * MIME4 (round-16): the round-16 file-upload audit found that
+   * presigned URLs were served by MinIO with no
+   * `Content-Disposition` header — the browser inlined PDFs (and
+   * would happily inline an HTML / SVG polyglot, executing
+   * JavaScript at the storage origin where the API's `nosniff` and
+   * CSP have no effect). Force `Content-Disposition: attachment`
+   * via the S3 `response-content-disposition` query parameter so
+   * presigned downloads always trigger a save dialog instead of
+   * inline rendering. Derive a safe filename from the last path
+   * segment of the key (storage keys follow
+   * `{user_id}/resumes/originals/{file_id}.{ext}` — the segment is
+   * server-generated, never user-controlled, so it's already safe
+   * to embed in the header).
    */
   presign(key: string, expiresInSeconds = 300): string | null {
     if (!this.client) return null;
+    const segments = key.split("/");
+    const lastSegment = segments[segments.length - 1] || "download";
+    const safeName = lastSegment.replace(/[^\w.\-]/g, "_");
     return this.client.presign(key, {
       expiresIn: expiresInSeconds,
       method: "GET",
+      // Bun's S3Client maps this to the S3
+      // `response-content-disposition` query parameter under the hood.
+      contentDisposition: `attachment; filename="${safeName}"`,
     });
   }
 }

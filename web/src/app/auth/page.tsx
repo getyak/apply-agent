@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { auth as authApi, setToken, getToken } from "@/lib/api";
+import { auth as authApi, setToken, getToken, ApiError } from "@/lib/api";
 import { Button, Field, Input } from "@/components/ui";
 
 // Next 16 requires components that read URL search params to be wrapped in a
@@ -114,7 +114,23 @@ function AuthPageInner() {
       }
       router.push("/app");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      // P3 (round-3): rate-limit responses (429) used to surface as the
+      // backend's literal "Rate limit exceeded for auth. Try again in
+      // 47s." string, which reads like a debug log and gets buried under
+      // the generic "Invalid email or password" path the round-3
+      // auth-audit flagged. Surface a friendlier line that still keeps
+      // the retry-after window the backend computed.
+      if (err instanceof ApiError && err.status === 429) {
+        const match = err.message.match(/(\d+)\s*s/);
+        const retrySeconds = match ? match[1] : null;
+        setError(
+          retrySeconds
+            ? `Too many attempts. Please wait ${retrySeconds} seconds before trying again.`
+            : "Too many attempts. Please wait a moment before trying again.",
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
     } finally {
       setLoading(false);
     }

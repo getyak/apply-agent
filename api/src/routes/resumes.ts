@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { query } from "../db";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
+import { rateLimit } from "../middleware/rate-limit";
 import { validateBody } from "../middleware/validate";
 import {
   CreateResumeSchema,
@@ -27,6 +28,17 @@ import type { AppEnv } from "../types";
 
 const app = new Hono<AppEnv>();
 app.use("*", authMiddleware);
+
+// API_RL1 (round-7): /parse-async kicks off an LLM-backed background
+// parse job. Before round-7 it had no per-user ceiling, so a misbehaving
+// client (or a malicious one) could enqueue jobs as fast as it could
+// fire requests. 8 starts/minute leaves room for the realistic "user
+// re-uploads after a bad result" pattern but rules out runaway loops.
+const parseAsyncLimiter = rateLimit({
+  scope: "resume_parse_async",
+  limit: 8,
+  windowSeconds: 60,
+});
 
 // Prompt discipline (vision red line): the AI may rephrase and strengthen
 // existing experience, but MUST NOT invent roles, skills, metrics, or
@@ -56,17 +68,13 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const { content, isBase } = c.get("validatedBody") as CreateResume;
 
-  const versionResult = await query(
-    "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM resumes WHERE user_id = $1",
-    [userId],
-  );
-  const nextVersion = versionResult.rows[0].next_version;
-
+  // version=0 → migration 016's BEFORE INSERT trigger assigns the next
+  // per-user version under an advisory lock. No app-level MAX+1 race.
   const result = await query(
     `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-     VALUES ($1, $2, $3, $4, NOW())
+     VALUES ($1, $2, 0, $3, NOW())
      RETURNING id, user_id, content, version, is_base, created_at`,
-    [userId, JSON.stringify(content), nextVersion, isBase ?? true],
+    [userId, JSON.stringify(content), isBase ?? true],
   );
   return c.json({ resume: result.rows[0] }, 201);
 });
@@ -80,7 +88,7 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
 // signal — we never hand back a fake resume.
 app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
   const userId = c.get("userId");
-  const { text, save } = c.get("validatedBody") as ParseResume;
+  const { text, save, sourceFileId } = c.get("validatedBody") as ParseResume;
 
   let parsed;
   try {
@@ -104,7 +112,7 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
     });
   }
 
-  const row = await saveBaseResume(userId, parsed);
+  const row = await saveBaseResume(userId, parsed, sourceFileId);
   return c.json(
     {
       resume: row,
@@ -127,28 +135,71 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
  * Storage shape: { raw, parsed, warnings, parsedAt }. The raw text is the spine
  * — if AI ever choked we can re-parse later without asking the user to re-upload.
  */
-async function saveBaseResume(userId: string, parsed: ParseResult) {
+async function saveBaseResume(
+  userId: string,
+  parsed: ParseResult,
+  sourceFileId?: string,
+) {
+  // If the caller pointed us at an uploaded file, fetch its metadata so the
+  // saved résumé can show a "Source · resume.pdf" chip in the studio without
+  // a second round-trip. Ownership-scoped — a forged id from another user
+  // simply yields no row and `source` stays undefined.
+  let source:
+    | {
+        fileId: string;
+        fileName: string;
+        mime: string;
+        sizeBytes: number;
+      }
+    | undefined;
+  if (sourceFileId) {
+    const fileRow = await query(
+      `SELECT id, filename, mime_type, size_bytes
+         FROM user_files
+        WHERE id = $1 AND user_id = $2 AND is_deleted = false`,
+      [sourceFileId, userId],
+    );
+    if (fileRow.rows.length > 0) {
+      const r = fileRow.rows[0];
+      source = {
+        fileId: r.id as string,
+        fileName: (r.filename as string) ?? "resume",
+        mime: (r.mime_type as string) ?? "application/octet-stream",
+        sizeBytes: Number(r.size_bytes ?? 0),
+      };
+    }
+  }
+
   const content = {
     raw: parsed.raw,
     parsed: parsed.resume,
     warnings: parsed.warnings,
     parsedAt: new Date().toISOString(),
+    ...(source ? { source } : {}),
   };
 
-  // Try to overwrite the existing base row first.
+  // Re-upload semantics: a re-parse replaces the user's base row IN PLACE —
+  // we don't bump version. Only JD-tailored variants and user-driven edits
+  // (PUT /:id) create new versions; "user re-uploads the same PDF" is a
+  // refresh of the same v1, not a v2.
+  //
+  // Two writers serialise cleanly: the UPDATE locks the base row, and even
+  // if no base exists yet, the INSERT path passes version=0 so migration
+  // 016's trigger assigns a fresh version under a per-user advisory lock.
+  // The old MAX(version)+1 race is gone on both branches.
   const updateResult = await query(
     `UPDATE resumes
-       SET content = $1, version = version + 1
-       WHERE user_id = $2 AND is_base = true
-       RETURNING id, user_id, content, version, is_base, created_at`,
+       SET content = $1
+     WHERE user_id = $2 AND is_base = true
+     RETURNING id, user_id, content, version, is_base, created_at`,
     [JSON.stringify(content), userId],
   );
   if (updateResult.rows.length > 0) return updateResult.rows[0];
 
-  // No base yet — create version 1.
+  // First-time upload for this user — let the trigger assign the version.
   const insert = await query(
     `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-     VALUES ($1, $2, 1, true, NOW())
+     VALUES ($1, $2, 0, true, NOW())
      RETURNING id, user_id, content, version, is_base, created_at`,
     [userId, JSON.stringify(content)],
   );
@@ -170,12 +221,14 @@ interface ParseJobResult {
 // longer blocks on the LLM. It uploads → enters the workspace → polls
 // GET /parse/:jobId while the parse runs in the background. The parse never
 // fabricates — on LLM failure the job ends "failed" with an honest message.
-app.post("/parse-async", validateBody(ParseResumeAsyncSchema), async (c) => {
+app.post("/parse-async", parseAsyncLimiter, validateBody(ParseResumeAsyncSchema), async (c) => {
   const userId = c.get("userId");
-  const { text, markdown, save } = c.get("validatedBody") as ParseResumeAsync;
+  const { text, markdown, save, sourceFileId } = c.get(
+    "validatedBody",
+  ) as ParseResumeAsync;
   // Prefer the Markdown middle state (richer structure → better parse); fall
   // back to raw text. The upload route already produced Markdown for files.
-  const source = (markdown ?? text ?? "").trim();
+  const sourceText = (markdown ?? text ?? "").trim();
 
   const job = await createJob<ParseJobResult>(userId, "resume-parse");
 
@@ -183,13 +236,13 @@ app.post("/parse-async", validateBody(ParseResumeAsyncSchema), async (c) => {
   // Redis as it progresses. Bun's long-lived process keeps this promise alive.
   void runJob<ParseJobResult>(job.id, async (step) => {
     await step("parsing");
-    const parsed = await parseResumeText(source);
+    const parsed = await parseResumeText(sourceText);
     let saved = false;
     let resumeId: string | undefined;
     if (save) {
       // Always persist — even when AI parsing failed, the raw text is the user's
       // v1 base. Warnings ride along so the UI can prompt the user to fill gaps.
-      const row = await saveBaseResume(userId, parsed);
+      const row = await saveBaseResume(userId, parsed, sourceFileId);
       saved = true;
       resumeId = row.id as string;
     }
@@ -287,6 +340,12 @@ function isWrappedResume(content: unknown): content is {
   parsed: JsonResume;
   warnings?: string[];
   parsedAt?: string;
+  source?: {
+    fileId: string;
+    fileName: string;
+    mime: string;
+    sizeBytes: number;
+  };
 } {
   return (
     !!content &&
@@ -298,10 +357,10 @@ function isWrappedResume(content: unknown): content is {
 
 /** Flatten the wrapper shape back to a backward-compatible row: the client still
  *  reads `content.basics / content.work / ...` like before, with the new
- *  metadata available as `_raw / _warnings / _parsedAt`. */
+ *  metadata available as `_raw / _warnings / _parsedAt / _source`. */
 function unwrapResumeRow(row: Record<string, unknown>): Record<string, unknown> {
   if (!isWrappedResume(row.content)) return row;
-  const { raw, parsed, warnings, parsedAt } = row.content;
+  const { raw, parsed, warnings, parsedAt, source } = row.content;
   return {
     ...row,
     content: {
@@ -309,6 +368,7 @@ function unwrapResumeRow(row: Record<string, unknown>): Record<string, unknown> 
       _raw: raw,
       _warnings: warnings ?? [],
       _parsedAt: parsedAt ?? null,
+      ...(source ? { _source: source } : {}),
     },
   };
 }
