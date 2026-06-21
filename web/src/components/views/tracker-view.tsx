@@ -299,6 +299,26 @@ function DetailDrawer({
   busy: boolean;
   errorMsg: string | null;
 }) {
+  // A11Y_T3 (round-14): the round-14 a11y audit pointed out that this
+  // drawer correctly declared role="dialog" + aria-modal="true" but
+  // skipped both halves of the WAI-ARIA modal contract — Escape didn't
+  // close it (only backdrop click did), and the close button wasn't
+  // focused on open, so a keyboard user landed deep in the form
+  // controls instead of the obvious dismiss. We also move focus to
+  // the close button on mount and listen for Escape on the document
+  // so a stray click anywhere stays handled.
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    closeBtnRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const v = statusVisual(application.status);
   // The drawer used to render inline inside TrackerView, whose ancestor
   // chain contains `animate-fade-up` (a residual `transform: matrix(...)`).
@@ -353,6 +373,7 @@ function DetailDrawer({
             </div>
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             aria-label="Close"

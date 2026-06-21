@@ -20,6 +20,7 @@ from uuid import UUID
 import structlog
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from agents.harness.audit import redact_exception_text
 from agents.harness.llm import pick_model
 
 log = structlog.get_logger("agents.coordinator.router")
@@ -218,7 +219,7 @@ async def llm_intent_classifier(message: str) -> Intent:
             via="llm",
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        log.error("llm_intent_classifier.failed", error=str(exc), kind=type(exc).__name__)
+        log.error("llm_intent_classifier.failed", error=redact_exception_text(str(exc)), kind=type(exc).__name__)
         return Intent(intent="other", confidence=0.0, args={}, via="llm")
 
 
@@ -381,7 +382,7 @@ async def _smalltalk_reply(
             # A transient DB problem (auth failure, query error) must degrade to a
             # context-free reply, not replace the whole reply with an error frame.
             log.error(
-                "router.load_recent_turns_failed", thread_id=thread_id, error=str(exc)
+                "router.load_recent_turns_failed", thread_id=thread_id, error=redact_exception_text(str(exc))
             )
             history = []
 
@@ -395,7 +396,7 @@ async def _smalltalk_reply(
         try:
             resume_block = await load_active_resume_brief(user_id)
         except Exception as exc:  # noqa: BLE001 — boundary
-            log.error("router.load_active_resume_brief_failed", error=str(exc))
+            log.error("router.load_active_resume_brief_failed", error=redact_exception_text(str(exc)))
             resume_block = None
 
     # Language fidelity: the chat history shipped Chinese user turns next to
@@ -455,7 +456,7 @@ async def _smalltalk_reply(
             timeout=_ROUTER_LLM_TIMEOUT_S,
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        log.error("smalltalk_reply.failed", error=str(exc), kind=type(exc).__name__)
+        log.error("smalltalk_reply.failed", error=redact_exception_text(str(exc)), kind=type(exc).__name__)
         return {
             "agent": "coordinator",
             "action": "reply",
@@ -729,7 +730,7 @@ async def persist_turn(
                 )
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — boundary, never break the reply
-        log.error("router.persist_turn_failed", thread_id=thread_id, error=str(exc))
+        log.error("router.persist_turn_failed", thread_id=thread_id, error=redact_exception_text(str(exc)))
 
 
 def _safe_json(content: Any) -> dict[str, Any]:

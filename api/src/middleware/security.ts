@@ -22,8 +22,32 @@ export const securityHeaders = secureHeaders({
     config.NODE_ENV === "production"
       ? "max-age=31536000; includeSubDomains"
       : false,
-  // We serve JSON, not HTML; a strict CSP avoids any injected-content execution.
-  contentSecurityPolicy: { defaultSrc: ["'none'"] },
+  // CSP1 (round-14): the round-14 audit pointed out that the prior CSP
+  // collapsed to `default-src 'none'` and silently inherited that for
+  // every other directive. That's correct for a pure-JSON API in
+  // isolation, but the moment a /healthz HTML page, an OAuth callback,
+  // or an internal docs page lands on this host, the first deploy will
+  // be unusable. Spell out an explicit, layered policy: no scripts at
+  // all (this gateway never serves them), same-origin for connect /
+  // style / img / font (data: image URIs allowed because the auth
+  // page emits an SVG logo), no objects, no embeds, no inline
+  // anything. `frameAncestors`, `baseUri`, and `formAction` close the
+  // long-tail clickjack / `<base>`-hijack / form-action-leak surfaces
+  // that round-7 SEC4 hinted at but didn't pin down. `report-to` is
+  // intentionally omitted until round-15 designs the collector
+  // endpoint (CSP5 in round-14 findings).
+  contentSecurityPolicy: {
+    defaultSrc: ["'none'"],
+    scriptSrc: ["'none'"],
+    styleSrc: ["'self'"],
+    connectSrc: ["'self'"],
+    imgSrc: ["'self'", "data:"],
+    fontSrc: ["'self'"],
+    objectSrc: ["'none'"],
+    frameAncestors: ["'none'"],
+    baseUri: ["'none'"],
+    formAction: ["'self'"],
+  },
 });
 
 /** Reject oversized bodies with a 413 (Hono's bodyLimit handles the response). */

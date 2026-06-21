@@ -62,6 +62,18 @@ def _redact_exception_text(raw: str) -> str:
     return redacted
 
 
+# PT_INJ5 / WF_R3 (round-14): public alias so other modules — notably
+# agents/coordinator/router.py, which the round-13 baseline flagged as
+# emitting raw `str(exc)` into five `log.error` sites — can reuse the
+# same redaction policy without forking the implementation. The round-13
+# baseline stretch suggested extracting the helper into a new
+# `agents/harness/redact.py`; this lightweight alias keeps the file
+# count flat for now and closes the round-13 deferred item directly.
+# When round-15 or beyond actually splits the module, this alias can
+# stay for back-compat at zero cost.
+redact_exception_text = _redact_exception_text
+
+
 @dataclass
 class AuditRecord:
     user_id: UUID
