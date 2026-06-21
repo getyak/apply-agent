@@ -40,7 +40,7 @@ import httpx
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agents.harness.audit import audit
+from agents.harness.audit import audit, redact_exception_text
 from agents.harness.llm import pick_model
 
 log = structlog.get_logger("agents.nodes.jobmatch")
@@ -442,7 +442,7 @@ async def _llm_parse_jd(
         model = pick_model("fast", temperature=0.0, max_tokens=2048)
     except RuntimeError as exc:
         # OPENROUTER_API_KEY missing — degrade rather than fail the workflow.
-        log.warning("jobmatch.no_llm_key", error=str(exc))
+        log.warning("jobmatch.no_llm_key", error=redact_exception_text(str(exc)))
         return _empty_parsed()
 
     sys_prompt = _load_prompt("parse_jd.v1.md")
@@ -455,7 +455,7 @@ async def _llm_parse_jd(
             [SystemMessage(content=sys_prompt), HumanMessage(content=user_payload)]
         )
     except Exception as exc:  # noqa: BLE001 — degrade rather than fail the workflow
-        log.error("jobmatch.llm_failed", error=str(exc))
+        log.error("jobmatch.llm_failed", error=redact_exception_text(str(exc)))
         return _empty_parsed()
 
     parsed = _safe_json(resp.content)
@@ -589,5 +589,5 @@ async def _upsert_job(
             await conn.commit()
         return row[0] if row else None
     except Exception as exc:  # noqa: BLE001 boundary
-        log.error("jobmatch.upsert_failed", error=str(exc))
+        log.error("jobmatch.upsert_failed", error=redact_exception_text(str(exc)))
         return None

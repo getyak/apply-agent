@@ -10,6 +10,7 @@
 
 import type { DetectedField } from './ats-detect.js';
 import type { UserProfile } from './profile.js';
+import { isSensitiveLabel } from './sensitive.js';
 
 export interface FillInstruction {
   /** Selector handed back from detectFields(). */
@@ -28,6 +29,15 @@ export interface FillPlan {
   fills: FillInstruction[];
   /** Field ids the local mapper could not handle — caller can ship to LLM. */
   unmatched: DetectedField[];
+  /**
+   * EXT_SEC1 (round-15): fields the planner refused to even attempt
+   * because they matched the client-side sensitive deny-list
+   * (sensitive.ts SENSITIVE_FIELD_TOKENS). These are deliberately kept
+   * *separate* from `unmatched` so the caller (content.ts) cannot
+   * accidentally ship them to the cloud-fill endpoint. The user fills
+   * these themselves — the extension never touches them.
+   */
+  skippedSensitive: DetectedField[];
 }
 
 /** Patterns are ordered: higher specificity first wins. */
@@ -67,6 +77,10 @@ const RULES: ReadonlyArray<Rule> = [
 export function planLocalFill(fields: DetectedField[], profile: UserProfile): FillPlan {
   const fills: FillInstruction[] = [];
   const unmatched: DetectedField[] = [];
+  // EXT_SEC1 (round-15): collect sensitive fields into a dedicated
+  // bucket so they're visible to callers (popup may want to show the
+  // count) but never reach the cloud-fill payload.
+  const skippedSensitive: DetectedField[] = [];
 
   for (const field of fields) {
     // Files can't be locally filled. Hand off to user.
@@ -78,6 +92,17 @@ export function planLocalFill(fields: DetectedField[], profile: UserProfile): Fi
     const haystack = [field.label, field.placeholder ?? '', extractName(field.selector)]
       .join(' ')
       .toLowerCase();
+
+    // EXT_SEC1 (round-15): sensitivity check is the very first thing
+    // we do after building the haystack. A field that looks like
+    // "Date of Birth", "Race / Ethnicity", "SSN", etc. never even
+    // reaches the regex match loop — neither the local mapper nor the
+    // cloud filler is allowed to touch it. The user fills these
+    // themselves.
+    if (isSensitiveLabel(haystack)) {
+      skippedSensitive.push(field);
+      continue;
+    }
 
     let matched: Rule | null = null;
     for (const rule of RULES) {
@@ -109,7 +134,7 @@ export function planLocalFill(fields: DetectedField[], profile: UserProfile): Fi
     });
   }
 
-  return { fills, unmatched };
+  return { fills, unmatched, skippedSensitive };
 }
 
 function extractName(selector: string): string {

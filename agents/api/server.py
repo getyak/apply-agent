@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 from agents.api.deps import UserDep
 from agents.coordinator.router import classify_intent, dispatch, persist_turn
 from agents.coordinator.workflows import build_from_scratch_graph
+from agents.harness.audit import redact_exception_text
 from agents.harness.checkpointer import (
     ask_vantage_thread_id,
     get_checkpointer,
@@ -131,7 +132,7 @@ async def _unhandled_exception_handler(_request: Request, exc: Exception) -> JSO
     trace_id = uuid4().hex
     # Log the full exception text so support can correlate; the response body
     # only carries the sanitized envelope.
-    log.error("unhandled_exception", trace_id=trace_id, error=str(exc), kind=type(exc).__name__)
+    log.error("unhandled_exception", trace_id=trace_id, error=redact_exception_text(str(exc)), kind=type(exc).__name__)
     status = 402 if isinstance(exc, BudgetExhausted) else 500
     return JSONResponse(
         status_code=status,
@@ -260,7 +261,7 @@ async def ask_stream(
             log.error(
                 "ask_stream.dispatch_failed",
                 trace_id=trace_id,
-                error=str(exc),
+                error=redact_exception_text(str(exc)),
                 kind=type(exc).__name__,
             )
             envelope = _error_envelope(exc, trace_id)
@@ -422,7 +423,7 @@ async def applications_submitted(
             (payload.submitted_via, str(application_id), str(user_id)),
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        log.warning("applications.submitted.db_write_failed", error=str(exc))
+        log.warning("applications.submitted.db_write_failed", error=redact_exception_text(str(exc)))
 
     entry_id = await publish(
         "application:submitted",
@@ -542,10 +543,23 @@ async def extension_map_fields(
 
 
 class MockStartPayload(BaseModel):
-    mode_slug: str
-    company: str | None = None
-    role: str | None = None
-    round_type: str | None = None
+    # MOCK_S1 (round-15): the round-15 audit found that MockResumePayload
+    # got Field bounds from HITL_R3 (round-8) but MockStartPayload was
+    # left as bare `str` everywhere. Mirror the same posture so a buggy
+    # client (or attacker) can't POST a 1 MB role string that blows up
+    # downstream `intel_brief:<company>:<role>:<round>` cache keys and
+    # the structured-log lines that include those values. Caps:
+    #   mode_slug ≤ 64  (longest legit slug today is "scene_recreation"
+    #                    = 16 chars; 64 leaves room for future modes
+    #                    without inviting 1 MB body abuse).
+    #   company / role ≤ 200  (longest honest company names are ~60-80
+    #                    chars; 200 is a generous ceiling).
+    #   round_type ≤ 64 (mirrors the 009 migration CHECK constraint's
+    #                    enum values, all single-word identifiers).
+    mode_slug: str = Field(min_length=1, max_length=64)
+    company: str | None = Field(default=None, max_length=200)
+    role: str | None = Field(default=None, max_length=200)
+    round_type: str | None = Field(default=None, max_length=64)
 
 
 @app.post("/mock/start")

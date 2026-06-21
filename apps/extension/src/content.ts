@@ -82,8 +82,15 @@ async function doFill(useCloud: boolean): Promise<FillSummary> {
   return {
     filledLocal: local.filled,
     filledCloud,
-    skippedSensitive: 0, // server-side counts the sensitive skips; the local
-    //                      mapper never had a chance to fill them
+    // EXT_SEC1 (round-15): the local planner now identifies sensitive
+    // fields (race / sex / DOB / SSN / visa / …) up front and parks
+    // them in `plan.skippedSensitive` so they never reach the cloud
+    // fill. The popup uses this count to tell the user how many
+    // fields they need to handle themselves. Previously it was a
+    // hardcoded 0 with a comment saying the server would count them
+    // — that was true but the user couldn't see the number until
+    // /extension/map-fields ran, which is too late.
+    skippedSensitive: plan.skippedSensitive.length,
     unmatched: cloudUnmatched.length,
     errors: local.errors.length,
     remaining: cloudUnmatched,
