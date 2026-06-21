@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  buildArtifact,
   narratorNdjson,
   partialArtifactNdjson,
   toHitlNdjson,
@@ -307,5 +308,45 @@ describe("toHitlNdjson", () => {
       ),
     );
     expect(out!.resume_token).toBe("thread:42#cp-7");
+  });
+});
+
+// ─── buildArtifact: update_field must not embed jump routes ───────────
+//
+// 2026-06-22 user feedback: clicking through "Open résumé / Tweak in
+// studio" from a clarification card was noise. We kept the card so the
+// dock acknowledges the intent, but next_actions must no longer carry
+// route fields — the dock renders them as inline buttons instead of
+// navigation triggers.
+describe("buildArtifact resume_agent.update_field", () => {
+  it("omits route on every next_action so the dock won't jump out", () => {
+    const art = buildArtifact(
+      "resume_agent",
+      "update_field",
+      { status: "needs_clarification" },
+      "/app/studio/resume",
+    );
+    expect(art).not.toBeNull();
+    expect(art!.artifact_type).toBe("resume_version");
+    expect(art!.next_actions).toBeDefined();
+    for (const action of art!.next_actions!) {
+      // The shape itself is fine — label / kind stay so the dock can
+      // render two buttons. We only forbid `route` because the user
+      // explicitly asked to stop being sent to /app/studio/resume.
+      expect(action.route).toBeUndefined();
+    }
+  });
+
+  it("still keeps the route on customize so the success card jumps to the new version", () => {
+    // Sanity check that the change above didn't widen the no-jump rule.
+    const art = buildArtifact(
+      "resume_agent",
+      "customize",
+      { status: "ok" },
+      "/app/studio/resume",
+    );
+    expect(art).not.toBeNull();
+    const routes = (art!.next_actions ?? []).map((a) => a.route);
+    expect(routes).toContain("/app/studio/resume");
   });
 });

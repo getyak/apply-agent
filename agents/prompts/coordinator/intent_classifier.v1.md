@@ -9,7 +9,8 @@ into one of:
 - mock_me                — user wants a mock interview
 - trends_today           — user wants market signal / what's hot
 - build_resume           — user has NO résumé yet and wants to build one by chatting
-- update_resume          — user wants to manually edit / append a field
+- list_resume_versions   — user is asking to SEE their résumé versions / history ("查看简历版本", "show my résumés", "what versions do I have", "我有几版简历"). Read-only.
+- update_resume          — user wants to manually edit / append a field. Use this ONLY when the user is clearly asking to CHANGE something ("update my title to X", "改一下我的邮箱"); for "查看/look at/show/list" choose list_resume_versions instead.
 - review_application     — user wants to review a draft before submitting
 - list_applications      — user wants to see their kanban / pipeline
 - move_application       — user wants to move a row between columns (e.g. "move Stripe to interviewing")

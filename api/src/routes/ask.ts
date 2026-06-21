@@ -662,7 +662,7 @@ interface ArtifactOut {
   next_actions?: ArtifactAction[];
 }
 
-function buildArtifact(
+export function buildArtifact(
   agent: string,
   action: string,
   payload: Record<string, unknown>,
@@ -685,7 +685,7 @@ function buildArtifact(
     : undefined;
 
   // Per-action template. Add new ones as agents start emitting them.
-  if (agent === "resume_agent" && (action === "customize" || action === "update_field")) {
+  if (agent === "resume_agent" && action === "customize") {
     return {
       artifact_type: "resume_version",
       id,
@@ -697,6 +697,27 @@ function buildArtifact(
       next_actions: [
         { kind: "open", label: "Open résumé", route: route ?? "/app/studio/resume" },
         { kind: "tweak", label: "Tweak in studio", route: "/app/studio/resume" },
+      ],
+    };
+  }
+  // update_field deliberately omits ``route`` so the dock card
+  // acknowledges the intent in place — no "Open résumé / Tweak in
+  // studio" jump (user feedback 2026-06-22: jumping out of the dock for
+  // a clarification is noise). The card still renders so the user can
+  // see the agent picked up the ask; field collection happens inline in
+  // the next turn.
+  if (agent === "resume_agent" && action === "update_field") {
+    return {
+      artifact_type: "resume_version",
+      id,
+      title,
+      sub,
+      confidence,
+      needs_user_review: true,
+      source_evidence: evidenceFromPayload,
+      next_actions: [
+        { kind: "open", label: "Open résumé" },
+        { kind: "tweak", label: "Tweak in studio" },
       ],
     };
   }

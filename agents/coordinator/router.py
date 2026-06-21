@@ -42,6 +42,12 @@ VALID_INTENTS = {
     "mock_me",
     "trends_today",
     "build_resume",
+    # Read-only "show me my résumé history". Dispatch answers inline as a
+    # small-talk text reply — no HITL card, no jump to studio. Read intent
+    # must be ordered before update_resume in the regex table so a user
+    # writing "查看 / show / list" never accidentally lands on the write
+    # path.
+    "list_resume_versions",
     "update_resume",
     "review_application",
     # Applications kanban — move a row between columns, list the user's
@@ -112,6 +118,16 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     (re.compile(r"\b(market|trend|what'?s)\s+(trending|hot)\b", re.I), "trends_today", 0.85),
     (re.compile(r"\b(build|create|start)\s+(a\s+)?r[eé]sum[eé]\b", re.I), "build_resume", 0.85),
     (re.compile(r"\bi\s+don[\'']?t\s+have\s+a\s+r[eé]sum[eé]\b", re.I), "build_resume", 0.95),
+    # Read-only "show me my résumé history". Must come BEFORE the
+    # update_resume rule so "show / list" never accidentally lands on the
+    # write path. Bilingual coverage (zh + en) because the dock greets in
+    # the user's language and we want regex to win Layer 1 instead of
+    # paying for a Layer 2 LLM call.
+    (re.compile(r"(查看|查一下|看一下|看看|列出|显示|列表)\s*(我的)?\s*(简历|履历)\s*(版本|历史|记录|列表)?", re.I), "list_resume_versions", 0.92),
+    (re.compile(r"(我|目前)?\s*(一共)?\s*(有|存了)\s*(几|多少)\s*(个|份|版)\s*(简历|履历)", re.I), "list_resume_versions", 0.90),
+    (re.compile(r"\b(show|list|view|see)\s+(me\s+)?(my\s+|all\s+)?r[eé]sum[eé]s?(\s*versions?)?\b", re.I), "list_resume_versions", 0.92),
+    (re.compile(r"\b(what|which)\s+r[eé]sum[eé]\s+versions?\s+do\s+i\s+have\b", re.I), "list_resume_versions", 0.94),
+    (re.compile(r"\b(r[eé]sum[eé])\s+(version|history|timeline)s?\b", re.I), "list_resume_versions", 0.87),
     (re.compile(r"\b(update|edit|change|fix)\s+(my\s+)?r[eé]sum[eé]\b", re.I), "update_resume", 0.85),
     (re.compile(r"\breview\s+(my\s+)?application\b", re.I), "review_application", 0.85),
     # Applications kanban.
@@ -353,6 +369,27 @@ async def dispatch(
 
         return await start_build_from_scratch(user_id=user_id)
 
+    if intent.intent == "list_resume_versions":
+        # Read-only: list what the user has and reply inline as text.
+        # No artifact card, no jump to /app/studio/resume. The whole point
+        # of this branch (user feedback 2026-06-22) is that "查看简历版本"
+        # must NOT surface "Open résumé / Tweak in studio" buttons — the
+        # agent already has everything it needs to answer in the dock.
+        #
+        # We tag the response as ``action: "reply"`` so the TS gateway
+        # (api/src/routes/ask.ts § "Smalltalk replies arrive as ...") takes
+        # the text-only path and skips buildArtifact entirely. The original
+        # intent is preserved in ``source_action`` for audit + future analytics.
+        rows = await load_resume_versions(user_id)
+        text = format_resume_versions_reply(rows, has_cjk=bool(re.search(r"[぀-ヿ㐀-鿿]", message)))
+        return {
+            "agent": "coordinator",
+            "action": "reply",
+            "text": text,
+            "source_action": "list_resume_versions",
+            "count": len(rows),
+        }
+
     if intent.intent == "update_resume":
         return {"agent": "resume_agent", "action": "update_field", "status": "needs_clarification"}
 
@@ -511,6 +548,91 @@ async def _smalltalk_reply(
             "text": "Sorry — I couldn't respond just now. Please try again in a moment.",
         }
     return {"agent": "coordinator", "action": "reply", "text": str(resp.content)}
+
+
+async def load_resume_versions(user_id: UUID) -> list[dict[str, Any]]:
+    """Return every résumé row for this user, newest first.
+
+    Read-only helper for the ``list_resume_versions`` intent. Returns
+    [] when PG isn't configured (dev / tests) or the user has none yet
+    so the caller can degrade to a friendly "you don't have one — want
+    to upload?" reply instead of an error frame.
+    """
+    dsn = _resolve_pg_dsn()
+    if not dsn:
+        return []
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT version, is_base, tailored_for_job, created_at,
+                       coalesce(content -> 'basics' ->> 'name', '') AS owner_name,
+                       coalesce(content -> 'basics' ->> 'label', '') AS headline
+                FROM resumes
+                WHERE user_id = %s
+                ORDER BY version DESC
+                LIMIT 50
+                """,
+                (str(user_id),),
+            )
+            rows = await cur.fetchall()
+    return rows
+
+
+def format_resume_versions_reply(rows: list[dict[str, Any]], has_cjk: bool) -> str:
+    """Render the version list as a plain-text dock reply.
+
+    Language follows the user's last message (CJK → Chinese, else English)
+    so the dock doesn't suddenly switch language between turns. Each line
+    is short on purpose — the dock truncates long bubbles and the user
+    asked specifically not to be sent elsewhere to "actually look at it".
+    """
+    if not rows:
+        if has_cjk:
+            return "你还没有简历版本。直接上传一份 PDF/DOCX,我可以解析进来——或者跟我说几句你的经历,我从空白开始帮你建。"
+        return "You don't have any résumé versions yet. Upload a PDF/DOCX and I'll parse it in, or tell me about your background and I'll build one from scratch."
+
+    base_rows = [r for r in rows if r.get("is_base")]
+    tailored_rows = [r for r in rows if not r.get("is_base")]
+    latest_base = base_rows[0] if base_rows else None
+
+    lines: list[str] = []
+    if has_cjk:
+        lines.append(f"你目前有 {len(rows)} 个简历版本:")
+        if latest_base:
+            lines.append(
+                f"• 当前主版本 v{latest_base['version']} · 创建于 "
+                f"{latest_base['created_at']:%Y-%m-%d}"
+            )
+        for r in base_rows[1:6]:
+            lines.append(f"• 历史主版本 v{r['version']} · {r['created_at']:%Y-%m-%d}")
+        if tailored_rows:
+            lines.append(f"\n针对岗位定制的版本 ({len(tailored_rows)} 份,最近 5 份):")
+            for r in tailored_rows[:5]:
+                job = r.get("tailored_for_job")
+                jd_hint = f"岗位 {str(job)[:8]}…" if job else "无岗位标记"
+                lines.append(f"• v{r['version']} · {jd_hint} · {r['created_at']:%Y-%m-%d}")
+        return "\n".join(lines)
+
+    lines.append(f"You have {len(rows)} résumé version(s):")
+    if latest_base:
+        lines.append(
+            f"• Current master v{latest_base['version']} — saved "
+            f"{latest_base['created_at']:%Y-%m-%d}"
+        )
+    for r in base_rows[1:6]:
+        lines.append(f"• Older master v{r['version']} — {r['created_at']:%Y-%m-%d}")
+    if tailored_rows:
+        lines.append(f"\nTailored variants ({len(tailored_rows)} total, last 5):")
+        for r in tailored_rows[:5]:
+            job = r.get("tailored_for_job")
+            jd_hint = f"for job {str(job)[:8]}…" if job else "no job link"
+            lines.append(f"• v{r['version']} · {jd_hint} · {r['created_at']:%Y-%m-%d}")
+    return "\n".join(lines)
 
 
 async def load_active_resume_brief(user_id: UUID, max_chars: int = 4000) -> str | None:
