@@ -54,6 +54,39 @@ VALID_INTENTS = {
 }
 
 
+# INTENT4 (round-19): the four built-in Mock interview modes seeded by
+# migrations/013_seed_interview_modes.up.sql. Used as a fast-path in
+# `_normalize_mode_slug` so the obvious cases pass without a regex.
+_BUILT_IN_MODE_SLUGS = frozenset(
+    {"scene_recreation", "pressure_drill", "warm_up", "rapid_fire"}
+)
+# Syntactic gate for user-custom slugs: lowercase / digits / underscore,
+# 2-64 chars. Anything else (English sentences, JSON snippets, attempted
+# SQL fragments — the LLM has been known to emit all three under
+# adversarial input) collapses to `scene_recreation` before any DB
+# round-trip.
+_VALID_CUSTOM_MODE_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+
+
+def _normalize_mode_slug(raw: object) -> str | None:
+    """Return a safe mode_slug or None if the input is obviously hostile.
+
+    Conservative: accept built-in slugs verbatim, accept user-custom
+    snake_case slugs that look like real identifiers, drop everything
+    else.
+    """
+    if not isinstance(raw, str):
+        return None
+    slug = raw.strip()
+    if not slug:
+        return None
+    if slug in _BUILT_IN_MODE_SLUGS:
+        return slug
+    if _VALID_CUSTOM_MODE_SLUG_RE.match(slug):
+        return slug
+    return None
+
+
 @dataclass
 class Intent:
     intent: str
@@ -286,7 +319,22 @@ async def dispatch(
     if intent.intent == "mock_me":
         from agents.nodes.interview_agent import load_mode
 
-        slug = intent.args.get("mode_slug") or "scene_recreation"
+        # INTENT4 (round-19): the round-18 audit flagged that the
+        # LLM-emitted `mode_slug` flowed straight into load_mode() with
+        # no enum check. The parameterised SQL closes the injection
+        # door (round-14), but any string still got a DB round-trip
+        # which the round-18 audit called out as a wasted call and as
+        # leaving the door open for a hostile user to inject a
+        # carefully-crafted slug that matches a future user-custom
+        # mode they don't own. Gate the slug on a syntactic policy
+        # first: a built-in slug (the four migrations/013 seed entries)
+        # always passes; any other slug must look like a snake-case
+        # identifier (lower-case letters / digits / underscore, ≤ 64
+        # chars) before we'll ask the DB. Garbage from the LLM
+        # collapses to the safe `scene_recreation` default before any
+        # I/O happens.
+        slug_raw = intent.args.get("mode_slug") or "scene_recreation"
+        slug = _normalize_mode_slug(slug_raw) or "scene_recreation"
         mode = await load_mode(slug, user_id=user_id)
         if not mode:
             mode = await load_mode("scene_recreation")

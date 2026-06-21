@@ -679,15 +679,27 @@ export async function sendAsk(
             `\n\n_Something went wrong: ${message}_${traceLine}`,
           );
         } else if (kind === "timeout") {
-          updateAssistant("\n\n_Vantage stream timed out. Try again._");
+          // DOCK_R3 (round-19): the round-19 audit found that partial
+          // SSE responses froze in place without any sign they were
+          // incomplete — the user read what was there as if it were
+          // the full answer. When `assistantBuf` already has tokens
+          // we lead the error suffix with "[answer interrupted]" so
+          // the truncation is visually unmistakable; the timeout copy
+          // still tells them retrying is fine.
+          const lead = assistantBuf.length > 0 ? "\n\n_[Answer interrupted]_" : "";
+          updateAssistant(`${lead}\n\n_Vantage stream timed out. Try again._`);
         } else if (kind === "unreachable") {
           // Gateway hint is already user-facing copy ("…engine is offline.
           // Try again in a moment — if this persists, check that the
           // agents host is running."). Render it verbatim so the user
           // can distinguish "agent host down" from "network blip".
-          updateAssistant(`\n\n_${message}_`);
+          const lead = assistantBuf.length > 0 ? "\n\n_[Answer interrupted]_" : "";
+          updateAssistant(`${lead}\n\n_${message}_`);
         } else {
-          updateAssistant("\n\n_Lost connection to Vantage. Try again._");
+          // DOCK_R3 (round-19): same "interrupted" lead for `disconnect`
+          // — the most common path when the agent host restarts mid-stream.
+          const lead = assistantBuf.length > 0 ? "\n\n_[Answer interrupted]_" : "";
+          updateAssistant(`${lead}\n\n_Lost connection to Vantage. Try again._`);
         }
         clearOwnedStreamState();
       },
