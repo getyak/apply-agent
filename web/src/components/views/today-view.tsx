@@ -101,8 +101,8 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
         </div>
         {scored ? (
           <div className="flex items-center gap-[10px] mt-[11px]">
-            <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
-              <div className="h-full rounded-full bg-green animate-[bar-fill_0.9s_ease-out]" style={{ width: `${match}%` }} />
+            <div className="bar-track w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
+              <div className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#4C7A3F,#5E9B4D)]" style={{ width: `${match}%` }} />
             </div>
             <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
           </div>
@@ -228,15 +228,15 @@ export function TodayView() {
       </h1>
 
       <div className="flex bg-white border border-border rounded-[13px] shadow-sm overflow-hidden mb-[34px]">
-        <div className="flex-1 px-[22px] py-[18px]">
-          <div className="font-display font-bold text-[26px] text-ink">{totalJobs}</div>
+        <div className="stat-cell flex-1 px-[22px] py-[18px]">
+          <div key={totalJobs} className="num-rise font-display font-bold text-[26px] text-ink tabular-nums">{totalJobs}</div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
             {totalJobs === 1 ? "role in database" : "roles in database"}
           </div>
         </div>
         <div className="w-px bg-border" />
-        <div className="flex-1 px-[22px] py-[18px]">
-          <div className={`font-display font-bold text-[26px] ${anyScored ? "text-green" : "text-ink-muted"}`}>
+        <div className="stat-cell flex-1 px-[22px] py-[18px]">
+          <div key={`${anyScored}-${strongFits}`} className={`num-rise font-display font-bold text-[26px] tabular-nums ${anyScored ? "text-green" : "text-ink-muted"}`} style={{ animationDelay: "0.07s" }}>
             {anyScored ? strongFits : "—"}
           </div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
@@ -250,8 +250,8 @@ export function TodayView() {
           </div>
         </div>
         <div className="w-px bg-border" />
-        <div className="flex-1 px-[22px] py-[18px]">
-          <div className="font-display font-bold text-[26px] text-amber">{trackedSkills}</div>
+        <div className="stat-cell flex-1 px-[22px] py-[18px]">
+          <div key={trackedSkills} className="num-rise font-display font-bold text-[26px] text-amber tabular-nums" style={{ animationDelay: "0.14s" }}>{trackedSkills}</div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
             {trackedSkills === 1 ? "trending skill tracked" : "trending skills tracked"}
           </div>
@@ -399,7 +399,7 @@ export function TodayView() {
         {JOBS.map((job) => (
           <div
             key={job.id}
-            className="bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] hover:border-border-dark transition-colors"
+            className="group lift bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] hover:border-border-dark"
           >
             <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[19px] text-ink shrink-0">
               {job.mono}
@@ -421,9 +421,9 @@ export function TodayView() {
                 {job.salary && ` · ${job.salary}`}
               </div>
               <div className="flex items-center gap-[10px] mt-[11px]">
-                <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
+                <div className="bar-track w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-green"
+                    className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#4C7A3F,#5E9B4D)]"
                     style={{ width: `${job.match}%` }}
                   />
                 </div>

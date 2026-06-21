@@ -134,11 +134,11 @@ export function Sidebar() {
   };
 
   const navItem = (isActive: boolean) =>
-    `flex items-center gap-[10px] ${
+    `nav-rail press flex items-center gap-[10px] ${
       collapsed ? "justify-center px-0" : "px-[10px]"
-    } py-[9px] rounded-[9px] cursor-pointer text-[14px] font-medium transition-colors ${
+    } py-[9px] rounded-[9px] cursor-pointer text-[14px] font-medium transition-[background-color,color,box-shadow] duration-200 ${
       isActive
-        ? "bg-cream text-brown font-semibold"
+        ? "bg-cream text-brown font-semibold shadow-[inset_0_0_0_1px_rgba(122,63,0,0.08)]"
         : "text-ink-light hover:bg-[#F8F5F0] hover:text-ink"
     }`;
 
@@ -183,8 +183,9 @@ export function Sidebar() {
           collapsed ? "justify-center" : "gap-[9px] px-[10px]"
         } pb-[20px] cursor-pointer bg-transparent border-0 text-left hover:opacity-80 transition-opacity`}
       >
-        <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center shrink-0">
+        <div className="sheen-host press w-6 h-6 rounded-[6px] bg-[linear-gradient(135deg,#7A3F00_0%,#5D3000_100%)] flex items-center justify-center shrink-0 shadow-[0_1px_2px_rgba(61,42,20,0.25),inset_0_1px_0_rgba(255,255,255,0.12)]">
           <Check className="w-[14px] h-[14px] text-paper" strokeWidth={2.2} />
+          <span className="sheen" />
         </div>
         {!collapsed && (
           <span className="font-display font-bold text-[15px] tracking-[2.5px] text-brown">
@@ -222,8 +223,9 @@ export function Sidebar() {
           onClick={() => onNavClick("today")}
           title={collapsed ? "Today" : undefined}
           aria-current={active("today") ? "page" : undefined}
+          data-active={active("today") ? "true" : undefined}
         >
-          <Home className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          <Home data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Today</span>}
         </Link>
         <Link
@@ -233,12 +235,13 @@ export function Sidebar() {
           onClick={() => onNavClick("apps")}
           title={collapsed ? "Applications" : undefined}
           aria-current={active("apps") ? "page" : undefined}
+          data-active={active("apps") ? "true" : undefined}
         >
-          <LayoutGrid className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          <LayoutGrid data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && (
             <>
               <span>Applications</span>
-              <span className="ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
+              <span key={totalApps} className="count-pop ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
                 {totalApps}
               </span>
             </>
@@ -250,12 +253,12 @@ export function Sidebar() {
           onClick={() => onNavClick("interviews")}
           title={collapsed ? "Interviews" : undefined}
         >
-          <Calendar className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          <Calendar data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && (
             <>
               <span>Interviews</span>
               {interviewingCount > 0 && (
-                <span className="ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
+                <span key={interviewingCount} className="count-pop ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
                   {interviewingCount}
                 </span>
               )}
@@ -279,8 +282,9 @@ export function Sidebar() {
           onClick={() => onNavClick("builder")}
           title={collapsed ? "Résumé studio" : undefined}
           aria-current={active("builder") ? "page" : undefined}
+          data-active={active("builder") ? "true" : undefined}
         >
-          <FileText className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          <FileText data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Résumé studio</span>}
         </Link>
         <Link
@@ -289,8 +293,9 @@ export function Sidebar() {
           onClick={() => onNavClick("mock")}
           title={collapsed ? "Mock interview" : undefined}
           aria-current={active("mock") ? "page" : undefined}
+          data-active={active("mock") ? "true" : undefined}
         >
-          <MessageSquare className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          <MessageSquare data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Mock interview</span>}
         </Link>
       </nav>
@@ -304,8 +309,9 @@ export function Sidebar() {
           onClick={() => onNavClick("settings")}
           title={collapsed ? "Settings" : undefined}
           aria-current={active("settings") ? "page" : undefined}
+          data-active={active("settings") ? "true" : undefined}
         >
-          <Settings className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          <Settings data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>Settings</span>}
         </Link>
       </nav>
@@ -320,8 +326,11 @@ export function Sidebar() {
               14 / 40
             </span>
           </div>
-          <div className="h-[6px] rounded-full bg-border overflow-hidden">
-            <div className="h-full rounded-full bg-brown" style={{ width: "35%" }} />
+          <div className="bar-track h-[6px] rounded-full bg-border overflow-hidden">
+            <div
+              className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#7A3F00,#A66A00)]"
+              style={{ width: "35%" }}
+            />
           </div>
           <div className="font-body text-[11px] text-ink-muted mt-[9px]">
             Resets in 14 days ·{" "}

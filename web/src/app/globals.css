@@ -295,6 +295,87 @@ body {
   .shine:hover::after { animation: sheen 0.85s var(--ease-out); }
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+   Polish layer — additive primitives that push the system from "clean" to
+   "alive". Everything here is opt-in via class, so existing surfaces are
+   untouched until they choose to wear it. All of it collapses under the
+   prefers-reduced-motion guard below.
+   ─────────────────────────────────────────────────────────────────────── */
+
+@keyframes nav-bar-in {
+  0% { opacity: 0; transform: scaleY(0.2); }
+  100% { opacity: 1; transform: scaleY(1); }
+}
+@keyframes count-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  55% { transform: scale(1.18); }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes num-rise {
+  0% { opacity: 0; transform: translateY(8px); filter: blur(3px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes bar-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes bar-sheen {
+  0% { transform: translateX(-100%); }
+  60%, 100% { transform: translateX(320%); }
+}
+
+/* Animated active indicator — a warm gold rail that springs in on the
+   left edge of the active nav item. Put `.nav-rail` on the row and toggle
+   `data-active="true"`; the ::before only paints when active. */
+.nav-rail { position: relative; }
+.nav-rail::before {
+  content: ""; position: absolute; left: -8px; top: 50%; transform: translateY(-50%) scaleY(0);
+  height: 62%; width: 3px; border-radius: 3px; transform-origin: center;
+  background: var(--grad-gold, #e8a317); opacity: 0; box-shadow: 0 0 10px -1px rgba(232,163,23,0.55);
+}
+.nav-rail[data-active="true"]::before {
+  opacity: 1; transform: translateY(-50%) scaleY(1);
+  animation: nav-bar-in var(--dur-base) var(--ease-spring) both;
+}
+/* Icon nudge — the leading icon drifts right a hair as the row activates
+   or is hovered, so navigation feels like forward motion. */
+.nav-rail [data-nav-icon] { transition: transform var(--dur-base) var(--ease-spring), color var(--dur-base) var(--ease-out); }
+.nav-rail:hover [data-nav-icon] { transform: translateX(2px); }
+.nav-rail[data-active="true"] [data-nav-icon] { transform: translateX(1px); }
+
+/* Count pill — small numeric badge that pops when it mounts/changes. */
+.count-pop { animation: count-pop 0.42s var(--ease-spring) both; }
+
+/* Number reveal — for hero/stat figures that should rise into place. */
+.num-rise { animation: num-rise 0.6s var(--ease-out) both; }
+
+/* Animated progress bar fill — grows from the left on mount and carries a
+   one-shot light sweep so it reads as "freshly computed", not painted.
+   Structure:  .bar-track > .bar-fill (width set inline). */
+.bar-track { position: relative; overflow: hidden; }
+.bar-fill {
+  position: relative; transform-origin: left; overflow: hidden;
+  animation: bar-grow 0.9s var(--ease-out) both;
+}
+.bar-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: translateX(-100%);
+  animation: bar-sheen 1.6s var(--ease-out) 0.5s both;
+}
+
+/* Stat cell — interactive lift for the Today metric strip cells without
+   the full card transform (they live inside a shared bordered row). */
+.stat-cell { transition: background var(--dur-base) var(--ease-out); }
+.stat-cell:hover { background: linear-gradient(180deg, #FFFFFF, #FCF7EE); }
+
+/* Gradient hairline — a divider that fades in from its centre, warmer and
+   less mechanical than a flat 1px line. */
+.divider-glow {
+  height: 1px; border: 0;
+  background: linear-gradient(90deg, transparent, var(--color-border-dark, #D6CEC0), transparent);
+}
+
 /* Honour the OS "reduce motion" setting — collapse all animation + transition
    to near-instant so the app stays usable for motion-sensitive users. */
 @media (prefers-reduced-motion: reduce) {
