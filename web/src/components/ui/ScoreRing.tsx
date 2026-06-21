@@ -83,6 +83,23 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
           filter: "blur(7px)",
         }}
       />
+      {/* Top-tier matches earn a slowly-rotating conic sheen ringing the track —
+          a quiet "this one's strong" tell that reads as the ring catching the
+          light. Decorative; collapses under prefers-reduced-motion. */}
+      {clamped >= 85 && (
+        <div
+          aria-hidden
+          className="absolute inset-[-2px] rounded-full pointer-events-none motion-safe:animate-rotate-slow"
+          style={{
+            background: `conic-gradient(from 0deg, transparent 0deg, ${colorLight}00 200deg, ${colorLight}88 320deg, ${colorLight}00 360deg)`,
+            filter: "blur(2px)",
+            opacity: 0.55,
+            maskImage: "radial-gradient(circle, transparent 58%, #000 70%, #000 100%)",
+            WebkitMaskImage:
+              "radial-gradient(circle, transparent 58%, #000 70%, #000 100%)",
+          }}
+        />
+      )}
       <svg width={size} height={size} className="relative -rotate-90 overflow-visible">
         <defs>
           <linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="100%">

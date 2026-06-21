@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useCallback, type PointerEvent, type ReactNode } from "react";
 import { Sparkles } from "lucide-react";
 import { cn } from "./cn";
 
@@ -36,12 +36,24 @@ export function Card({
   padding = "md",
   interactive = false,
 }: CardProps) {
+  // Track the cursor across an interactive card and feed its position to the
+  // `.glow-track` spotlight as CSS custom properties, so the warm highlight
+  // follows the pointer instead of sitting in a fixed spot. No state, no
+  // re-render — we write straight to the node's style for 60fps cheapness.
+  const handlePointer = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`);
+    el.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
+  }, []);
+
   return (
     <div
+      onPointerMove={interactive ? handlePointer : undefined}
       className={cn(
         TONE[tone],
         "rounded-[14px] shadow-sm",
-        interactive && "lift spotlight cursor-pointer",
+        interactive && "lift glow-track cursor-pointer",
         PAD[padding],
         className,
       )}

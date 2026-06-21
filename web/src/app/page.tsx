@@ -148,21 +148,25 @@ export default async function HomePage({
           {/* Anchor nav collapses on mobile — the Sign in + Start free CTAs in
               the right-hand cluster are the only nav users need below md. */}
           <nav className="ml-[34px] hidden md:flex items-center gap-7">
-            <a href="#how" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">How it works</a>
-            <a href="#chat" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">The agents</a>
-            <a href="#features" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Features</a>
-            <a href="#pricing" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Pricing</a>
+            <a href="#how" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">How it works</a>
+            <a href="#chat" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">The agents</a>
+            <a href="#features" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Features</a>
+            <a href="#pricing" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Pricing</a>
           </nav>
           <div className="ml-auto flex items-center gap-4">
-            <a href="/auth?mode=login" className="no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
-            <a href="/auth" className="no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light transition-colors">Start free</a>
+            <a href="/auth?mode=login" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
+            <a href="/auth" className="magnetic shine no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
           </div>
         </div>
       </header>
 
       {/* HERO */}
-      <section className="max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
-        <div className="animate-fade-up">
+      <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
+        {/* Warm aurora drift behind the hero — low-opacity light that keeps the
+            paper fill from reading dead. Purely decorative. */}
+        <div aria-hidden className="aurora-blob -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
+        <div aria-hidden className="aurora-blob -z-10 w-[360px] h-[360px] top-[40px] -right-[80px] [animation-delay:-6s] opacity-30" />
+        <div className="relative animate-fade-up">
           <div className="inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
             <span className="w-[7px] h-[7px] rounded-full bg-green animate-pulse-dot" />
             <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-brown">
@@ -172,7 +176,7 @@ export default async function HomePage({
           <h1 className="font-display font-bold text-[52px] leading-[1.05] tracking-[-1px] text-ink m-0 mb-5">
             Your job hunt,
             <br />
-            run by agents.
+            run by <span className="gradient-text">agents</span>.
             <br />
             <span className="text-brown">Reviewed by you.</span>
           </h1>
@@ -182,12 +186,12 @@ export default async function HomePage({
             interviews — you review and hit submit.
           </p>
           <div className="flex items-center gap-3.5 mb-[22px]">
-            <a href="/auth" className="group sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] transition-all duration-200 ease-out hover:bg-brown-light hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-8px_rgba(61,42,20,0.5)] active:translate-y-0 active:scale-[0.98]">
+            <a href="/auth" className="group magnetic shine sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
               <span className="sheen" aria-hidden />
               Start free
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
             </a>
-            <a href="#how" className="no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] transition-all duration-200 ease-out hover:border-brown hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]">
+            <a href="#how" className="press no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] transition-[border-color,box-shadow] duration-200 ease-out hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.3)]">
               See how it works
             </a>
           </div>
@@ -216,7 +220,7 @@ export default async function HomePage({
       <section id="how" className="bg-white border-y border-border">
         <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            The loop
+            The loop<span className="eyebrow-rule" aria-hidden />
           </div>
           <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
             From &ldquo;I need a job&rdquo; to submitted — in a handful of clicks.
@@ -250,7 +254,7 @@ export default async function HomePage({
       <section id="chat" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[90px] grid grid-cols-1 md:grid-cols-[1fr_1.05fr] gap-10 md:gap-[60px] items-center">
         <div>
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            Chat is the interface
+            Chat is the interface<span className="eyebrow-rule" aria-hidden />
           </div>
           <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-[18px] leading-[1.1]">
             Stop clicking through tools.
@@ -276,7 +280,7 @@ export default async function HomePage({
         </div>
 
         {/* Mini chat mock */}
-        <div className="bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+        <div className="group grad-border lift bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
           <div className="h-12 border-b border-border flex items-center gap-2.5 px-[18px] bg-white">
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -345,7 +349,7 @@ export default async function HomePage({
       <section id="features" className="bg-white border-t border-border">
         <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            What it does
+            What it does<span className="eyebrow-rule" aria-hidden />
           </div>
           <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
             Six agents. One career context that keeps growing.
@@ -354,7 +358,7 @@ export default async function HomePage({
             {FEATURES.map((f) => (
               <div
                 key={f.title}
-                className="group lift sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
+                className="group lift spotlight sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
               >
                 <span className="sheen" aria-hidden />
                 <div className="w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-cream group-hover:scale-[1.06] group-hover:-rotate-3">
@@ -383,8 +387,8 @@ export default async function HomePage({
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">
             {BETS.map((b) => (
-              <div key={b.k} className="border-t border-dark-border pt-[22px]">
-                <div className="font-display font-bold text-[30px] text-gold mb-3.5">
+              <div key={b.k} className="group border-t border-dark-border pt-[22px] transition-colors duration-300 hover:border-gold/50">
+                <div className="font-display font-bold text-[30px] gradient-text mb-3.5 transition-transform duration-300 ease-out group-hover:-translate-y-0.5">
                   {b.k}
                 </div>
                 <div className="font-body font-semibold text-lg text-[#FAF8F6] mb-2.5">
@@ -404,18 +408,22 @@ export default async function HomePage({
 
       {/* CTA */}
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
-        <div className="bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center">
-          <h2 className="font-display font-bold text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
-            Hand the busywork to the agents.
-          </h2>
-          <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
-            Upload a résumé, or just start talking. You&apos;ll have applications
-            ready to review in minutes.
-          </p>
-          <a href="/auth" className="no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light transition-colors">
-            Start free
-            <ArrowRight size={17} />
-          </a>
+        <div className="group grad-border relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
+          {/* Warm light pooling under the headline. */}
+          <div aria-hidden className="aurora-blob -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
+          <div className="relative z-10">
+            <h2 className="font-display font-bold text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
+              Hand the busywork to the <span className="gradient-text">agents</span>.
+            </h2>
+            <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
+              Upload a résumé, or just start talking. You&apos;ll have applications
+              ready to review in minutes.
+            </p>
+            <a href="/auth" className="group/cta magnetic shine no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
+              Start free
+              <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover/cta:translate-x-1" />
+            </a>
+          </div>
         </div>
       </section>
 

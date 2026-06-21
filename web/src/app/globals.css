@@ -471,6 +471,43 @@ body {
 /* Tabular figures that recolour smoothly as they change (scores, counts). */
 .num-flow { font-variant-numeric: tabular-nums; transition: color var(--dur-base) var(--ease-out); }
 
+/* Pointer-tracked spotlight — a warm highlight that chases the cursor across a
+   surface, so a card feels lit by a light the user is holding. Drive `--mx` /
+   `--my` (0–100%) from JS (see Card's onPointerMove). With no pointer vars set
+   it falls back to a calm top-centre glow, so it degrades gracefully on touch. */
+.glow-track { position: relative; isolation: isolate; }
+.glow-track::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-out);
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, -10%),
+    rgba(232, 163, 23, 0.18), rgba(232, 163, 23, 0.04) 45%, transparent 65%);
+}
+.glow-track:hover::before { opacity: 1; }
+
+/* Slow continuous rotation — for decorative conic halos (e.g. the ScoreRing
+   "freshly computed" sheen on a top-tier match). */
+@keyframes slow-rotate { to { transform: rotate(360deg); } }
+.animate-rotate-slow { animation: slow-rotate 9s linear infinite; }
+
+/* Conic sheen sweep — a single bright arc that travels once around a ring or
+   pill to mark a value as just-landed. */
+@keyframes conic-sweep {
+  0% { transform: rotate(0deg); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: rotate(360deg); opacity: 0; }
+}
+.animate-conic-sweep { animation: conic-sweep 1.1s var(--ease-out) 0.3s both; }
+
+/* Eyebrow shimmer — a section label whose gold underline draws itself in and
+   catches a slow travelling highlight. Pair `.eyebrow` with a trailing
+   `<span className="eyebrow-rule" />` for the animated rule. */
+.eyebrow-rule {
+  display: inline-block; height: 2px; width: 28px; vertical-align: middle;
+  margin-left: 10px; border-radius: 2px; transform-origin: left;
+  background: var(--grad-gold, #e8a317); background-size: 200% auto;
+  animation: underline-grow 0.7s var(--ease-out) both, gradient-pan 4s linear infinite;
+}
+
 /* Deeper stagger track — extends the existing .stagger up to 12 children so
    longer lists keep their cascade instead of all snapping in at once. */
 .stagger > *:nth-child(9) { animation-delay: 0.52s; }
