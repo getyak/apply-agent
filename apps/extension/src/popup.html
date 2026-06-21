@@ -197,6 +197,16 @@
       <p class="dim" style="margin-top:8px; font-size:11px;">
         Stored only in chrome.storage.local. Never uploaded unless you tick "use cloud LLM" above.
       </p>
+      <!--
+        PROFILE4 (round-18): explicit "wipe my profile" button so users can
+        exercise the GDPR "right to deletion" the privacy story relies on.
+        Wired to popup.ts → clearProfile() → chrome.storage.local.remove(),
+        which actually unsets the key (not just overwrites it with empty
+        strings the way a "save empty form" would). Confirms first.
+      -->
+      <button id="clear-profile-btn" style="margin-top:8px; font-size:11px;">
+        Clear profile
+      </button>
     </details>
 
     <script type="module" src="popup.js"></script>

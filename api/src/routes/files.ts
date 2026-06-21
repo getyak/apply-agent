@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { query } from "../db";
 import { authMiddleware } from "../middleware/auth";
+import { largeBodySizeLimit } from "../middleware/security";
 import { storage, StorageUnavailableError } from "../storage";
 import { classifyKind, ExtractionError } from "../extract";
 import { bytesToMarkdown } from "../markdown";
@@ -32,7 +33,16 @@ const EXT_BY_KIND: Record<string, string> = {
 
 // POST /api/files — multipart upload of a single resume file.
 //   form fields: file (required)
-app.post("/", async (c) => {
+//
+// FILES_SIZE1 (round-18): the global `bodySizeLimit` in `index.ts`
+// caps everything at 1 MiB (round-7 SEC1 reasoning was "JSON bodies
+// are small"). That cap fired before this route's 8 MiB `MAX_BYTES`,
+// so a 50-page PDF (≈ 2.5 MiB — within the round-17 MAX_PDF_PAGES
+// cap) got 413'd at the gateway. Apply the larger ceiling on this
+// single route so multi-page résumés actually make it to the parser.
+// The per-file `MAX_BYTES` check below still applies as the second
+// fence; this just unblocks the route.
+app.post("/", largeBodySizeLimit, async (c) => {
   const userId = c.get("userId");
 
   const form = await c.req.formData().catch(() => {

@@ -7,7 +7,13 @@
 //   - fill summary card (counts what got filled, what's left)
 
 import type { DetectionPayload, FillSummary, Message } from './messages.js';
-import { EMPTY_PROFILE, type UserProfile, loadProfile, saveProfile } from './profile.js';
+import {
+  EMPTY_PROFILE,
+  type UserProfile,
+  clearProfile,
+  loadProfile,
+  saveProfile,
+} from './profile.js';
 
 const RENDER_LIMIT = 12;
 
@@ -202,4 +208,19 @@ hydrateProfile().catch((err: unknown) => {
 });
 $<HTMLButtonElement>('fill-btn').addEventListener('click', () => {
   void doFill();
+});
+
+// PROFILE4 (round-18): the "Clear profile" button calls clearProfile()
+// after confirming with the user (popup is a tiny UI, no place for an
+// undo). On success we also blank every visible input so the next
+// `await loadProfile()` doesn't pull stale field values back into the
+// form — even though storage is gone, the inputs still hold whatever
+// the user last typed until the next page render.
+$<HTMLButtonElement>('clear-profile-btn').addEventListener('click', () => {
+  void (async () => {
+    if (!confirm('Clear your stored profile? This cannot be undone.')) return;
+    await clearProfile();
+    const inputs = document.querySelectorAll<HTMLInputElement>('.profile-grid input');
+    for (const input of inputs) input.value = '';
+  })();
 });

@@ -67,3 +67,20 @@ export async function saveProfile(profile: UserProfile): Promise<void> {
     chrome.storage.local.set({ [STORAGE_KEY]: profile }, () => resolve());
   });
 }
+
+/**
+ * PROFILE4 (round-18): the round-18 audit found we had no way to
+ * wipe the stored profile from extension memory. saveProfile() only
+ * overwrites the object — even a "save empty profile" leaves the
+ * STORAGE_KEY present in chrome.storage.local. That violates the
+ * GDPR "right to deletion" the rest of the privacy story relies on
+ * and contradicts the vision.md "privacy first" line in the file
+ * header. chrome.storage.local.remove() is the right primitive: it
+ * removes the entry entirely. Caller (popup.ts "Clear profile"
+ * button, round-18) confirms with the user first.
+ */
+export async function clearProfile(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove([STORAGE_KEY], () => resolve());
+  });
+}

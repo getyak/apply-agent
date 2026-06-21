@@ -444,11 +444,29 @@ async def applications_submitted(
 
 
 class ExtensionMapFieldsPayload(BaseModel):
-    """Subset of CloudFillRequest from apps/extension/src/cloud-fill.ts."""
+    """Subset of CloudFillRequest from apps/extension/src/cloud-fill.ts.
+
+    EXT_MF1 / EXT_MF2 (round-18): the round-18 audit found this payload
+    was the only LLM-bound POST that still accepted unbounded input —
+    MockResumePayload (HITL_R3, round-8), MockStartPayload (MOCK_S1,
+    round-15), and most of the other agent endpoints have moved to
+    Field(max_length=…) by now. A buggy or hostile extension could POST
+    a 1 MB jd_url, a 10 000-element fields array, or a deeply-nested
+    context dict, and we'd serialize all of it into the LLM context
+    (paying tokens) and into structured log lines (paying memory).
+    Pin every leaf with the same pattern the round-15 work set:
+      jd_url ≤ 2 000  (typical careers URLs are 200-400 chars; 2 000
+                       leaves room for tracking params without
+                       inviting megabyte abuse).
+      fields ≤ 500    (real ATS forms top out around 50-80 fields;
+                       500 is a generous ceiling).
+      context dict is capped indirectly by Pydantic's default validation
+      cycle plus the gateway's 1 MB body cap (round-7 SEC1).
+    """
 
     context: dict[str, Any]  # ATSContext shape, but we only read jdUrl + source
-    jd_url: str
-    fields: list[dict[str, Any]]  # DetectedField[] from the extension
+    jd_url: str = Field(max_length=2000)
+    fields: list[dict[str, Any]] = Field(max_length=500)
 
     # pydantic v2: accept both camelCase from the extension and snake_case.
     model_config = {"populate_by_name": True}
