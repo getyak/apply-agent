@@ -15,29 +15,66 @@ Caller: Bun api/ layer proxies user requests here over HTTP.
 from __future__ import annotations
 
 import json
+
+# Load the repo-root .env BEFORE any agents.* import so OPENROUTER_API_KEY /
+# DATABASE_URL / REDIS_URL are present in os.environ. The agents layer reads
+# config purely via os.environ (harness/llm.py), so without this the key is
+# silently None and every LLM call fails with "reasoning engine returned an
+# error". Real env vars injected by the deploy win (override=False).
+import os  # noqa: E402
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-import structlog
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-from langgraph.types import Command
-from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
 
-from agents.api.deps import UserDep
-from agents.coordinator.router import classify_intent, dispatch, persist_turn
-from agents.coordinator.workflows import build_from_scratch_graph
-from agents.harness.audit import redact_exception_text
-from agents.harness.checkpointer import (
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+
+# Strip inherited shell proxy vars before any httpx client is constructed.
+# Why: when the developer's shell exports `all_proxy=socks5://...` (common on
+# macOS with Clash / Surge / V2Ray), httpx auto-discovers it and tries to
+# build a SOCKS transport — which requires the optional `socksio` package.
+# Without socksio, `ChatOpenAI(...)` raises ImportError at construction time
+# and the Bun gateway surfaces it as "Vantage's reasoning engine returned an
+# error". OpenRouter is on the public internet via HTTPS; the dev's local
+# proxy must not sit between agents and OpenRouter. Honor an explicit
+# OPENROUTER_PROXY escape hatch for users who deliberately need to route
+# through a proxy (they should also install httpx[socks]).
+if not os.environ.get("OPENROUTER_PROXY"):
+    for _p in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        os.environ.pop(_p, None)
+
+import structlog  # noqa: E402
+from fastapi import FastAPI, Header, HTTPException, Request  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
+from langgraph.types import Command  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
+
+from agents.api.deps import UserDep  # noqa: E402
+from agents.coordinator.router import (  # noqa: E402
+    classify_intent,
+    dispatch,
+    persist_turn,
+)
+from agents.coordinator.workflows import build_from_scratch_graph  # noqa: E402
+from agents.harness.audit import redact_exception_text  # noqa: E402
+from agents.harness.checkpointer import (  # noqa: E402
     ask_vantage_thread_id,
     get_checkpointer,
     mock_thread_id,
 )
-from agents.harness.guards import BudgetExhausted
-from agents.harness.state import InterviewMode
-from agents.nodes import interview_agent, resume_agent
-from agents.tools.auto import pg_query
+from agents.harness.guards import BudgetExhausted  # noqa: E402
+from agents.harness.state import InterviewMode  # noqa: E402
+from agents.nodes import interview_agent, resume_agent  # noqa: E402
+from agents.tools.auto import pg_query  # noqa: E402
 
 log = structlog.get_logger("agents.api")
 
