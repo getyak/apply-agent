@@ -182,11 +182,12 @@ export default async function HomePage({
             interviews — you review and hit submit.
           </p>
           <div className="flex items-center gap-3.5 mb-[22px]">
-            <a href="/auth" className="no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] hover:bg-brown-light transition-colors">
+            <a href="/auth" className="group sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] transition-all duration-200 ease-out hover:bg-brown-light hover:-translate-y-0.5 hover:shadow-[0_10px_24px_-8px_rgba(61,42,20,0.5)] active:translate-y-0 active:scale-[0.98]">
+              <span className="sheen" aria-hidden />
               Start free
-              <ArrowRight size={17} />
+              <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
             </a>
-            <a href="#how" className="no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] hover:border-brown transition-colors">
+            <a href="#how" className="no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] transition-all duration-200 ease-out hover:border-brown hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]">
               See how it works
             </a>
           </div>
@@ -226,11 +227,11 @@ export default async function HomePage({
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-[18px]">
             {STEPS.map((step) => (
-              <div key={step.no}>
-                <div className="font-mono text-[11px] tracking-[0.5px] text-border-dark mb-3.5">
+              <div key={step.no} className="group">
+                <div className="font-mono text-[11px] tracking-[0.5px] text-border-dark mb-3.5 transition-colors duration-200 group-hover:text-amber">
                   {step.no}
                 </div>
-                <div className="w-[42px] h-[42px] rounded-[11px] bg-cream border border-cream-border flex items-center justify-center mb-3.5">
+                <div className="w-[42px] h-[42px] rounded-[11px] bg-cream border border-cream-border flex items-center justify-center mb-3.5 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-gold-bg group-hover:-translate-y-0.5 group-hover:shadow-[0_6px_14px_-6px_rgba(61,42,20,0.3)]">
                   {step.icon}
                 </div>
                 <div className="font-body font-semibold text-[15px] text-ink mb-1.5">
@@ -353,9 +354,10 @@ export default async function HomePage({
             {FEATURES.map((f) => (
               <div
                 key={f.title}
-                className="bg-paper border border-border rounded-[14px] p-6 transition-all hover:border-border-dark hover:-translate-y-0.5"
+                className="group lift sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
               >
-                <div className="w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4">
+                <span className="sheen" aria-hidden />
+                <div className="w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-cream group-hover:scale-[1.06] group-hover:-rotate-3">
                   {f.icon}
                 </div>
                 <div className="font-body font-semibold text-base text-ink mb-[7px]">

@@ -18,15 +18,21 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const BASE =
-  "inline-flex items-center justify-center gap-[8px] font-body font-semibold whitespace-nowrap cursor-pointer transition-colors " +
+  "inline-flex items-center justify-center gap-[8px] font-body font-semibold whitespace-nowrap cursor-pointer " +
+  "transition-[transform,background-color,border-color,box-shadow,color] duration-200 ease-out " +
+  "motion-safe:hover:-translate-y-px active:translate-y-0 active:scale-[0.98] " +
   "outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper " +
-  "disabled:cursor-not-allowed disabled:opacity-50";
+  "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:active:scale-100 disabled:shadow-none";
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-brown text-paper border-none hover:bg-brown-light",
-  secondary: "bg-white text-ink border border-border-dark hover:border-brown",
-  ghost: "bg-transparent text-ink-light border-none hover:text-ink",
-  danger: "bg-white text-ink border border-border-dark hover:border-amber hover:text-amber",
+  primary:
+    "bg-brown text-paper border-none shadow-[0_1px_2px_rgba(61,42,20,0.18)] " +
+    "hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)]",
+  secondary:
+    "bg-white text-ink border border-border-dark hover:border-brown hover:shadow-[0_4px_12px_-6px_rgba(61,42,20,0.22)]",
+  ghost: "bg-transparent text-ink-light border-none hover:text-ink hover:bg-cream/60",
+  danger:
+    "bg-white text-ink border border-border-dark hover:border-amber hover:text-amber hover:shadow-[0_4px_12px_-6px_rgba(166,106,0,0.25)]",
 };
 
 const SIZES: Record<ButtonSize, string> = {

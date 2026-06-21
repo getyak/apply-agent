@@ -13,6 +13,8 @@ interface CardProps {
   tone?: Tone;
   className?: string;
   padding?: "sm" | "md" | "lg";
+  /** Adds a hover lift + warm shadow. Use for clickable/navigational cards. */
+  interactive?: boolean;
 }
 
 const TONE: Record<Tone, string> = {
@@ -27,9 +29,23 @@ const PAD = {
   lg: "p-[22px]",
 } as const;
 
-export function Card({ children, tone = "paper", className, padding = "md" }: CardProps) {
+export function Card({
+  children,
+  tone = "paper",
+  className,
+  padding = "md",
+  interactive = false,
+}: CardProps) {
   return (
-    <div className={cn(TONE[tone], "rounded-[14px] shadow-sm", PAD[padding], className)}>
+    <div
+      className={cn(
+        TONE[tone],
+        "rounded-[14px] shadow-sm",
+        interactive && "lift cursor-pointer",
+        PAD[padding],
+        className,
+      )}
+    >
       {children}
     </div>
   );

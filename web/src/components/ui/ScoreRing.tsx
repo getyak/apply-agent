@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { cn } from "./cn";
 
 // Circular match-score ring used in review.tsx & today-view.tsx today as ad-hoc SVG.
@@ -12,13 +13,44 @@ interface ScoreRingProps {
   className?: string;
 }
 
+// Animate a number from 0 → target on mount with an ease-out curve, so the
+// ring "fills" and the digits count up. Honours prefers-reduced-motion by
+// snapping straight to the final value.
+function useCountUp(target: number, duration = 950) {
+  const [value, setValue] = useState(0);
+  const raf = useRef<number | null>(null);
+  useEffect(() => {
+    // Reduced-motion users get duration 0 → the first rAF tick snaps to the
+    // target. Keeping it inside the rAF callback (never synchronous in the
+    // effect body) avoids cascading-render warnings.
+    const reduce =
+      typeof window !== "undefined" &&
+      !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const span = reduce ? 0 : duration;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = span <= 0 ? 1 : Math.min(1, (now - start) / span);
+      const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      setValue(Math.round(target * eased));
+      if (t < 1) raf.current = requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+    return () => {
+      if (raf.current) cancelAnimationFrame(raf.current);
+    };
+  }, [target, duration]);
+  return value;
+}
+
 export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps) {
   const clamped = Math.max(0, Math.min(100, value));
+  const display = useCountUp(clamped);
   const stroke = 6;
   const r = (size - stroke) / 2 - 1;
   const c = 2 * Math.PI * r;
   const dash = c.toFixed(2);
-  const offset = (c - (c * clamped) / 100).toFixed(2);
+  // Drive the arc from the animated `display` value so stroke + digits move together.
+  const offset = (c - (c * display) / 100).toFixed(2);
   const color =
     clamped >= 85 ? "#4C7A3F" : clamped >= 70 ? "#A66A00" : "#A39F99";
   const textColor =
@@ -31,7 +63,7 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
       role="img"
       aria-label={label ?? `Match score: ${clamped}%`}
     >
-      <svg width={size} height={size} className="-rotate-90">
+      <svg width={size} height={size} className="-rotate-90 overflow-visible">
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -50,11 +82,16 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
           strokeLinecap="round"
           strokeDasharray={dash}
           strokeDashoffset={offset}
-          className="transition-[stroke-dashoffset] duration-500 ease-out"
+          style={{ filter: `drop-shadow(0 0 5px ${color}33)` }}
         />
       </svg>
-      <div className={cn("absolute inset-0 flex items-center justify-center font-display font-bold text-[20px]", textColor)}>
-        {clamped}
+      <div
+        className={cn(
+          "absolute inset-0 flex items-center justify-center font-display font-bold text-[20px] tabular-nums",
+          textColor,
+        )}
+      >
+        {display}
       </div>
     </div>
   );

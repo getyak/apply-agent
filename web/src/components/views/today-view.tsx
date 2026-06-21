@@ -79,8 +79,8 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
   const salary = p?.salary_min && p?.salary_max ? `$${Math.round(p.salary_min / 1000)}–${Math.round(p.salary_max / 1000)}k` : "";
 
   return (
-    <div className="bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] hover:border-border-dark transition-colors">
-      <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[19px] text-ink shrink-0">
+    <div className="group lift bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] hover:border-border-dark">
+      <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[19px] text-ink shrink-0 transition-all duration-300 ease-out group-hover:bg-gold-bg group-hover:scale-[1.05]">
         {job.company.charAt(0)}
       </div>
       <div className="flex-1 min-w-0">
@@ -102,7 +102,7 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
         {scored ? (
           <div className="flex items-center gap-[10px] mt-[11px]">
             <div className="w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
-              <div className="h-full rounded-full bg-green" style={{ width: `${match}%` }} />
+              <div className="h-full rounded-full bg-green animate-[bar-fill_0.9s_ease-out]" style={{ width: `${match}%` }} />
             </div>
             <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
           </div>
@@ -125,9 +125,9 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
       <div className="shrink-0">
         <button
           onClick={() => onApply(job.id)}
-          className="border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:bg-brown-light transition-colors"
+          className="border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] transition-all duration-200 ease-out hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] active:scale-[0.97]"
         >
-          <Zap className="w-[15px] h-[15px]" strokeWidth={1.9} />
+          <Zap className="w-[15px] h-[15px] transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110" strokeWidth={1.9} />
           Review & apply
         </button>
       </div>
@@ -268,13 +268,17 @@ export function TodayView() {
           </div>
           <ol className="flex flex-col gap-[10px] list-none m-0 p-0">
             {actionQueue.map((a, i) => (
-              <li key={a.id}>
+              <li
+                key={a.id}
+                className="animate-step-in"
+                style={{ animationDelay: `${0.05 + i * 0.06}s` }}
+              >
                 <button
                   type="button"
                   onClick={() => runAction(a)}
-                  className="w-full text-left bg-white border border-border rounded-[12px] px-[16px] py-[13px] shadow-sm hover:border-brown transition-colors flex items-center gap-[14px] cursor-pointer"
+                  className="group w-full text-left bg-white border border-border rounded-[12px] px-[16px] py-[13px] shadow-sm hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.28)] transition-all duration-200 ease-out hover:-translate-y-px active:translate-y-0 active:scale-[0.995] flex items-center gap-[14px] cursor-pointer"
                 >
-                  <span className="font-mono text-[10px] tracking-[0.8px] text-ink-muted w-[18px] flex-shrink-0">
+                  <span className="font-mono text-[10px] tracking-[0.8px] text-ink-muted w-[18px] flex-shrink-0 transition-colors duration-200 group-hover:text-brown">
                     {String(i + 1).padStart(2, "0")}
                   </span>
                   <span className="flex-1 min-w-0">
