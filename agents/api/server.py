@@ -60,11 +60,25 @@ from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
 from agents.api.deps import UserDep  # noqa: E402
 from agents.coordinator.router import (  # noqa: E402
+    cheap_intent_classifier,
     classify_intent,
     dispatch,
     persist_turn,
 )
 from agents.coordinator.workflows import build_from_scratch_graph  # noqa: E402
+
+# Sprint 1 of docs/design/chat-agent-system-redesign.md: when the env flag is
+# set, the LLM-fallback branch of /ask/stream is delegated to the new Dock
+# ReAct agent (P0-A). The regex fast path stays as-is so confident command-
+# like prompts ("list applications", "mock me on Stripe") never pay the
+# main-loop LLM tax. Default OFF so the rollout is opt-in until we're happy.
+_DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "0") == "1"
+# Threshold for skipping the dock and going straight to dispatch on a cheap
+# regex hit. Higher than router.REGEX_ACCEPT_THRESHOLD so we only fast-path
+# the *very* confident matches; everything else gets the dock loop.
+_DOCK_REGEX_FAST_PATH_THRESHOLD = float(
+    os.environ.get("RELAY_DOCK_FAST_PATH", "0.95")
+)
 from agents.harness.audit import redact_exception_text  # noqa: E402
 from agents.harness.checkpointer import (  # noqa: E402
     ask_vantage_thread_id,
@@ -261,6 +275,49 @@ async def ask_stream(
     async def gen() -> AsyncIterator[str]:
         yield _sse({"event": "thinking", "agent": "coordinator"})
 
+        # Dock ReAct branch (P0-A): when the env flag is set and the cheap
+        # regex isn't sure enough to fast-path, delegate the whole turn to
+        # the Dock agent. We still emit the same SSE envelope so the TS
+        # gateway (api/src/routes/ask.ts) doesn't need to change.
+        if _DOCK_REACT_ENABLED:
+            cheap = cheap_intent_classifier(payload.message)
+            if cheap and cheap.confidence >= _DOCK_REGEX_FAST_PATH_THRESHOLD:
+                # Fast path: emit an intent frame + dispatch directly, just
+                # like the legacy router would. Skips the dock loop entirely.
+                yield _sse(
+                    {
+                        "event": "intent",
+                        "intent": cheap.intent,
+                        "confidence": cheap.confidence,
+                        "via": "regex_fast_path",
+                        "args": cheap.args,
+                    }
+                )
+                async for chunk in _dispatch_and_persist(
+                    intent=cheap,
+                    user_id=user_id,
+                    message=payload.message,
+                    thread_id=thread_id,
+                    surface=surface,
+                ):
+                    yield chunk
+                yield _sse({"event": "done"})
+                return
+
+            # Main-loop dock path — see agents/coordinator/dock_agent.py.
+            async for chunk in _stream_dock_turn(
+                message=payload.message,
+                user_id=user_id,
+                thread_id=thread_id,
+                surface=surface,
+            ):
+                yield chunk
+            yield _sse({"event": "done"})
+            return
+
+        # Legacy path (default until RELAY_DOCK_REACT=1): preserves the
+        # full router → dispatch behaviour the existing tests cover. New
+        # dock-agent tests run against the path above.
         intent = await classify_intent(payload.message)
         yield _sse(
             {
@@ -272,41 +329,421 @@ async def ask_stream(
             }
         )
 
+        async for chunk in _dispatch_and_persist(
+            intent=intent,
+            user_id=user_id,
+            message=payload.message,
+            thread_id=thread_id,
+            surface=surface,
+        ):
+            yield chunk
+
+        yield _sse({"event": "done"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+async def _dispatch_and_persist(
+    *,
+    intent: Any,
+    user_id: UUID,
+    message: str,
+    thread_id: str,
+    surface: str,
+) -> AsyncIterator[str]:
+    """Shared body for legacy + regex-fast-path branches.
+
+    Emits one ``result`` frame (or an ``error`` frame on exception) and
+    persists the turn into ``conversation_messages`` for the dock's RECENT
+    rail. Factored out so both /ask/stream branches share identical
+    error-envelope shaping.
+    """
+    try:
+        result = await dispatch(
+            intent,
+            user_id=user_id,
+            message=message,
+            thread_id=thread_id,
+            surface=surface,
+        )
+        yield _sse({"event": "result", **result})
+        await persist_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            user_message=message,
+            assistant_text=_result_summary(result),
+        )
+    except Exception as exc:  # noqa: BLE001 boundary
+        trace_id = uuid4().hex
+        log.error(
+            "ask_stream.dispatch_failed",
+            trace_id=trace_id,
+            error=redact_exception_text(str(exc)),
+            kind=type(exc).__name__,
+        )
+        envelope = _error_envelope(exc, trace_id)
+        yield _sse({"event": "error", **envelope})
+
+
+async def _stream_dock_turn(
+    *,
+    message: str,
+    user_id: UUID,
+    thread_id: str,
+    surface: str,
+) -> AsyncIterator[str]:
+    """Run the Dock ReAct loop and translate its events to SSE frames.
+
+    Maps ``DockEvent`` → existing SSE event vocabulary + five new ones:
+      - DockEvent("plan")          → event: "task_graph"
+      - DockEvent("narrator")      → event: "narrator"   (Step 1: thought-aloud chip)
+      - DockEvent("tool_start")    → event: "thinking"   (agent= guessed)
+      - DockEvent("tool_end")      → event: "tool_trace" + "result"
+                                     (Step 3: tool_trace fuels the console row;
+                                     result keeps the legacy artifact pipeline)
+      - DockEvent("tool_error")    → event: "tool_trace" + "error"
+      - DockEvent("assistant_delta")    → event: "delta"           (additive)
+      - DockEvent("partial_artifact")   → event: "partial_artifact" (Step 5)
+      - DockEvent("interrupt")     → event: "hitl"     (P1-C scaffolding)
+      - DockEvent("done")          → silently consumed; gen() emits "done"
+
+    The TS gateway already ignores unknown event names (toNdjson returns []),
+    so adding "task_graph", "delta", "hitl" is backward-compatible — old
+    clients drop them, new clients render them.
+    """
+    from agents.coordinator import dock_agent, dock_tools
+
+    tokens = dock_tools.set_dock_context(
+        user_id=user_id, thread_id=thread_id, surface=surface
+    )
+    assistant_buf: list[str] = []
+    # Per-turn plan progress tracker. Holds the most recent plan emitted by
+    # propose_plan + a cursor over its steps so we can annotate each
+    # subsequent tool_start / tool_end / tool_trace with the canonical
+    # `plan_step` id. The cursor is "best-effort" — see _PlanProgress.
+    plan_progress = _PlanProgress()
+    try:
         try:
-            result = await dispatch(
-                intent,
-                user_id=user_id,
-                message=payload.message,
+            async for evt in dock_agent.run_dock_turn(
+                message=message,
                 thread_id=thread_id,
-                surface=surface,
-            )
-            yield _sse({"event": "result", **result})
-            # Persist the turn so the next dock prompt has context.
-            await persist_turn(
-                thread_id=thread_id,
-                user_id=user_id,
-                user_message=payload.message,
-                assistant_text=_result_summary(result),
-            )
+            ):
+                frames = _dock_event_to_sse(evt, plan_progress)
+                if not frames:
+                    continue
+                # Track assistant text so we can persist a turn summary.
+                if evt.kind == "assistant_delta":
+                    assistant_buf.append(evt.payload.get("text", ""))
+                for frame in frames:
+                    yield frame
         except Exception as exc:  # noqa: BLE001 boundary
-            # round-5 API2: stop leaking raw str(exc) into the SSE error
-            # frame. Reuse the same envelope helper the JSON handlers do, so
-            # the dock can branch on `code` (budget_exhausted, http_403,
-            # internal_error, …) and we have a single trace_id to grep for
-            # when a user reports the error.
             trace_id = uuid4().hex
             log.error(
-                "ask_stream.dispatch_failed",
+                "ask_stream.dock_turn_failed",
                 trace_id=trace_id,
                 error=redact_exception_text(str(exc)),
                 kind=type(exc).__name__,
             )
             envelope = _error_envelope(exc, trace_id)
             yield _sse({"event": "error", **envelope})
+        else:
+            assistant_text = "".join(assistant_buf).strip()
+            if assistant_text:
+                await persist_turn(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    user_message=message,
+                    assistant_text=assistant_text,
+                )
+    finally:
+        dock_tools.reset_dock_context(tokens)
 
-        yield _sse({"event": "done"})
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+# Mapping of execution tool name → (agent, action). Keeps the SSE result
+# shape identical to the legacy dispatch path so the TS gateway's artifact
+# templates fire the same way (api/src/routes/ask.ts buildArtifact).
+_TOOL_AGENT_MAP: dict[str, tuple[str, str]] = {
+    "list_my_applications": ("applications", "list"),
+    "tailor_resume": ("resume_agent", "customize"),
+    "find_jobs": ("jobmatch_agent", "find_matches"),
+    "start_mock_interview": ("interview_agent", "build_mock_graph"),
+    "draft_cover_letter": ("appprep_agent", "draft_cover_letter"),
+    "build_resume_from_scratch": ("resume_agent", "build_from_scratch"),
+    "trends_today": ("trend_agent", "daily_snapshot"),
+}
+
+
+# Step 4 — plan step progress tracker.
+#
+# When propose_plan declares a multi-step plan, we want the dock UI to light
+# up each row as the corresponding tool fires. The dock_agent emits
+# tool_start / tool_end events with a `tool` name; we map that to an `agent`
+# via _TOOL_AGENT_MAP and then to the next un-marked step in the plan whose
+# `agent` matches.
+#
+# Why "best-effort": the LLM can in theory call tools in an order that
+# doesn't match the plan (e.g. it inserts a recall in the middle), or omit
+# a step entirely. We cope by:
+#   - Marking the FIRST un-marked step whose agent matches when a tool
+#     starts. If none matches, no step_id is attached and the dock just
+#     doesn't highlight anything (it still shows the agent row + console).
+#   - On tool_end we mark the SAME step (cursor) as complete.
+#   - "review" steps don't auto-progress; the dock's existing logic flips
+#     them to status: review when the artifact is rendered.
+
+
+class _PlanProgress:
+    """Per-turn tracker that maps tools to plan_step ids."""
+
+    def __init__(self) -> None:
+        # ``steps[i] = {"step", "agent", "requires_review", "done"}``
+        self.steps: list[dict[str, Any]] = []
+        # Tracks the step currently in flight (tool_start sets this so
+        # tool_end can re-emit the same id without re-scanning).
+        self._inflight: dict[str, str] = {}
+
+    def set_plan(self, plan: dict[str, Any]) -> None:
+        steps = plan.get("plan") if isinstance(plan, dict) else None
+        if not isinstance(steps, list):
+            self.steps = []
+            return
+        self.steps = []
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            self.steps.append(
+                {
+                    "step": str(s.get("step", "")),
+                    "agent": str(s.get("agent", "")),
+                    "requires_review": bool(s.get("requires_review", False)),
+                    "done": False,
+                }
+            )
+
+    def assign_for_start(self, tool: str, agent: str) -> str | None:
+        """Find the next plan step matching ``agent`` and mark it in-flight."""
+        if not self.steps:
+            return None
+        for s in self.steps:
+            if s["done"]:
+                continue
+            if s["agent"] == agent:
+                self._inflight[tool] = s["step"]
+                return s["step"]
+        return None
+
+    def pop_for_end(self, tool: str) -> str | None:
+        """Return + mark the step the matching tool_start claimed."""
+        step_id = self._inflight.pop(tool, None)
+        if not step_id:
+            return None
+        for s in self.steps:
+            if s["step"] == step_id:
+                s["done"] = True
+                return step_id
+        return step_id
+
+
+def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[str]:
+    """Translate one ``DockEvent`` into 0–N SSE data frames.
+
+    Returns a list (possibly empty) so a single dock event can fan out into
+    multiple wire frames. Step 3 uses this to emit a structured
+    ``tool_trace`` frame alongside the existing ``result`` frame so the dock
+    can render the Manus-style collapsible tool console without disturbing
+    legacy result-card rendering. Step 4 stamps `plan_step` ids onto the
+    tool_start / tool_end / tool_trace frames so the dock can light up each
+    plan row in real time.
+    """
+    kind = evt.kind
+
+    if kind == "plan":
+        plan = evt.payload.get("plan") or {}
+        # Stamp the per-turn progress tracker so subsequent tool_starts can
+        # be mapped back to plan rows. Safe no-op when there's no tracker
+        # (the unit tests call us without one).
+        if progress is not None:
+            progress.set_plan(plan)
+        # Forward the plan so the TS gateway can transform it into the
+        # NDJSON task_graph frame (replacing the static PLAN_TEMPLATES).
+        return [_sse({"event": "task_graph", "graph": plan})]
+
+    if kind == "narrator":
+        # Step 1 — thought-aloud chip emitted before each execution tool.
+        # Empty narrations are already filtered upstream in dock_agent._translate_event.
+        text = evt.payload.get("text") or ""
+        if not text:
+            return []
+        return [_sse({"event": "narrator", "text": text})]
+
+    if kind == "tool_start":
+        tool_name = evt.payload.get("tool") or ""
+        agent, _action = _TOOL_AGENT_MAP.get(
+            tool_name, ("coordinator", tool_name or "tool")
+        )
+        # Step 4 — claim the matching plan step (if any). We never *require*
+        # a match: the spinner row still goes out even when the model called
+        # an off-plan tool, just without highlighting any plan row.
+        step_id = (
+            progress.assign_for_start(tool_name, agent)
+            if progress is not None and tool_name not in _CONSOLE_HIDDEN_TOOLS
+            else None
+        )
+        envelope: dict[str, Any] = {"event": "thinking", "agent": agent}
+        if step_id:
+            envelope["plan_step"] = step_id
+        return [_sse(envelope)]
+
+    if kind == "tool_end":
+        tool_name = evt.payload.get("tool") or ""
+        result = evt.payload.get("result")
+        agent, action = _TOOL_AGENT_MAP.get(tool_name, ("coordinator", tool_name))
+        # Step 4 — release the plan step the matching tool_start claimed.
+        # Returning None just means "no plan or off-plan call"; downstream
+        # frames simply omit the `plan_step` key in that case.
+        step_id = progress.pop_for_end(tool_name) if progress is not None else None
+        out: list[str] = []
+        # Step 3 — emit a structured tool_trace event for the dock console.
+        # The trace is suppressed for system tools (propose_plan, narrate,
+        # recall_*) — they each have their own dedicated UI surface (task
+        # graph card, narrator chip, recall inline summary). Adding them
+        # to the console would be noise.
+        if tool_name and tool_name not in _CONSOLE_HIDDEN_TOOLS:
+            summary = _tool_result_summary(result if isinstance(result, dict) else None)
+            trace_env: dict[str, Any] = {
+                "event": "tool_trace",
+                "tool": tool_name,
+                "agent": agent,
+                "action": action,
+                "status": "ok",
+                "summary": summary,
+            }
+            if step_id:
+                trace_env["plan_step"] = step_id
+            out.append(_sse(trace_env))
+        if isinstance(result, dict):
+            result_env = {"event": "result", "agent": agent, "action": action, **result}
+            if step_id:
+                result_env["plan_step"] = step_id
+            out.append(_sse(result_env))
+        else:
+            # Tool returned a string (rare) — wrap it.
+            wrapped: dict[str, Any] = {
+                "event": "result",
+                "agent": agent,
+                "action": action,
+                "text": _safe_text(result),
+            }
+            if step_id:
+                wrapped["plan_step"] = step_id
+            out.append(_sse(wrapped))
+        return out
+
+    if kind == "tool_error":
+        tool_name = evt.payload.get("tool") or ""
+        err = evt.payload.get("error") or "tool failed"
+        agent, action = _TOOL_AGENT_MAP.get(tool_name, ("coordinator", tool_name))
+        # Step 4 — same release behaviour as tool_end. We mark the step
+        # done so subsequent matching tools claim the next slot; the UI
+        # will show the step as failed via the tool_trace status.
+        step_id = progress.pop_for_end(tool_name) if progress is not None else None
+        out_err: list[str] = []
+        if tool_name and tool_name not in _CONSOLE_HIDDEN_TOOLS:
+            err_trace: dict[str, Any] = {
+                "event": "tool_trace",
+                "tool": tool_name,
+                "agent": agent,
+                "action": action,
+                "status": "error",
+                "summary": str(err)[:160],
+            }
+            if step_id:
+                err_trace["plan_step"] = step_id
+            out_err.append(_sse(err_trace))
+        err_env: dict[str, Any] = {
+            "event": "error",
+            "code": "tool_failed",
+            "message": f"{agent} → {action} failed",
+            "detail": str(err)[:200],
+        }
+        if step_id:
+            err_env["plan_step"] = step_id
+        out_err.append(_sse(err_env))
+        return out_err
+
+    if kind == "assistant_delta":
+        # Additive "delta" event — TS gateway can fold it into a `text`
+        # NDJSON frame in a follow-up; existing clients drop it silently.
+        return [_sse({"event": "delta", "text": evt.payload.get("text", "")})]
+
+    if kind == "partial_artifact":
+        # Step 5 — stream the in-progress snapshot through verbatim. The
+        # NDJSON gateway forwards it under the same name; the dock merges
+        # by artifact_id.
+        snap = evt.payload or {}
+        if not snap.get("artifact_id"):
+            return []
+        return [_sse({"event": "partial_artifact", **snap})]
+
+    if kind == "interrupt":
+        # P1-C scaffolding: HITL surfaces ride this. The TS gateway can
+        # promote it to one of NDJSON's ask_user / diff / approval frames.
+        return [_sse({"event": "hitl", "value": evt.payload.get("value")})]
+
+    # "done" is consumed by gen() which emits its own "done".
+    return []
+
+
+# Step 3: tools we never want to surface in the collapsible console because
+# they already have a dedicated visual representation (plan card, narrator
+# chip, recall summary). Keeping this list close to _dock_event_to_sse so
+# nobody is tempted to override the policy elsewhere.
+_CONSOLE_HIDDEN_TOOLS: frozenset[str] = frozenset(
+    {
+        "propose_plan",
+        "narrate",
+        "recall_user_memory",
+        "recall_past_applications",
+        "recall_weak_points",
+    }
+)
+
+
+def _tool_result_summary(result: dict[str, Any] | None) -> str:
+    """Build a short, one-line console summary for a tool's structured result.
+
+    Heuristics — picked because the existing envelopes share these keys:
+      - explicit ``summary`` wins.
+      - ``status`` + ``count`` for list-shaped results ("ok · 3 items").
+      - ``status`` + ``agent``/``action`` for "needs_args" / "not_implemented".
+      - fallback: just the status, or "ok" if even that is missing.
+
+    Capped at 160 chars — same length budget as the narrator chip — so the
+    console line stays single-row in the dock.
+    """
+    if not isinstance(result, dict):
+        return "ok"
+    explicit = result.get("summary")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()[:160]
+    status = str(result.get("status") or "ok")
+    if "count" in result:
+        return f"{status} · {result['count']} item{'s' if result['count'] != 1 else ''}"[:160]
+    items = result.get("items")
+    if isinstance(items, list):
+        return f"{status} · {len(items)} item{'s' if len(items) != 1 else ''}"[:160]
+    if status in ("needs_args", "not_implemented"):
+        agent = result.get("agent")
+        if agent:
+            return f"{status} · {agent}"[:160]
+    return status[:160]
+
+
+def _safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    s = str(value)
+    return s[:2000]
 
 
 def _result_summary(result: dict[str, Any]) -> str:
@@ -321,6 +758,143 @@ def _result_summary(result: dict[str, Any]) -> str:
 
 def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Ask Vantage — HITL resume (P1-C, Sprint 2 scaffolding)
+# ───────────────────────────────────────────────────────────────────────
+#
+# When the dock graph hits ``interrupt()`` (e.g. a tailored-résumé diff or
+# an explicit approval gate), the SSE stream surfaces a ``hitl`` event
+# carrying a ``resume_token`` that identifies the paused thread. The
+# client posts its decision back here; we feed it to LangGraph via
+# ``Command(resume=...)`` and stream the rest of the turn back out — same
+# protocol shape as /ask/stream.
+
+
+class AskResumePayload(BaseModel):
+    # The resume_token is "{thread_id}:{checkpoint_id}" so the server can
+    # verify ownership against the auth'd user (mirrors the mock_resume /
+    # build_resume_resume IDOR guard pattern). 128 chars headroom matches
+    # the HITL_R3 cap.
+    resume_token: str = Field(min_length=1, max_length=256)
+    # Value is what the dock collected from the user: a chip choice
+    # (string), a list of choices, or a structured dict for diff/approval
+    # decisions ({"decision": "approve"} | {"decision": "tweak", "notes": "…"}).
+    value: str | list[str] | dict[str, Any] = Field(...)
+
+    @field_validator("value")
+    @classmethod
+    def _bound_value(cls, v: str | list[str] | dict[str, Any]):
+        if isinstance(v, str):
+            if len(v) > 10_000:
+                raise ValueError("value string exceeds 10000 characters")
+            return v
+        if isinstance(v, list):
+            if len(v) > 50:
+                raise ValueError("value list exceeds 50 items")
+            for i, item in enumerate(v):
+                if not isinstance(item, str):
+                    raise ValueError(f"value[{i}] is not a string")
+                if len(item) > 2_000:
+                    raise ValueError(f"value[{i}] exceeds 2000 characters")
+            return v
+        if isinstance(v, dict):
+            # Bound the serialised payload so a hostile client can't blow up
+            # the LangGraph state via a megabyte-deep nested dict.
+            import json as _json
+
+            try:
+                rendered = _json.dumps(v)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"value dict not JSON-serialisable: {exc}") from exc
+            if len(rendered) > 20_000:
+                raise ValueError("value dict serialises to > 20000 characters")
+            return v
+        raise ValueError("value must be a string, list of strings, or dict")
+
+
+@app.post("/ask/resume")
+async def ask_resume(payload: AskResumePayload, user_id: UserDep) -> StreamingResponse:
+    """Resume a dock thread that's parked on an ``interrupt()`` call.
+
+    The resume_token is shaped ``{thread_id}#{checkpoint_id}`` so we can do
+    a fast IDOR check against the auth'd user before feeding the resume
+    value into LangGraph. For dock-owned threads (``ask_vantage:{user_id}``,
+    ``resume_studio:{user_id}:…``, ``build_resume:{user_id}:…``) we verify
+    the embedded user_id matches. Threads of unknown shape are rejected.
+    """
+    parts = payload.resume_token.split("#", 1)
+    thread_id = parts[0]
+    if not _owns_dock_thread(thread_id=thread_id, user_id=user_id):
+        log.warning(
+            "ask_resume.user_mismatch",
+            thread_id=thread_id,
+            requested_by=str(user_id),
+        )
+        raise HTTPException(status_code=403, detail="thread is not yours")
+
+    from langgraph.types import Command as _Command  # local import
+
+    from agents.coordinator import dock_agent, dock_tools
+
+    async def gen() -> AsyncIterator[str]:
+        tokens = dock_tools.set_dock_context(
+            user_id=user_id, thread_id=thread_id, surface="dock"
+        )
+        try:
+            graph = dock_agent.build_dock_graph()
+            cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 12}
+            async for event in graph.astream_events(
+                _Command(resume=payload.value), version="v2", config=cfg
+            ):
+                evt = dock_agent._translate_event(event)
+                if evt is None:
+                    continue
+                frame = _dock_event_to_sse(evt)
+                if frame:
+                    yield frame
+            yield _sse({"event": "done"})
+        except Exception as exc:  # noqa: BLE001 boundary
+            trace_id = uuid4().hex
+            log.error(
+                "ask_resume.failed",
+                trace_id=trace_id,
+                error=redact_exception_text(str(exc)),
+                kind=type(exc).__name__,
+            )
+            envelope = _error_envelope(exc, trace_id)
+            yield _sse({"event": "error", **envelope})
+            yield _sse({"event": "done"})
+        finally:
+            dock_tools.reset_dock_context(tokens)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+def _owns_dock_thread(*, thread_id: str, user_id: UUID) -> bool:
+    """Check the auth'd user owns this dock thread (IDOR guard for HITL).
+
+    Accepts the four thread shapes harness/checkpointer.py produces:
+      ``ask_vantage:{user_id}``
+      ``resume_studio:{user_id}:{root_id}``
+      ``build_resume:{user_id}:{session_id}``
+      ``mock:{session_id}``           — verified at /mock/resume already
+    """
+    if not isinstance(thread_id, str) or ":" not in thread_id:
+        return False
+    head, _, tail = thread_id.partition(":")
+    if head == "mock":
+        # mock threads carry their owner in the LangGraph state; the dock
+        # never resumes them via /ask/resume (use /mock/resume instead).
+        return False
+    if head == "ask_vantage":
+        return tail == str(user_id)
+    if head in {"resume_studio", "build_resume"}:
+        # tail is ``{user_id}:{...}``
+        embedded = tail.split(":", 1)[0]
+        return embedded == str(user_id)
+    return False
 
 
 # ───────────────────────────────────────────────────────────────────────

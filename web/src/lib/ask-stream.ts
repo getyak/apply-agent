@@ -98,12 +98,62 @@ export interface Artifact {
   next_actions?: ArtifactAction[];
 }
 
+// Inline-HITL frames (P1-C) — emitted when dock_agent hits
+// LangGraph's interrupt(). The dock collects the user's decision and
+// POSTs it to /api/ask/resume with resume_token. The UI render layer
+// for these ships in a separate PR; the protocol is stable now so
+// agents can start emitting them.
+export interface AskUserFrame {
+  kind: "ask_user";
+  question: string;
+  chips?: string[];
+  free_form?: boolean;
+  resume_token: string;
+}
+export interface DiffFrame {
+  kind: "diff";
+  before: unknown;
+  after: unknown;
+  resume_token: string;
+}
+export interface ApprovalFrame {
+  kind: "approval";
+  action: string;
+  payload: unknown;
+  resume_token: string;
+}
+
 type StreamFrame =
   | { kind: "text"; delta: string }
   | { kind: "task_graph"; graph: TaskGraph }
-  | { kind: "agent_start"; agent: string; label: string }
-  | { kind: "agent_done"; agent: string; statusText: string }
-  | { kind: "agent_failed"; agent: string; statusText: string }
+  // Step 1 — italic "thought-aloud" chip the dock_agent emits immediately
+  // before each execution tool. One short user-facing sentence; no CoT.
+  | { kind: "narrator"; text: string }
+  // Step 3 — collapsible tool console row. One per finished execution
+  // tool (system tools like propose_plan / recall_* are hidden upstream).
+  // The row shows tool + 1-line summary + duration; expanded view shows
+  // the full result (the dock derives the result from the matching
+  // `artifact` / `result` frame that arrives in the same tick).
+  | {
+      kind: "tool_trace";
+      tool: string;
+      agent: string;
+      action: string;
+      status: "ok" | "error";
+      summary: string;
+      plan_step?: string;
+    }
+  // Step 4 — `plan_step` is optional (only present when the dock_agent
+  // path is on AND the model called a plan-aligned tool). Older legacy
+  // frames without it just don't highlight a plan row.
+  | { kind: "agent_start"; agent: string; label: string; plan_step?: string }
+  | {
+      kind: "agent_done";
+      agent: string;
+      statusText: string;
+      plan_step?: string;
+    }
+  | { kind: "agent_failed"; agent: string; statusText: string; plan_step?: string }
   | {
       kind: "result";
       title: string;
@@ -112,6 +162,20 @@ type StreamFrame =
       route?: string;
     }
   | { kind: "artifact"; artifact: Artifact }
+  // Step 5 — in-flight artifact snapshot. The dock merges by artifact_id;
+  // a `kind: "artifact"` frame later supersedes the partial.
+  | {
+      kind: "partial_artifact";
+      artifact_id: string;
+      artifact_kind: string;
+      title?: string;
+      sub?: string;
+      progress?: number;
+      payload?: unknown;
+    }
+  | AskUserFrame
+  | DiffFrame
+  | ApprovalFrame
   | { kind: "done" }
   // SSE4 (round-9): `code` and `trace_id` come from the Python global
   // exception envelope (round-5 API1/API2) and are forwarded by the
@@ -213,16 +277,33 @@ export interface SendAskOptions {
 export interface AskStreamCallbacks {
   // Streaming text delta for the current assistant turn.
   onAssistantDelta: (delta: string) => void;
+  // Step 1 — italic "thought-aloud" chip. Fires once before each execution
+  // tool. Optional: if the caller doesn't render narrator chips we just
+  // drop the frame (no behaviour regression).
+  onNarrator?: (text: string) => void;
+  // Step 3 — collapsible "tool console" row. Optional. Drops silently
+  // when the caller doesn't consume it.
+  onToolTrace?: (frame: {
+    tool: string;
+    agent: string;
+    action: string;
+    status: "ok" | "error";
+    summary: string;
+    planStep?: string;
+  }) => void;
   // Coordinator's plan for the current turn. Fires once, before any
   // agent_start. The dock renders it as a task-graph card so users see
   // *what's about to happen* instead of waiting for opaque agent spinners.
   // For backwards compatibility callers may omit this — runAskStream
   // silently swallows task_graph frames when no callback is provided.
   onTaskGraph?: (graph: TaskGraph) => void;
-  // Agent task card lifecycle.
-  onAgentStart: (agent: string, label: string) => void;
-  onAgentDone: (agent: string, statusText: string) => void;
-  onAgentFailed: (agent: string, statusText: string) => void;
+  // Agent task card lifecycle. Step 4 added the optional `planStep` arg so
+  // the dock can highlight the matching task-graph row deterministically
+  // (the dock_agent path stamps it on the wire). Callers that don't want
+  // to use it just ignore the second/third positional.
+  onAgentStart: (agent: string, label: string, planStep?: string) => void;
+  onAgentDone: (agent: string, statusText: string, planStep?: string) => void;
+  onAgentFailed: (agent: string, statusText: string, planStep?: string) => void;
   // Final result card. `route` is pre-validated as same-origin relative;
   // the caller decides whether to render a button that navigates there.
   onResult: (result: {
@@ -237,6 +318,26 @@ export interface AskStreamCallbacks {
   // the caller (e.g. Resume Studio's local callback flow) we silently
   // drop the frame, just like task_graph.
   onArtifact?: (artifact: Artifact) => void;
+  // Step 5 — in-progress snapshot of an artifact. Optional. The dock
+  // merges multiple snapshots into one live card by artifact_id; the
+  // final `onArtifact` then supersedes it. Callers that don't render
+  // partials drop the frame silently.
+  onPartialArtifact?: (frame: {
+    artifact_id: string;
+    artifact_kind: string;
+    title?: string;
+    sub?: string;
+    progress?: number;
+    payload?: unknown;
+  }) => void;
+  // Inline-HITL callbacks (P1-C, optional). When the agent hits
+  // LangGraph's interrupt(), the dock surfaces one of these instead of
+  // navigating away. Callers that don't implement them drop the frame —
+  // forward compatibility for clients that haven't shipped the dock UI
+  // changes yet.
+  onAskUser?: (frame: AskUserFrame) => void;
+  onDiff?: (frame: DiffFrame) => void;
+  onApproval?: (frame: ApprovalFrame) => void;
   // Stream terminated normally.
   onDone: () => void;
   // Stream failed mid-flight. `kind` lets the caller distinguish a clean
@@ -286,6 +387,24 @@ export async function runAskStream({
       case "text":
         cb.onAssistantDelta(frame.delta);
         return "continue";
+      case "narrator":
+        // Drop silently for callers that haven't opted in. Resume Studio's
+        // local-callback flow doesn't render narrators yet; dropping keeps
+        // the contract additive (same shape as task_graph above).
+        if (cb.onNarrator) cb.onNarrator(frame.text);
+        return "continue";
+      case "tool_trace":
+        if (cb.onToolTrace) {
+          cb.onToolTrace({
+            tool: frame.tool,
+            agent: frame.agent,
+            action: frame.action,
+            status: frame.status,
+            summary: frame.summary,
+            planStep: frame.plan_step,
+          });
+        }
+        return "continue";
       case "task_graph":
         // Silently drop if the caller didn't opt in. Resume Studio's
         // local-callback flow doesn't show graphs yet; dropping keeps
@@ -293,13 +412,13 @@ export async function runAskStream({
         if (cb.onTaskGraph) cb.onTaskGraph(frame.graph);
         return "continue";
       case "agent_start":
-        cb.onAgentStart(frame.agent, frame.label);
+        cb.onAgentStart(frame.agent, frame.label, frame.plan_step);
         return "continue";
       case "agent_done":
-        cb.onAgentDone(frame.agent, frame.statusText);
+        cb.onAgentDone(frame.agent, frame.statusText, frame.plan_step);
         return "continue";
       case "agent_failed":
-        cb.onAgentFailed(frame.agent, frame.statusText);
+        cb.onAgentFailed(frame.agent, frame.statusText, frame.plan_step);
         return "continue";
       case "result":
         cb.onResult({
@@ -308,6 +427,18 @@ export async function runAskStream({
           action: frame.action,
           route: frame.route && isSafeRoute(frame.route) ? frame.route : undefined,
         });
+        return "continue";
+      case "partial_artifact":
+        if (cb.onPartialArtifact) {
+          cb.onPartialArtifact({
+            artifact_id: frame.artifact_id,
+            artifact_kind: frame.artifact_kind,
+            title: frame.title,
+            sub: frame.sub,
+            progress: frame.progress,
+            payload: frame.payload,
+          });
+        }
         return "continue";
       case "artifact":
         if (cb.onArtifact) {
@@ -328,6 +459,15 @@ export async function runAskStream({
           };
           cb.onArtifact(safe);
         }
+        return "continue";
+      case "ask_user":
+        if (cb.onAskUser) cb.onAskUser(frame);
+        return "continue";
+      case "diff":
+        if (cb.onDiff) cb.onDiff(frame);
+        return "continue";
+      case "approval":
+        if (cb.onApproval) cb.onApproval(frame);
         return "continue";
       case "done":
         cb.onDone();
@@ -458,6 +598,123 @@ export async function runAskStream({
   }
 }
 
+// ─── Inline-HITL submit (P1-C) ────────────────────────────────────────
+//
+// Companion to runAskStream — POSTs the user's HITL decision to
+// /api/ask/resume and streams the continuation back via the same
+// callback contract. The dock invokes this when the user clicks
+// Approve / picks a chip / submits a free-form HITL answer.
+export interface SubmitAskResumeArgs {
+  resumeToken: string;
+  value: string | string[] | Record<string, unknown>;
+  abortController: AbortController;
+  callbacks: AskStreamCallbacks;
+}
+
+export async function submitAskResume({
+  resumeToken,
+  value,
+  abortController,
+  callbacks,
+}: SubmitAskResumeArgs): Promise<void> {
+  const cb = callbacks;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  try {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/api/ask/resume`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/x-ndjson",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ resume_token: resumeToken, value }),
+      signal: abortController.signal,
+    });
+    if (!res.ok || !res.body) {
+      const payload = await res
+        .json()
+        .catch(() => null as unknown as AskErrorPayload | null);
+      const hint =
+        payload && typeof payload === "object" && "hint" in payload
+          ? (payload as AskErrorPayload).hint
+          : undefined;
+      cb.onError(
+        res.status === 403 ? "forbidden" : "frame",
+        hint ?? `/api/ask/resume returned ${res.status}`,
+      );
+      return;
+    }
+    reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value: chunk, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(chunk, { stream: true });
+      let nl = buf.indexOf("\n");
+      while (nl >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        nl = buf.indexOf("\n");
+        if (!line.trim()) continue;
+        let frame: StreamFrame | null = null;
+        try {
+          frame = JSON.parse(line) as StreamFrame;
+        } catch {
+          frame = null;
+        }
+        if (!frame) continue;
+        // Reuse the same per-kind callbacks; we just inline a minimal
+        // dispatch to avoid duplicating handleFrame.
+        switch (frame.kind) {
+          case "text":
+            cb.onAssistantDelta(frame.delta);
+            break;
+          case "agent_start":
+            cb.onAgentStart(frame.agent, frame.label);
+            break;
+          case "agent_done":
+            cb.onAgentDone(frame.agent, frame.statusText);
+            break;
+          case "agent_failed":
+            cb.onAgentFailed(frame.agent, frame.statusText);
+            break;
+          case "artifact":
+            if (cb.onArtifact) cb.onArtifact(frame.artifact);
+            break;
+          case "ask_user":
+            if (cb.onAskUser) cb.onAskUser(frame);
+            break;
+          case "diff":
+            if (cb.onDiff) cb.onDiff(frame);
+            break;
+          case "approval":
+            if (cb.onApproval) cb.onApproval(frame);
+            break;
+          case "done":
+            cb.onDone();
+            return;
+          case "error":
+            cb.onError("frame", frame.message, {
+              ...(frame.code !== undefined ? { code: frame.code } : {}),
+              ...(frame.trace_id !== undefined ? { trace_id: frame.trace_id } : {}),
+            });
+            return;
+        }
+      }
+    }
+  } catch (err) {
+    const aborted = err instanceof DOMException && err.name === "AbortError";
+    if (!aborted) {
+      const msg = err instanceof Error ? err.message : String(err);
+      cb.onError("disconnect", `Lost connection during HITL resume. ${msg}`);
+    }
+  } finally {
+    if (reader) reader.cancel().catch(() => {});
+  }
+}
+
 // ─── Dock wrapper ──────────────────────────────────────────────────────
 
 export async function sendAsk(
@@ -551,6 +808,46 @@ export async function sendAsk(
     abortController: controller,
     callbacks: {
       onAssistantDelta: updateAssistant,
+      onNarrator: (text) => {
+        // Each narrator chip lives as its own message so it interleaves
+        // naturally with task_graph / agents / artifact in the dock log.
+        // We don't try to fold consecutive narrators into one bubble —
+        // each one corresponds to a discrete tool invocation, and seeing
+        // the rhythm of "narrate → spinner → result → narrate → ..." is
+        // the whole point of Step 1.
+        if (!text || !text.trim()) return;
+        dock.pushMessage({ kind: "narrator", text: text.trim() });
+      },
+      onPartialArtifact: (frame) => {
+        // Step 5 — live snapshot. The dock store merges by artifact_id;
+        // multiple deltas for the same artifact mutate the same row so
+        // the user sees the bullet list / cover paragraph filling in.
+        if (!frame.artifact_id) return;
+        dock.upsertPartialArtifact({
+          artifactId: frame.artifact_id,
+          artifactKind: frame.artifact_kind,
+          title: frame.title,
+          sub: frame.sub,
+          progress: frame.progress,
+          payload: frame.payload,
+        });
+      },
+      onToolTrace: (frame) => {
+        // Step 3 — append a console row. The dock renders these
+        // collapsed by default; click to expand. We don't try to merge
+        // back into the agent row because the user mental model is
+        // "trace = what the LLM did", "agent row = which subsystem ran" —
+        // those are two different lenses on the same execution.
+        dock.pushMessage({
+          kind: "tool_trace",
+          toolName: frame.tool,
+          toolAgent: frame.agent,
+          toolAction: frame.action,
+          toolStatus: frame.status,
+          toolSummary: frame.summary,
+          toolStartedAt: Date.now(),
+        });
+      },
       onTaskGraph: (graph) => {
         // Plan arrives once per turn, before any agent_start. Render it
         // above the agent group so users see the *intent* of the run
@@ -562,7 +859,13 @@ export async function sendAsk(
           requires_review: p.requires_review,
           status: "pending" as const,
         }));
-        steps.forEach((s) => stepReviewMap.set(s.agent, !!s.requires_review));
+        // Step 4: index by step id AND agent so onAgentDone can resolve the
+        // review flag either way (dock_agent path has the id; legacy path
+        // still falls back to agent name).
+        steps.forEach((s) => {
+          stepReviewMap.set(s.agent, !!s.requires_review);
+          stepReviewMap.set(s.step, !!s.requires_review);
+        });
         taskGraphMsgId = dock.pushMessage({
           kind: "task_graph",
           taskId: graph.task_id,
@@ -570,7 +873,7 @@ export async function sendAsk(
           steps,
         });
       },
-      onAgentStart: (agent, label) => {
+      onAgentStart: (agent, label, planStep) => {
         const id = `ev-${agent}-${Date.now()}-${groupAgentIds.length}`;
         const ev: AgentEvent = {
           id,
@@ -582,14 +885,22 @@ export async function sendAsk(
         };
         dock.updateAgentEvent(ev);
         groupAgentIds.push(id);
-        if (taskGraphMsgId) dock.updateTaskGraphStep(taskGraphMsgId, agent, "running");
+        // Step 4: prefer deterministic step-id when present (dock_agent
+        // path); fall back to agent-name matching for legacy router path.
+        if (taskGraphMsgId) {
+          if (planStep) {
+            dock.updateTaskGraphStepById(taskGraphMsgId, planStep, "running");
+          } else {
+            dock.updateTaskGraphStep(taskGraphMsgId, agent, "running");
+          }
+        }
         useDock.setState((s) => ({
           messages: s.messages.map((m) =>
             m.id === agentGroupMsgId ? { ...m, agents: [...groupAgentIds] } : m,
           ),
         }));
       },
-      onAgentDone: (agent, statusText) => {
+      onAgentDone: (agent, statusText, planStep) => {
         const events = useDock.getState().agentEvents;
         const target = groupAgentIds
           .map((id) => events[id])
@@ -599,12 +910,25 @@ export async function sendAsk(
         if (target) dock.updateAgentEvent({ ...target, state: "done", statusText });
         if (taskGraphMsgId) {
           // HITL steps go to "review" — the user still has to approve.
-          // Non-HITL steps go straight to "done".
-          const next = stepReviewMap.get(agent) ? "review" : "done";
-          dock.updateTaskGraphStep(taskGraphMsgId, agent, next);
+          // Non-HITL steps go straight to "done". When we know the
+          // planStep we look the review flag up by id; the legacy fallback
+          // still uses the agent map.
+          if (planStep) {
+            const next = stepReviewMap.has(planStep)
+              ? stepReviewMap.get(planStep)
+                ? "review"
+                : "done"
+              : stepReviewMap.get(agent)
+                ? "review"
+                : "done";
+            dock.updateTaskGraphStepById(taskGraphMsgId, planStep, next);
+          } else {
+            const next = stepReviewMap.get(agent) ? "review" : "done";
+            dock.updateTaskGraphStep(taskGraphMsgId, agent, next);
+          }
         }
       },
-      onAgentFailed: (agent, statusText) => {
+      onAgentFailed: (agent, statusText, planStep) => {
         const events = useDock.getState().agentEvents;
         const target = groupAgentIds
           .map((id) => events[id])
@@ -612,7 +936,13 @@ export async function sendAsk(
           .reverse()
           .find((e) => e.agent === agent && e.state === "running");
         if (target) dock.updateAgentEvent({ ...target, state: "failed", statusText });
-        if (taskGraphMsgId) dock.updateTaskGraphStep(taskGraphMsgId, agent, "failed");
+        if (taskGraphMsgId) {
+          if (planStep) {
+            dock.updateTaskGraphStepById(taskGraphMsgId, planStep, "failed");
+          } else {
+            dock.updateTaskGraphStep(taskGraphMsgId, agent, "failed");
+          }
+        }
       },
       onResult: ({ title, sub, action, route }) => {
         dock.pushMessage({
@@ -651,6 +981,44 @@ export async function sendAsk(
               label: n.label,
               route: n.route,
             })),
+          },
+        });
+      },
+      onAskUser: (frame) => {
+        // Inline HITL: render a chip/free-form bubble. The user's selection
+        // calls submitAskResume which streams the continuation back through
+        // the SAME callback set, so subsequent text / artifact / done frames
+        // land in this same assistant turn.
+        dock.pushMessage({
+          kind: "hitl_ask_user",
+          hitlStatus: "pending",
+          resumeToken: frame.resume_token,
+          hitlAskUser: {
+            question: frame.question,
+            chips: frame.chips,
+            freeForm: frame.free_form !== false,
+          },
+        });
+      },
+      onDiff: (frame) => {
+        dock.pushMessage({
+          kind: "hitl_diff",
+          hitlStatus: "pending",
+          resumeToken: frame.resume_token,
+          hitlDiff: {
+            before: frame.before,
+            after: frame.after,
+          },
+        });
+      },
+      onApproval: (frame) => {
+        dock.pushMessage({
+          kind: "hitl_approval",
+          hitlStatus: "pending",
+          resumeToken: frame.resume_token,
+          hitlApproval: {
+            action: frame.action,
+            payload: frame.payload,
           },
         });
       },
@@ -705,4 +1073,126 @@ export async function sendAsk(
       },
     },
   });
+}
+
+// ─── Dock-level HITL responder ────────────────────────────────────────
+//
+// One-call helper the dock-hitl-card component invokes when the user
+// clicks Approve / picks a chip / submits free-form text. Drives the
+// store transition (pending → submitting → answered) and streams the
+// LangGraph continuation back into the live assistant turn via the
+// existing dock store. The dock UI doesn't need to know about
+// AbortController or callbacks — this is the only function it imports.
+export async function respondToHitl(
+  messageId: string,
+  resumeToken: string,
+  value: string | string[] | Record<string, unknown>,
+  answerSummary?: string,
+): Promise<void> {
+  const dock = useDock.getState();
+  dock.setHitlStatus(messageId, "submitting", answerSummary);
+
+  // Re-use the dock-owned controller so a Cancel cancels the whole
+  // resumed stream, not just the original turn.
+  const controller = dock.abortController ?? new AbortController();
+  useDock.setState({
+    abortController: controller,
+    streaming: true,
+  });
+
+  // Bubble for the new assistant turn that lands AFTER the HITL.
+  const assistantMsgId = dock.pushMessage({ kind: "assistant", text: "" });
+  let assistantBuf = "";
+
+  await submitAskResume({
+    resumeToken,
+    value,
+    abortController: controller,
+    callbacks: {
+      onAssistantDelta: (delta) => {
+        assistantBuf += delta;
+        useDock.setState((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === assistantMsgId ? { ...m, text: assistantBuf } : m,
+          ),
+        }));
+      },
+      onAgentStart: () => {},
+      onAgentDone: () => {},
+      onAgentFailed: () => {},
+      onResult: ({ title, sub, action }) => {
+        dock.pushMessage({ kind: "result", title, sub, action });
+      },
+      onArtifact: (a) => {
+        dock.pushMessage({
+          kind: "artifact",
+          artifact: {
+            artifactType: a.artifact_type,
+            artifactId: a.id,
+            artifactTitle: a.title,
+            artifactSub: a.sub,
+            confidence: a.confidence,
+            needsUserReview: a.needs_user_review,
+            sourceEvidence: a.source_evidence?.map((e) => ({
+              label: e.label,
+              route: e.route,
+            })),
+            nextActions: a.next_actions?.map((n) => ({
+              kind: n.kind,
+              label: n.label,
+              route: n.route,
+            })),
+          },
+        });
+      },
+      onAskUser: (frame) => {
+        // The continuation may surface ANOTHER HITL (e.g. tailor → diff
+        // → approval). Render it the same way the main stream does.
+        dock.pushMessage({
+          kind: "hitl_ask_user",
+          hitlStatus: "pending",
+          resumeToken: frame.resume_token,
+          hitlAskUser: {
+            question: frame.question,
+            chips: frame.chips,
+            freeForm: frame.free_form !== false,
+          },
+        });
+      },
+      onDiff: (frame) => {
+        dock.pushMessage({
+          kind: "hitl_diff",
+          hitlStatus: "pending",
+          resumeToken: frame.resume_token,
+          hitlDiff: { before: frame.before, after: frame.after },
+        });
+      },
+      onApproval: (frame) => {
+        dock.pushMessage({
+          kind: "hitl_approval",
+          hitlStatus: "pending",
+          resumeToken: frame.resume_token,
+          hitlApproval: { action: frame.action, payload: frame.payload },
+        });
+      },
+      onDone: () => {
+        dock.setHitlStatus(messageId, "answered");
+        useDock.setState({ streaming: false, abortController: null });
+      },
+      onError: (_kind, message) => {
+        dock.setHitlStatus(messageId, "answered");
+        useDock.setState({ streaming: false, abortController: null });
+        assistantBuf += `\n\n_${message}_`;
+        useDock.setState((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === assistantMsgId ? { ...m, text: assistantBuf } : m,
+          ),
+        }));
+      },
+    },
+  });
+}
+
+export function cancelHitl(messageId: string): void {
+  useDock.getState().setHitlStatus(messageId, "cancelled");
 }

@@ -257,9 +257,92 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
           split = buf.indexOf("\n\n");
           const payload = parseSseFrame(frame);
           if (!payload) continue;
-          // First `intent` frame is our cue to synthesise the plan.
-          // We do this BEFORE toNdjson so the plan card lands above the
-          // first agent_start row in the dock.
+          // Real plan from the Python dock_agent (P0-B): it emits
+          // `event: "task_graph"` carrying a plan dict shaped just like
+          // PlanForIntent's output. When we see it, we forward it
+          // verbatim and disable the synthesis fallback below — the
+          // synthesised plan would otherwise overwrite the real one on
+          // the next `intent` frame.
+          if (payload.event === "task_graph") {
+            const graph = payload.graph as SynthGraph | undefined;
+            if (graph && Array.isArray(graph.plan)) {
+              graphEmitted = true;
+              await out.write(
+                JSON.stringify({
+                  kind: "task_graph",
+                  graph: {
+                    task_id:
+                      typeof graph.task_id === "string"
+                        ? graph.task_id
+                        : `dock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    user_goal:
+                      typeof graph.user_goal === "string"
+                        ? previewText(graph.user_goal, 100)
+                        : previewText(prompt, 100),
+                    plan: graph.plan,
+                  },
+                }) + "\n",
+              );
+              continue;
+            }
+          }
+          // Forward the dock_agent's streaming text deltas as `text`
+          // NDJSON frames so existing clients (which already render
+          // `text`) get them for free without us having to ship a new
+          // frame kind. The legacy `intent` → "Routing to X" line still
+          // fires below when the legacy path is on; in the dock-agent
+          // path the intent event is absent, so the assistant prose is
+          // the only `text` the dock sees.
+          if (payload.event === "delta") {
+            const text =
+              typeof payload.text === "string" ? (payload.text as string) : "";
+            if (text) {
+              await out.write(JSON.stringify({ kind: "text", delta: text }) + "\n");
+              assistantBuf += text;
+            }
+            continue;
+          }
+          // Step 1 — Narrator chip. dock_agent emits `event: "narrator"`
+          // when the LLM calls the `narrate(thought)` tool right before an
+          // execution tool. We forward it as a `narrator` NDJSON frame.
+          // Clients that don't know about the kind drop it silently; the
+          // dock UI renders it as an italic "thought-aloud" line.
+          if (payload.event === "narrator") {
+            const line = narratorNdjson(payload.text);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          // Step 3 — Tool console line. Emitted alongside the existing
+          // result event for every visible execution tool. The dock
+          // renders it as a one-line collapsible "console" row.
+          if (payload.event === "tool_trace") {
+            const line = toolTraceNdjson(payload);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          // Step 5 — Partial artifact preview. In-flight snapshots that
+          // the dock merges into a single live card by artifact_id.
+          if (payload.event === "partial_artifact") {
+            const line = partialArtifactNdjson(payload);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          // HITL surface (P1-C): dock_agent emits `event: "hitl"` with
+          // the LangGraph interrupt value. We forward it as an
+          // ask_user/diff/approval NDJSON frame depending on the
+          // interrupt payload shape. The dock UI work to render these
+          // lives in a separate PR; we ship the protocol now so the
+          // wire format is stable.
+          if (payload.event === "hitl") {
+            const hitlLine = toHitlNdjson(payload.value, thread_id);
+            if (hitlLine) {
+              await out.write(hitlLine + "\n");
+            }
+            continue;
+          }
+          // First `intent` frame is our cue to synthesise the plan
+          // (legacy path only — when graphEmitted is already true,
+          // we got the real plan above and skip synthesis).
           if (!graphEmitted && payload.event === "intent") {
             const intent = (payload.intent as string) || "";
             const graph = planForIntent(intent, prompt);
@@ -419,11 +502,16 @@ function toNdjson(
     const agent = (payload.agent as string) || "coordinator";
     if (seenAgents.has(agent)) return [];
     seenAgents.add(agent);
+    // Step 4 — pass plan_step (when the Python translator stamped one) so
+    // the dock can tie this agent row to the corresponding plan row.
+    const planStep =
+      typeof payload.plan_step === "string" ? (payload.plan_step as string) : "";
     return [
       JSON.stringify({
         kind: "agent_start",
         agent,
         label: `${AGENT_HUMAN_LABEL[agent] ?? agent.toUpperCase()} · thinking`,
+        ...(planStep ? { plan_step: planStep } : {}),
       }),
     ];
   }
@@ -437,12 +525,15 @@ function toNdjson(
   if (event === "result") {
     const agent = (payload.agent as string) || "coordinator";
     const out: string[] = [];
+    const planStep =
+      typeof payload.plan_step === "string" ? (payload.plan_step as string) : "";
     if (seenAgents.has(agent)) {
       out.push(
         JSON.stringify({
           kind: "agent_done",
           agent,
           statusText: "done",
+          ...(planStep ? { plan_step: planStep } : {}),
         }),
       );
     }
@@ -782,5 +873,293 @@ function planForIntent(intent: string, prompt: string): SynthGraph | null {
     plan,
   };
 }
+
+// ─── HITL frame coercion (P1-C) ───────────────────────────────────────
+//
+// The Python dock_agent emits `event: "hitl"` with the value LangGraph's
+// `interrupt()` was called with. We translate it to one of three NDJSON
+// frame kinds the dock UI knows how to render. Shape detection is
+// generous on purpose — agents are expected to evolve the payload, and
+// we don't want to drop frames the dock could still display as a
+// fallback approval card.
+//
+// Wire shapes the agents emit today:
+//   { kind: "ask_user", question, chips?, free_form?, resume_token? }
+//   { kind: "diff",     before, after, resume_token? }
+//   { kind: "approval", action, payload, resume_token? }
+//
+// resume_token is auto-filled from the thread_id when the agent omitted
+// it (the round-trip into POST /api/ask/resume still works since
+// /ask/resume parses "{thread_id}#…" tokens).
+
+// Step 1 — Narrator chip coercion.
+//
+// dock_agent emits the model's pre-tool thought via `event: "narrator"`.
+// We wrap it in an NDJSON `narrator` frame the dock UI renders as a small
+// italic chip. Whitespace-only and oversized inputs are filtered/clamped
+// here so the gateway is the single source of truth for the chip rules —
+// the Python tool also caps at 160 chars but cross-protocol drift is the
+// kind of thing we want to test on this side too.
+//
+// Returns null for non-strings and empty payloads (the route caller
+// should not write a frame in that case).
+export function narratorNdjson(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const capped = trimmed.length > 160 ? trimmed.slice(0, 160) : trimmed;
+  return JSON.stringify({ kind: "narrator", text: capped });
+}
+
+// Step 3 — Tool console line coercion.
+//
+// dock_agent emits a `tool_trace` SSE event alongside the existing
+// result/error event whenever a non-system execution tool finishes. The
+// dock renders it as one collapsible row. We translate the upstream SSE
+// payload into a stable NDJSON shape:
+//
+//   { kind: "tool_trace", tool, agent, action, status, summary }
+//
+// Returns null if the payload is missing the minimal fields needed to
+// render a row (so the gateway never writes a half-formed frame).
+// Step 5 — Partial artifact stream coercion.
+//
+// Long-running tools emit incremental snapshots via the dock_agent's
+// adispatch_custom_event("partial_artifact", ...) helper. The Python SSE
+// translator forwards them as `event: partial_artifact`. We coerce into
+// an NDJSON frame the dock UI merges by `artifact_id`.
+//
+// Returns null when artifact_id is missing — the dock requires it as the
+// merge key, so a half-formed snapshot is unusable.
+export function partialArtifactNdjson(
+  payload: Record<string, unknown>,
+): string | null {
+  const id =
+    typeof payload.artifact_id === "string"
+      ? (payload.artifact_id as string)
+      : "";
+  if (!id) return null;
+  const kind =
+    typeof payload.kind === "string" ? (payload.kind as string) : "snapshot";
+  const out: Record<string, unknown> = {
+    kind: "partial_artifact",
+    artifact_id: id,
+    artifact_kind: kind,
+  };
+  if (typeof payload.title === "string") out.title = payload.title;
+  if (typeof payload.sub === "string") out.sub = payload.sub;
+  if (typeof payload.progress === "number") {
+    // Clamp to [0,1] defensively in case the agent sends a percentage.
+    const p = payload.progress as number;
+    out.progress = p > 1 ? Math.min(p / 100, 1) : Math.max(0, p);
+  }
+  if (payload.payload !== undefined) out.payload = payload.payload;
+  return JSON.stringify(out);
+}
+
+export function toolTraceNdjson(payload: Record<string, unknown>): string | null {
+  const tool = typeof payload.tool === "string" ? (payload.tool as string) : "";
+  if (!tool) return null;
+  const agent = typeof payload.agent === "string" ? (payload.agent as string) : "coordinator";
+  const action = typeof payload.action === "string" ? (payload.action as string) : "";
+  const rawStatus = typeof payload.status === "string" ? (payload.status as string) : "ok";
+  const status: "ok" | "error" = rawStatus === "error" ? "error" : "ok";
+  const summary =
+    typeof payload.summary === "string" ? (payload.summary as string).slice(0, 160) : "";
+  // Step 4 — pass the plan_step id through verbatim so the dock can
+  // highlight the matching row in the task graph card. Only forward
+  // strings; anything else is silently dropped.
+  const planStep =
+    typeof payload.plan_step === "string" ? (payload.plan_step as string) : "";
+  return JSON.stringify({
+    kind: "tool_trace",
+    tool,
+    agent,
+    action,
+    status,
+    summary,
+    ...(planStep ? { plan_step: planStep } : {}),
+  });
+}
+
+export function toHitlNdjson(value: unknown, threadId: string): string | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const kindHint = typeof v.kind === "string" ? (v.kind as string).toLowerCase() : "";
+  const resumeToken =
+    typeof v.resume_token === "string"
+      ? (v.resume_token as string)
+      : `${threadId}#hitl-${Date.now()}`;
+
+  if (kindHint === "ask_user" || typeof v.question === "string") {
+    const chips = Array.isArray(v.chips)
+      ? (v.chips as unknown[])
+          .filter((c): c is string => typeof c === "string")
+          .slice(0, 8)
+      : undefined;
+    return JSON.stringify({
+      kind: "ask_user",
+      question:
+        typeof v.question === "string" ? (v.question as string) : "Vantage needs your input",
+      chips,
+      free_form: v.free_form !== false,
+      resume_token: resumeToken,
+    });
+  }
+
+  if (kindHint === "diff" || ("before" in v && "after" in v)) {
+    return JSON.stringify({
+      kind: "diff",
+      before: v.before ?? null,
+      after: v.after ?? null,
+      resume_token: resumeToken,
+    });
+  }
+
+  // Default: approval card with whatever metadata the agent supplied.
+  return JSON.stringify({
+    kind: "approval",
+    action: typeof v.action === "string" ? (v.action as string) : "approve",
+    payload: v.payload ?? v,
+    resume_token: resumeToken,
+  });
+}
+
+// ─── POST /api/ask/resume — HITL decision (P1-C) ──────────────────────
+//
+// Companion to /api/ask/stream's hitl frames. The dock collects the user
+// decision and POSTs it here; we forward to the Python agent host's
+// /ask/resume which uses LangGraph's Command(resume=...). We stream the
+// SSE response back as NDJSON using the same toNdjson map.
+
+const AskResumeBody = z.object({
+  resume_token: z.string().min(1).max(256),
+  value: z.union([
+    z.string().min(1).max(10_000),
+    z.array(z.string().min(1).max(2_000)).max(50),
+    z.record(z.string(), z.unknown()),
+  ]),
+});
+
+routes.use("/resume", authMiddleware);
+routes.post("/resume", validateBody(AskResumeBody), async (c) => {
+  const { resume_token, value } = c.get("validatedBody") as z.infer<
+    typeof AskResumeBody
+  >;
+  const userId = c.get("userId") as string;
+  const requestId = c.get("requestId");
+  const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/ask/resume`;
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Relay-User-Id": userId,
+        ...(requestId ? { "X-Request-Id": requestId } : {}),
+      },
+      body: JSON.stringify({ resume_token, value }),
+    });
+  } catch (err) {
+    return c.json(
+      {
+        error: "agent_unreachable",
+        code: "AGENT_UNREACHABLE",
+        hint: "Vantage's reasoning engine is offline. Try again in a moment.",
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      503,
+    );
+  }
+  if (!upstream.ok || !upstream.body) {
+    const detail = await upstream.text().catch(() => "");
+    return c.json(
+      {
+        error: "agent_failed",
+        code: "AGENT_FAILED",
+        hint: "Vantage's reasoning engine returned an error.",
+        status: upstream.status,
+        detail,
+      },
+      upstream.status === 403 ? 403 : 502,
+    );
+  }
+
+  return stream(c, async (out) => {
+    c.header("Content-Type", "application/x-ndjson");
+    c.header("Cache-Control", "no-cache, no-transform");
+    c.header("X-Accel-Buffering", "no");
+
+    const reader = upstream.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const seenAgents = new Set<string>();
+    const threadId = resume_token.split("#", 1)[0];
+
+    try {
+      while (true) {
+        const { value: chunk, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(chunk, { stream: true });
+        let split = buf.indexOf("\n\n");
+        while (split >= 0) {
+          const frame = buf.slice(0, split);
+          buf = buf.slice(split + 2);
+          split = buf.indexOf("\n\n");
+          const payload = parseSseFrame(frame);
+          if (!payload) continue;
+          if (payload.event === "delta") {
+            const text =
+              typeof payload.text === "string" ? (payload.text as string) : "";
+            if (text) {
+              await out.write(JSON.stringify({ kind: "text", delta: text }) + "\n");
+            }
+            continue;
+          }
+          // Step 1 — Narrator chip (resume path mirrors /ask/stream).
+          if (payload.event === "narrator") {
+            const line = narratorNdjson(payload.text);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          // Step 3 — Tool console (resume path mirrors /ask/stream).
+          if (payload.event === "tool_trace") {
+            const line = toolTraceNdjson(payload);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          // Step 5 — Partial artifact (resume path mirrors /ask/stream).
+          if (payload.event === "partial_artifact") {
+            const line = partialArtifactNdjson(payload);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          if (payload.event === "hitl") {
+            const line = toHitlNdjson(payload.value, threadId);
+            if (line) await out.write(line + "\n");
+            continue;
+          }
+          for (const line of toNdjson(payload, seenAgents)) {
+            await out.write(line + "\n");
+          }
+        }
+      }
+    } catch (err) {
+      await out.write(
+        JSON.stringify({
+          kind: "error",
+          message: err instanceof Error ? err.message : String(err),
+        }) + "\n",
+      );
+    } finally {
+      try {
+        reader.cancel();
+      } catch {
+        /* already cancelled */
+      }
+    }
+  });
+});
 
 export default routes;

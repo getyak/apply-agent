@@ -42,7 +42,52 @@ export type DockMsgKind =
   | "agents"
   | "result"
   | "task_graph"
-  | "artifact";
+  | "artifact"
+  // Step 1 — italic "thought-aloud" chip fired before each execution tool.
+  // Carries a single short sentence; rendered as a small italic line, no
+  // avatar / bubble chrome. The model is required to emit this via the
+  // narrate() tool so the dock surface always tracks what's about to
+  // happen one beat ahead of the spinner.
+  | "narrator"
+  // Step 3 — collapsible tool console row. One per execution tool.
+  // Default collapsed (1 line: name · summary · status). Expand to see
+  // the rest. System tools (propose_plan / narrate / recall_*) are
+  // filtered out upstream so the console stays signal-only.
+  | "tool_trace"
+  // Step 5 — in-progress artifact snapshot. The dock merges multiple
+  // updates with the same artifactId into one card so users see the
+  // bullets / cover letter / form answers appearing live instead of
+  // waiting for the final tool_end. The eventual `artifact` frame
+  // supersedes the partial.
+  | "partial_artifact"
+  // Inline HITL bubbles (P1-C) — rendered by the dock so the user never
+  // has to leave the conversation to approve / pick / review. Each one
+  // carries a resume_token that submitAskResume POSTs back to
+  // /api/ask/resume; the LangGraph thread picks up where it paused.
+  | "hitl_ask_user"
+  | "hitl_diff"
+  | "hitl_approval";
+
+export type HitlStatus = "pending" | "submitting" | "answered" | "cancelled";
+
+export interface HitlAskUserPayload {
+  question: string;
+  chips?: string[];
+  freeForm: boolean;
+}
+
+export interface HitlDiffPayload {
+  // Free-form on purpose — the agent decides the shape (résumé bullet
+  // diff, JD-vs-profile, weak-points etc.). The render layer formats it.
+  before: unknown;
+  after: unknown;
+  label?: string;
+}
+
+export interface HitlApprovalPayload {
+  action: string;
+  payload: unknown;
+}
 
 // Subset of ask-stream's Artifact that the dock needs to render. We
 // deliberately don't pull the type from ask-stream.ts to keep the store
@@ -107,6 +152,34 @@ export interface DockMessage {
   steps?: TaskGraphMsgStep[];
   // artifact payload — present only when kind === "artifact".
   artifact?: ArtifactPayload;
+  // partial_artifact payload — present only when kind === "partial_artifact".
+  // partialArtifactId is the merge key; we update an existing row instead
+  // of pushing a new one when its id matches.
+  partialArtifactId?: string;
+  partialArtifactKind?: string;
+  partialTitle?: string;
+  partialSub?: string;
+  partialProgress?: number;
+  partialPayload?: unknown;
+  // tool_trace payload — present only when kind === "tool_trace". Mirrors
+  // the SSE payload + adds a client-only `startedAt` for the live-duration
+  // chip; the row freezes when the next tool starts.
+  toolName?: string;
+  toolAgent?: string;
+  toolAction?: string;
+  toolStatus?: "ok" | "error";
+  toolSummary?: string;
+  toolStartedAt?: number;
+  // HITL payload — present only when kind starts with "hitl_". The token
+  // is what /api/ask/resume needs to match the paused LangGraph thread.
+  hitlStatus?: HitlStatus;
+  resumeToken?: string;
+  hitlAskUser?: HitlAskUserPayload;
+  hitlDiff?: HitlDiffPayload;
+  hitlApproval?: HitlApprovalPayload;
+  // Free-form text the user typed into the HITL bubble's input (renders
+  // back into the bubble after answer so the conversation reads cleanly).
+  hitlAnswerSummary?: string;
 }
 
 // One entry in the dock's RECENT rail. Each anchor is a past user prompt
@@ -160,7 +233,29 @@ interface DockStateShape {
     agent: string,
     status: TaskGraphStepStatus,
   ) => void;
+  // Step 4: deterministic step-id-based update for the dock_agent path.
+  // Uses the `step` id stamped by the Python translator instead of inferring
+  // from agent name — covers plans where the same agent appears more than
+  // once. Agent-based update stays for the legacy router-mode path.
+  updateTaskGraphStepById: (
+    messageId: string,
+    stepId: string,
+    status: TaskGraphStepStatus,
+  ) => void;
   updateAgentEvent: (e: AgentEvent) => void;
+  // Step 5: merge-or-push for a partial_artifact snapshot. Matches by
+  // partialArtifactId; if a row with the same id exists in messages, we
+  // patch it in place (so the user sees the live card update); otherwise
+  // we push a new partial_artifact message. Returns the resulting id.
+  upsertPartialArtifact: (snap: {
+    artifactId: string;
+    artifactKind: string;
+    title?: string;
+    sub?: string;
+    progress?: number;
+    payload?: unknown;
+  }) => string;
+  setHitlStatus: (id: string, status: HitlStatus, answerSummary?: string) => void;
   addAttachment: (a: DockAttachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
@@ -274,8 +369,60 @@ export const useDock = create<DockStateShape>((set, get) => ({
         return touched ? { ...m, steps: next } : m;
       }),
     })),
+  updateTaskGraphStepById: (messageId, stepId, status) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.id !== messageId || m.kind !== "task_graph" || !m.steps) return m;
+        let touched = false;
+        const next = m.steps.map((st) => {
+          if (st.step !== stepId) return st;
+          if (st.status === "done" || st.status === "failed") return st;
+          touched = true;
+          return { ...st, status };
+        });
+        return touched ? { ...m, steps: next } : m;
+      }),
+    })),
   updateAgentEvent: (e) =>
     set((s) => ({ agentEvents: { ...s.agentEvents, [e.id]: e } })),
+  upsertPartialArtifact: (snap) => {
+    const state = get();
+    const existing = state.messages.find(
+      (m) => m.kind === "partial_artifact" && m.partialArtifactId === snap.artifactId,
+    );
+    const patch: Partial<DockMessage> = {
+      partialArtifactId: snap.artifactId,
+      partialArtifactKind: snap.artifactKind,
+      partialTitle: snap.title,
+      partialSub: snap.sub,
+      partialProgress: snap.progress,
+      partialPayload: snap.payload,
+    };
+    if (existing) {
+      state.patchMessage(existing.id, patch);
+      return existing.id;
+    }
+    return state.pushMessage({
+      kind: "partial_artifact",
+      ...patch,
+    });
+  },
+  // HITL lifecycle helpers: keep the API narrow so dock.tsx + tests can
+  // unit-test each transition without poking the message array directly.
+  setHitlStatus: (id: string, status: HitlStatus, answerSummary?: string) =>
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.id === id
+          ? {
+              ...m,
+              hitlStatus: status,
+              ...(answerSummary !== undefined
+                ? { hitlAnswerSummary: answerSummary }
+                : {}),
+            }
+          : m,
+      ),
+    })),
   addAttachment: (a) =>
     set((s) => ({ attachments: [...s.attachments.filter((x) => x.id !== a.id), a] })),
   removeAttachment: (id) =>

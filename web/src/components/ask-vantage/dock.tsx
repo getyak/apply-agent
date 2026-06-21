@@ -10,6 +10,11 @@
 // docs/architecture/vantage-ui-mapping.md §3.6.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AUTO_EXPAND_AFTER_MS,
+  formatElapsed,
+  useElapsedMs,
+} from "@/lib/use-elapsed";
 import { usePathname } from "next/navigation";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -26,6 +31,7 @@ import { greetingFor } from "@/lib/dates";
 import { MarkdownMessage } from "@/components/chat/markdown-message";
 import { ReasoningSummary } from "@/components/chat/reasoning-summary";
 import { StreamingCursor } from "@/components/chat/streaming-cursor";
+import { HitlCard } from "@/components/ask-vantage/dock-hitl-card";
 
 // A single chip carries two strings: `display` is the short English line on
 // the card; `prompt` is the verbose instruction we actually send to the
@@ -238,6 +244,23 @@ function AgentCardRow({ id }: { id: string }) {
   // versions force-expanded while running, which produced a wall of
   // mono-spaced metadata under every turn.
   const [open, setOpen] = useState<boolean>(false);
+  // Step 2: hooks must be called before any conditional return so React's
+  // hook-order invariant holds. We resolve the running flag with a safe
+  // default — when `ev` is briefly undefined (transient store eviction)
+  // the hook is paused and produces 0, which we never render anyway.
+  const running = ev?.state === "running";
+  const elapsedMs = useElapsedMs({
+    startedAt: ev?.ts ?? 0,
+    running,
+  });
+  // Auto-expand once we cross the "did this hang?" threshold. Don't auto-
+  // collapse afterwards — once the user sees the metadata they probably
+  // want it to stay visible. Manual toggle still wins.
+  useEffect(() => {
+    if (running && elapsedMs >= AUTO_EXPAND_AFTER_MS) {
+      setOpen((cur) => cur || true);
+    }
+  }, [running, elapsedMs]);
   if (!ev) return null;
   const statusColor =
     ev.state === "done"
@@ -250,6 +273,14 @@ function AgentCardRow({ id }: { id: string }) {
     minute: "2-digit",
     second: "2-digit",
   });
+  // Status string overload:
+  // - running → "Thinking · 1.4s" (becomes "Running · 1.4s" once a tool
+  //   spinner-spawn fires; the dock_agent's narrator chip carries the
+  //   *why*, this row carries the *for how long*).
+  // - done/failed → upstream statusText (preserved).
+  const liveStatusText = running
+    ? `Thinking · ${formatElapsed(elapsedMs)}`
+    : ev.statusText;
   return (
     <div
       style={{
@@ -293,9 +324,10 @@ function AgentCardRow({ id }: { id: string }) {
         </span>
         <span
           className="ds-mono-9"
+          data-testid="agent-status-text"
           style={{ marginLeft: "auto", color: statusColor }}
         >
-          {ev.statusText}
+          {liveStatusText}
         </span>
       </button>
       {open ? (
@@ -322,6 +354,297 @@ function AgentCardRow({ id }: { id: string }) {
       ) : null}
     </div>
   );
+}
+
+// Step 3 — ToolTraceRow. Compact "console" line for every execution tool
+// the dock_agent ran. Default collapsed: name · summary · duration on the
+// right. Expand to see (tool / agent → action / status) metadata. We don't
+// inline the full tool result here because that already arrives as either
+// an `artifact` card or a `result` card right after this row.
+function ToolTraceRow({ m }: { m: DockMessage }) {
+  const [open, setOpen] = useState<boolean>(false);
+  const tool = m.toolName || "";
+  const agent = m.toolAgent || "coordinator";
+  const action = m.toolAction || "";
+  const status = m.toolStatus || "ok";
+  const summary = m.toolSummary || (status === "error" ? "failed" : "ok");
+  const startedAt = m.toolStartedAt || 0;
+  // Pure display only — the tool has *already finished* by the time this
+  // message exists in the store (dock_agent only emits tool_trace on
+  // tool_end / tool_error). So `running=false` and the chip shows the
+  // wall-clock the row was inserted, frozen. We still wire the hook so
+  // the format helper / threshold const are in one consistent path.
+  const elapsedMs = useElapsedMs({ startedAt, running: false });
+  const ok = status === "ok";
+  const dotColor = ok ? "#4C7A3F" : "#A23A2E";
+  return (
+    <div
+      data-msg-id={m.id}
+      data-testid="dock-tool-trace"
+      className="animate-pop"
+      style={{ display: "flex", gap: 9, alignItems: "flex-start" }}
+    >
+      <div style={{ width: 28, flexShrink: 0 }} />
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "#FFFFFF",
+          border: "1px solid #EDE8DF",
+          borderRadius: 10,
+          overflow: "hidden",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-label={open ? "Collapse tool console" : "Expand tool console"}
+          data-testid="dock-tool-trace-toggle"
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 12px",
+            width: "100%",
+            boxSizing: "border-box",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: "inline-flex",
+              width: 12,
+              color: "#A39F99",
+              transform: open ? "rotate(90deg)" : "rotate(0deg)",
+              transition: "transform .12s ease-out",
+            }}
+          >
+            ▶
+          </span>
+          <span
+            aria-hidden
+            style={{
+              display: "inline-block",
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              background: dotColor,
+              flexShrink: 0,
+            }}
+          />
+          <span
+            className="ds-mono-10"
+            style={{ color: "#5D3000", flexShrink: 0 }}
+          >
+            {tool}
+          </span>
+          <span
+            style={{
+              color: "#7C7367",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12,
+              minWidth: 0,
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {summary}
+          </span>
+          <span
+            className="ds-mono-9"
+            data-testid="dock-tool-trace-duration"
+            style={{ color: "#A39F99", marginLeft: "auto", flexShrink: 0 }}
+          >
+            {formatElapsed(elapsedMs)}
+          </span>
+        </button>
+        {open ? (
+          <div
+            style={{
+              borderTop: "1px solid #F0E8DA",
+              padding: "8px 14px 12px 38px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              background: "#FBF8F3",
+            }}
+          >
+            <div className="ds-mono-9" style={{ color: "#A39F99" }}>
+              tool · <span style={{ color: "#5D3000" }}>{tool}</span>
+            </div>
+            <div className="ds-mono-9" style={{ color: "#A39F99" }}>
+              agent · <span style={{ color: "#5D3000" }}>{agent}</span>
+              {action ? (
+                <>
+                  {" → "}
+                  <span style={{ color: "#5D3000" }}>{action}</span>
+                </>
+              ) : null}
+            </div>
+            <div className="ds-mono-9" style={{ color: "#A39F99" }}>
+              status · <span style={{ color: dotColor }}>{status}</span>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Step 5 — PartialArtifactRow. Live, in-progress preview of an artifact
+// still being generated. Rendered as a card with a progress bar (when
+// progress is reported), title/sub lines, and a small payload preview.
+// The eventual `artifact` frame supersedes the partial — when that
+// happens, the dock keeps both rows visible (the user mental model is
+// "preview → final"); we don't auto-remove the partial.
+function PartialArtifactRow({ m }: { m: DockMessage }) {
+  const title = m.partialTitle || "Drafting…";
+  const sub = m.partialSub || "";
+  const progress =
+    typeof m.partialProgress === "number"
+      ? Math.max(0, Math.min(1, m.partialProgress))
+      : null;
+  const previewItems = renderPartialPayloadPreview(m.partialPayload);
+  return (
+    <div
+      data-msg-id={m.id}
+      data-testid="dock-partial-artifact"
+      className="animate-pop"
+      style={{ display: "flex", gap: 9, alignItems: "flex-start" }}
+    >
+      <div style={{ width: 28, flexShrink: 0 }} />
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: "#FBF8F3",
+          border: "1px dashed #C9A06A",
+          borderRadius: 12,
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            aria-hidden
+            data-testid="dock-partial-artifact-pulse"
+            style={{
+              display: "inline-block",
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              background: "#C9A06A",
+            }}
+            className="animate-pulse"
+          />
+          <div
+            style={{
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+              fontSize: 13.5,
+              color: "#5D3000",
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title}
+          </div>
+          {progress !== null ? (
+            <span
+              className="ds-mono-9"
+              data-testid="dock-partial-artifact-progress"
+              style={{ color: "#A66A00" }}
+            >
+              {Math.round(progress * 100)}%
+            </span>
+          ) : null}
+        </div>
+        {progress !== null ? (
+          <div
+            aria-hidden
+            style={{
+              height: 4,
+              background: "#F0E1C8",
+              borderRadius: 999,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${Math.round(progress * 100)}%`,
+                background: "#C9A06A",
+                transition: "width .2s ease-out",
+              }}
+            />
+          </div>
+        ) : null}
+        {sub ? (
+          <div
+            style={{
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12,
+              color: "#7C7367",
+            }}
+          >
+            {sub}
+          </div>
+        ) : null}
+        {previewItems.length > 0 ? (
+          <ul
+            data-testid="dock-partial-artifact-items"
+            style={{
+              margin: 0,
+              padding: "0 0 0 18px",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12.5,
+              color: "#3D3933",
+              display: "flex",
+              flexDirection: "column",
+              gap: 3,
+            }}
+          >
+            {previewItems.map((item, idx) => (
+              <li key={idx} style={{ lineHeight: 1.45 }}>
+                {item}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Pure helper: derive a short string list from a partial payload. We
+// support the two shapes tools are likely to emit:
+//   - {items: [...]} → preview first 5
+//   - {text: "..."} → preview as a single line
+// Anything else returns an empty list (we still render the card chrome).
+function renderPartialPayloadPreview(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+  const obj = payload as Record<string, unknown>;
+  if (Array.isArray(obj.items)) {
+    return obj.items
+      .slice(0, 5)
+      .map((it) => (typeof it === "string" ? it : JSON.stringify(it)))
+      .map((s) => (s.length > 200 ? s.slice(0, 200) + "…" : s));
+  }
+  if (typeof obj.text === "string") {
+    const t = obj.text as string;
+    return [t.length > 280 ? t.slice(0, 280) + "…" : t];
+  }
+  return [];
 }
 
 // AgentsGroupRow — reads the live AgentEvent records out of the dock
@@ -378,6 +701,63 @@ function MessageRow({
   isLastAssistant: boolean;
   streaming: boolean;
 }) {
+  if (m.kind === "tool_trace") {
+    return <ToolTraceRow m={m} />;
+  }
+
+  if (m.kind === "partial_artifact") {
+    return <PartialArtifactRow m={m} />;
+  }
+
+  if (m.kind === "narrator") {
+    // Step 1 — italic "thought-aloud" chip. Sits between the agents row /
+    // task graph card and the next tool, mirroring Manus's pre-tool
+    // narration. No avatar, no bubble — visually quiet so the dock log
+    // still feels like a conversation.
+    const text = (m.text || "").trim();
+    if (!text) return null;
+    return (
+      <div
+        data-msg-id={m.id}
+        data-testid="dock-narrator"
+        className="animate-pop"
+        style={{ display: "flex", gap: 9, alignItems: "flex-start" }}
+      >
+        <div style={{ width: 28, flexShrink: 0 }} />
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            color: "#7C7367",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontStyle: "italic",
+            fontSize: 12.5,
+            lineHeight: 1.45,
+            padding: "0 2px",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+          }}
+        >
+          {/* small leading dot keeps the chip readable on long lines */}
+          <span
+            aria-hidden
+            style={{
+              display: "inline-block",
+              width: 5,
+              height: 5,
+              borderRadius: 999,
+              background: "#C9A06A",
+              marginTop: 7,
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ wordBreak: "break-word" }}>{text}</span>
+        </div>
+      </div>
+    );
+  }
+
   if (m.kind === "user") {
     return (
       <div
@@ -446,7 +826,20 @@ function MessageRow({
           {m.text ? (
             <MarkdownMessage content={m.text} />
           ) : (
-            <span style={{ color: "#A39F99", fontFamily: "Inter, system-ui, sans-serif" }}>…</span>
+            // Step 2: replace the bare ellipsis with a visible "Thinking"
+            // affordance — Manus-style. The narrator chip / agent rows
+            // carry the *what*; this is the bubble's own "I'm still here"
+            // signal between deltas.
+            <span
+              style={{
+                color: "#7C7367",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontStyle: "italic",
+                fontSize: 13,
+              }}
+            >
+              Thinking
+            </span>
           )}
           {isLastAssistant && streaming ? <StreamingCursor /> : null}
         </div>
@@ -534,6 +927,14 @@ function MessageRow({
 
   if (m.kind === "artifact") {
     return <ArtifactCard m={m} />;
+  }
+
+  if (
+    m.kind === "hitl_ask_user" ||
+    m.kind === "hitl_diff" ||
+    m.kind === "hitl_approval"
+  ) {
+    return <HitlCard m={m} />;
   }
 
   return null;
