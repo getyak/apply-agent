@@ -18,17 +18,20 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const BASE =
-  "relative inline-flex items-center justify-center gap-[8px] font-body font-semibold whitespace-nowrap cursor-pointer " +
+  "group/btn relative inline-flex items-center justify-center gap-[8px] font-body font-semibold whitespace-nowrap cursor-pointer " +
   "transition-[transform,background-color,border-color,box-shadow,color] duration-200 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] " +
   "motion-safe:hover:-translate-y-[2px] active:translate-y-0 active:scale-[0.97] " +
   "outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper " +
   "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:active:scale-100 disabled:shadow-none";
 
+const ICON =
+  "inline-flex shrink-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]";
+
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
     "shine text-paper border-none bg-[linear-gradient(135deg,#7A3F00_0%,#5D3000_100%)] " +
     "shadow-[0_1px_2px_rgba(61,42,20,0.25),inset_0_1px_0_rgba(255,255,255,0.10)] " +
-    "hover:shadow-[0_10px_24px_-8px_rgba(61,42,20,0.6),inset_0_1px_0_rgba(255,255,255,0.16)]",
+    "hover:shadow-[0_12px_28px_-8px_rgba(61,42,20,0.62),0_0_0_1px_rgba(232,163,23,0.20),inset_0_1px_0_rgba(255,255,255,0.18)]",
   secondary:
     "bg-white text-ink border border-border-dark hover:border-brown hover:shadow-[0_6px_16px_-7px_rgba(61,42,20,0.28)]",
   ghost: "bg-transparent text-ink-light border-none hover:text-ink hover:bg-cream/60",
@@ -69,9 +72,17 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       )}
       {...rest}
     >
-      {leadingIcon}
+      {leadingIcon && (
+        <span className={cn(ICON, "motion-safe:group-hover/btn:-translate-x-[1px]")}>
+          {leadingIcon}
+        </span>
+      )}
       {children}
-      {trailingIcon}
+      {trailingIcon && (
+        <span className={cn(ICON, "motion-safe:group-hover/btn:translate-x-[2px]")}>
+          {trailingIcon}
+        </span>
+      )}
     </button>
   );
 });

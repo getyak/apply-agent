@@ -68,7 +68,22 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
       role="img"
       aria-label={label ?? `Match score: ${clamped}%`}
     >
-      <svg width={size} height={size} className="-rotate-90 overflow-visible">
+      {/* Color-matched halo — a soft radial bloom whose opacity tracks the
+          score, so a strong match visibly "glows". Breathes gently at the top
+          tier. Purely decorative, sits behind the ring. */}
+      <div
+        aria-hidden
+        className={cn(
+          "absolute inset-0 rounded-full pointer-events-none",
+          clamped >= 85 && "motion-safe:animate-pulse",
+        )}
+        style={{
+          background: `radial-gradient(circle at 50% 50%, ${color}, transparent 68%)`,
+          opacity: 0.1 + (clamped / 100) * 0.16,
+          filter: "blur(7px)",
+        }}
+      />
+      <svg width={size} height={size} className="relative -rotate-90 overflow-visible">
         <defs>
           <linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor={colorLight} />
@@ -101,7 +116,7 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
       </svg>
       <div
         className={cn(
-          "absolute inset-0 flex items-center justify-center font-display font-bold text-[20px] tabular-nums",
+          "absolute inset-0 flex items-center justify-center font-display font-bold text-[20px] num-flow",
           textColor,
         )}
       >

@@ -103,6 +103,8 @@ body {
   outline: 2px solid var(--color-gold, #e8a317);
   outline-offset: 2px;
   border-radius: 4px;
+  box-shadow: 0 0 0 4px rgba(232, 163, 23, 0.18);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
 }
 
 @keyframes fade-up {
@@ -375,6 +377,106 @@ body {
   height: 1px; border: 0;
   background: linear-gradient(90deg, transparent, var(--color-border-dark, #D6CEC0), transparent);
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Premium polish — a second, bolder pass. These primitives push key surfaces
+   from "alive" to "crafted": frosted glass, light-tracking 3D tilt, magnetic
+   press, animated gradient borders, and richer reveal choreography. All opt-in
+   by class and all caught by the reduced-motion guard below.
+   ─────────────────────────────────────────────────────────────────────── */
+
+@keyframes rise-blur {
+  0% { opacity: 0; transform: translateY(22px) scale(0.985); filter: blur(8px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes border-pan {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes live-ring {
+  0% { transform: scale(0.7); opacity: 0.7; }
+  70% { opacity: 0; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes pop-blur-in {
+  0% { opacity: 0; transform: scale(0.92) translateY(6px); filter: blur(6px); }
+  60% { transform: scale(1.015) translateY(0); filter: blur(0); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Cinematic content reveal — heavier than fade-up, for hero blocks + the first
+   paint of a primary view. */
+.animate-rise { animation: rise-blur 0.85s var(--ease-out) both; }
+.animate-pop-blur { animation: pop-blur-in 0.5s var(--ease-spring) both; }
+
+/* Frosted warm glass — for floating chrome (docks, toolbars, popovers) that
+   should let the paper texture glow through. Pairs depth with translucency. */
+.glass {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.82), rgba(250, 245, 236, 0.66));
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* Light-tracking 3D tilt — a card that leans toward the cursor. Pure CSS
+   approximation: it tips back on hover with a perspective so it feels like a
+   physical object catching the light. Pointer-precise tilt can be layered on
+   with JS by setting `--rx`/`--ry` custom properties. */
+.tilt-3d {
+  transform-style: preserve-3d;
+  transition: transform var(--dur-base) var(--ease-spring), box-shadow var(--dur-base) var(--ease-out);
+  transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  will-change: transform;
+}
+.tilt-3d:hover {
+  transform: perspective(900px) rotateX(3deg) rotateY(-3deg) translateY(-3px) scale(1.01);
+  box-shadow: var(--shadow-xl);
+}
+
+/* Magnetic press — a chip/button that springs up to meet the cursor and
+   compresses crisply on click. More playful than `.lift`, for primary CTAs. */
+.magnetic {
+  transition: transform var(--dur-base) var(--ease-spring), box-shadow var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .magnetic:hover { transform: translateY(-3px) scale(1.025); box-shadow: var(--shadow-lg); }
+}
+.magnetic:active { transform: translateY(0) scale(0.96); transition-duration: var(--dur-fast); }
+
+/* Animated gradient border — a hairline of warm gold that slowly pans around
+   a surface. Put `.grad-border` on a rounded element; it paints behind the
+   content via a masked gradient ring. */
+.grad-border { position: relative; isolation: isolate; }
+.grad-border::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; padding: 1px;
+  background: linear-gradient(110deg, rgba(232,163,23,0.0), rgba(232,163,23,0.55), rgba(243,200,105,0.9), rgba(232,163,23,0.55), rgba(232,163,23,0.0));
+  background-size: 200% auto;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0; transition: opacity var(--dur-base) var(--ease-out);
+  animation: border-pan 4s linear infinite;
+}
+.grad-border:hover::before, .grad-border[data-active="true"]::before { opacity: 1; }
+
+/* Live status dot — a calm pulsing concentric ring for "agent working" /
+   "connected" indicators. Put `.live-dot` on a small round element. */
+.live-dot { position: relative; }
+.live-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: currentColor; opacity: 0.5;
+  animation: live-ring 2.2s var(--ease-out) infinite;
+}
+
+/* Tabular figures that recolour smoothly as they change (scores, counts). */
+.num-flow { font-variant-numeric: tabular-nums; transition: color var(--dur-base) var(--ease-out); }
+
+/* Deeper stagger track — extends the existing .stagger up to 12 children so
+   longer lists keep their cascade instead of all snapping in at once. */
+.stagger > *:nth-child(9) { animation-delay: 0.52s; }
+.stagger > *:nth-child(10) { animation-delay: 0.58s; }
+.stagger > *:nth-child(11) { animation-delay: 0.64s; }
+.stagger > *:nth-child(12) { animation-delay: 0.70s; }
 
 /* Honour the OS "reduce motion" setting — collapse all animation + transition
    to near-instant so the app stays usable for motion-sensitive users. */
