@@ -71,9 +71,27 @@ export function verifyMagicBytes(kind: SupportedKind, data: Uint8Array): boolean
   return true;
 }
 
+// MIME3 (round-17): the round-16 file-upload audit pointed out that
+// once a file passes the magic-byte gate, unpdf is trusted to be fast
+// and tolerant. It mostly is — but a 5000-page PDF (or a malformed one
+// that confuses the parser into a slow path) will pin a worker for
+// many seconds and rack up memory. Real résumés are 1-5 pages; we cap
+// at 50 to leave plenty of room for genuinely long CVs without giving
+// an attacker an easy compute-DoS knob. The check uses the
+// PDFDocumentProxy.numPages property exposed by unpdf's underlying
+// pdfjs — a property read, not a parse, so the cap fires before we
+// pay for full-document extraction.
+const MAX_PDF_PAGES = 50;
+
 async function pdfToText(data: Uint8Array): Promise<string> {
   const { extractText, getDocumentProxy } = await import("unpdf");
   const pdf = await getDocumentProxy(new Uint8Array(data));
+  if (pdf.numPages > MAX_PDF_PAGES) {
+    throw new ExtractionError(
+      `PDF has ${pdf.numPages} pages — we cap résumé uploads at ${MAX_PDF_PAGES} ` +
+        "pages to keep parsing snappy. Split the file or paste the text instead.",
+    );
+  }
   const { text } = await extractText(pdf, { mergePages: true });
   return text;
 }

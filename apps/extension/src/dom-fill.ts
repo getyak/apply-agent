@@ -92,6 +92,16 @@ function writeValue(el: HTMLElement, value: string, type: FillInstruction['type'
     }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    // DOM_F2 (round-17): round-17 audit found we only dispatched
+    // input + change. Most React forms also wire validation onto blur
+    // (and a fair number of vanilla forms validate on blur too) — so
+    // a required-field check stayed unfired and the form looked
+    // "filled" while still being invalid on submit. Fire blur last so
+    // any validator runs over the new value before the user sees the
+    // highlight. focusout bubbles; blur does not, but most validation
+    // libraries listen on both so we dispatch both for parity.
+    el.dispatchEvent(new Event('blur', { bubbles: false }));
+    el.dispatchEvent(new Event('focusout', { bubbles: true }));
     return true;
   }
   return false;

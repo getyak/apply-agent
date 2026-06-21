@@ -45,6 +45,43 @@ async function sha256Hex(input: string): Promise<string> {
   return hex;
 }
 
+// IDEM_N1 / IDEM_N2 (round-17): the round-9 hash compared raw body
+// strings, which meant a client that re-sent the same logical request
+// with a different object-key order (e.g. `{"a":1,"b":2}` vs
+// `{"b":2,"a":1}`) got a spurious 409 ConflictError — JS objects don't
+// guarantee key order, and a number of mainstream HTTP libraries
+// reorder keys on serialize. Canonicalize JSON bodies first: parse,
+// recursively sort object keys, then re-stringify. Arrays stay
+// order-sensitive because order is semantically meaningful in our
+// payloads (e.g. `formFields` reflects on-page order). Non-JSON
+// bodies (form-encoded, binary) fall back to the raw string so
+// behaviour is unchanged for those.
+function canonicalizeBody(raw: string): string {
+  if (raw.length === 0) return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  return JSON.stringify(parsed, replacerSortingKeys);
+}
+
+// JSON.stringify replacer that returns a key-sorted *plain object* for
+// non-null objects (arrays pass through unchanged). The recursive
+// behaviour comes for free: stringify walks the returned value and
+// re-invokes the replacer on each nested key/value pair.
+function replacerSortingKeys(_key: string, value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[k] = (value as Record<string, unknown>)[k];
+  }
+  return sorted;
+}
+
 export interface IdempotencyOptions {
   /** Inject a Redis client for tests. */
   redisClient?: Redis;
@@ -111,7 +148,10 @@ export function idempotency(options: IdempotencyOptions = {}) {
     } catch {
       currentBody = "";
     }
-    const currentHash = await sha256Hex(currentBody);
+    // IDEM_N1 / IDEM_N2 (round-17): canonicalize JSON bodies so a
+    // re-serialization with different object-key order doesn't trip the
+    // round-9 body-mismatch guard.
+    const currentHash = await sha256Hex(canonicalizeBody(currentBody));
 
     if (stored) {
       // IDEM3 (round-9): the round-9 audit showed that without a body
