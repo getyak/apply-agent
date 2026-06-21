@@ -455,6 +455,19 @@ interface VantageState {
   setTailoredChangeLog: (resumeId: string, log: TailoredChangeLogEntry[]) => void;
 }
 
+// PASTE5 (round-16): tiny helper used by parsePastedText below. Strip
+// the ASCII C0 controls (\x00-\x08, \x0b, \x0c, \x0e-\x1f) and the DEL
+// (\x7f) so a paste that smuggled a NUL byte or a vertical tab past the
+// trim() call can't reach the API / LLM / DB. We deliberately keep \t
+// (\x09), \n (\x0a), and \r (\x0d) — they're the legitimate
+// whitespace controls a real paste relies on. C1 controls (\x80-\x9f)
+// are valid UTF-8 first bytes and stripping them would mangle every
+// non-ASCII paste; the LLM tolerates them and the DB column is TEXT,
+// so they pass through unchanged.
+function stripControlChars(s: string): string {
+  return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
 export const useVantage = create<VantageState>((set, get) => ({
   screen: "onboarding",
   parseStage: "idle",
@@ -542,7 +555,17 @@ export const useVantage = create<VantageState>((set, get) => ({
   // Paste/Link path: text is already in hand. Same optimistic flow — start the
   // async parse and enter the workspace; no blocking.
   parsePastedText: async (text) => {
-    const trimmed = text.trim();
+    // PASTE5 (round-16): round-15 audit flagged that paste content
+    // flowed through the LLM and into the database with no scrubbing of
+    // NUL bytes or other ASCII control characters. The most common
+    // sources are copy-paste from Word documents (smart-quotes are
+    // fine, but odd control codes occasionally tag along) and
+    // adversarial payloads aimed at breaking downstream parsers.
+    // Strip the ASCII C0/C1 controls except tab / newline / carriage
+    // return (those are legitimate in pasted text) before everything
+    // else so length/min-length checks see the clean string.
+    const cleaned = stripControlChars(text);
+    const trimmed = cleaned.trim();
     if (trimmed.length < 20) {
       set({ parseError: "Please paste a bit more of your résumé." });
       return;

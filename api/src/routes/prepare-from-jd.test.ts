@@ -15,7 +15,15 @@ import { config } from "../config";
 import { errorHandler } from "../errors";
 import type { AppEnv } from "../types";
 
-const USER_A = "user-prepare-a-uuid";
+// TEST_RL1 (round-16): hard-coded user id meant the rate-limit
+// middleware (round-7 API_RL1, 5/60s on /prepare-from-jd, keyed on
+// user id via real Redis when the bundle from round-13 is up) leaked
+// state across consecutive test runs — the 60s window shared a key,
+// and consecutive `bun test` invocations within the same minute saw
+// 429s on tests 2-4. Use a per-process suffix so each run gets a
+// fresh rate-limit bucket. The mocked stubQuery treats any user id
+// the same, so the suffix is invisible to the rest of the test.
+const USER_A = `user-prepare-a-${process.pid}-${process.hrtime.bigint()}`;
 const RESUME_ID = "00000000-0000-0000-0000-000000000bb1";
 
 let hasBaseResume = true;
