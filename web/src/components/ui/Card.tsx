@@ -20,7 +20,7 @@ interface CardProps {
 const TONE: Record<Tone, string> = {
   paper: "bg-white border border-border",
   cream: "bg-cream border border-cream-border",
-  ai: "bg-gold-bg border border-cream-border",
+  ai: "border border-cream-border bg-[linear-gradient(135deg,#FBF1DC_0%,#F8ECD6_100%)]",
 };
 
 const PAD = {
@@ -41,7 +41,7 @@ export function Card({
       className={cn(
         TONE[tone],
         "rounded-[14px] shadow-sm",
-        interactive && "lift cursor-pointer",
+        interactive && "lift spotlight cursor-pointer",
         PAD[padding],
         className,
       )}

@@ -53,7 +53,15 @@
   --shadow-sm: 0 1px 2px rgba(61, 42, 20, 0.05), 0 1px 1px rgba(61, 42, 20, 0.03);
   --shadow-md: 0 4px 14px -4px rgba(61, 42, 20, 0.12), 0 2px 6px -2px rgba(61, 42, 20, 0.07);
   --shadow-lg: 0 18px 40px -12px rgba(61, 42, 20, 0.20), 0 6px 14px -6px rgba(61, 42, 20, 0.10);
+  --shadow-xl: 0 32px 70px -20px rgba(61, 42, 20, 0.28), 0 12px 28px -12px rgba(61, 42, 20, 0.14);
   --glow-gold: 0 0 0 1px rgba(232, 163, 23, 0.18), 0 8px 24px -8px rgba(232, 163, 23, 0.35);
+
+  /* Signature gradients — the brand's "warm metal" feel. Used for primary
+     surfaces, gradient text, and accent rules so the gold reads as light,
+     not paint. */
+  --grad-gold: linear-gradient(135deg, #f0b53a 0%, #e8a317 45%, #A66A00 100%);
+  --grad-brown: linear-gradient(135deg, #7A3F00 0%, #5D3000 100%);
+  --grad-sheen: linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.45) 50%, transparent 80%);
 }
 
 * { box-sizing: border-box; }
@@ -74,19 +82,28 @@ body {
 }
 
 ::selection {
-  background: #E8DCCA;
+  background: #F0D9A8;
   color: #2B2822;
+  text-shadow: none;
 }
 
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-thumb {
-  background: #E2DACB;
+  background: linear-gradient(180deg, #E2DACB, #D2C6B0);
   border-radius: 8px;
   border: 3px solid #FAF8F6;
   transition: background 0.2s ease;
 }
-::-webkit-scrollbar-thumb:hover { background: #C9BCA6; }
+::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #CBBC9F, #B9A786); }
 * { scrollbar-color: #E2DACB transparent; scrollbar-width: thin; }
+
+/* Global keyboard-focus ring — consistent, WCAG-visible, warm-toned. Only
+   shows for keyboard users (:focus-visible), never on mouse click. */
+:focus-visible {
+  outline: 2px solid var(--color-gold, #e8a317);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(16px); filter: blur(4px); }
@@ -140,6 +157,27 @@ body {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
+@keyframes gradient-pan {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes glow-breathe {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(232,163,23,0.16), 0 6px 18px -8px rgba(232,163,23,0.30); }
+  50% { box-shadow: 0 0 0 1px rgba(232,163,23,0.30), 0 12px 34px -8px rgba(232,163,23,0.55); }
+}
+@keyframes aurora {
+  0% { transform: translate3d(-8%, -4%, 0) rotate(0deg); }
+  50% { transform: translate3d(8%, 6%, 0) rotate(8deg); }
+  100% { transform: translate3d(-8%, -4%, 0) rotate(0deg); }
+}
+@keyframes underline-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes tilt-in {
+  0% { opacity: 0; transform: perspective(800px) rotateX(8deg) translateY(14px); }
+  100% { opacity: 1; transform: perspective(800px) rotateX(0) translateY(0); }
+}
 
 .animate-fade-up { animation: fade-up 0.7s var(--ease-out) both; }
 .animate-fade-up-delay { animation: fade-up 0.8s var(--ease-out) 0.12s both; }
@@ -152,6 +190,49 @@ body {
 .animate-bob { animation: bob 1s var(--ease-in-out) infinite; }
 .animate-check { animation: check-in 0.4s var(--ease-spring); }
 .animate-float { animation: float-y 5s var(--ease-in-out) infinite; }
+.animate-tilt-in { animation: tilt-in 0.7s var(--ease-out) both; }
+.animate-glow { animation: glow-breathe 3.4s var(--ease-in-out) infinite; }
+
+/* Gradient text — warm gold "lit metal" headline accent. Apply to a span
+   inside a heading; it pans slowly so the gold catches the light. */
+.gradient-text {
+  background: linear-gradient(100deg, #A66A00, #e8a317, #f3c869, #e8a317, #A66A00);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradient-pan 6s linear infinite;
+}
+
+/* Animated underline that grows from the left on hover — for nav + text links. */
+.underline-grow { position: relative; }
+.underline-grow::after {
+  content: ""; position: absolute; left: 0; bottom: -2px; height: 2px; width: 100%;
+  background: var(--grad-gold, #e8a317); border-radius: 2px;
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.underline-grow:hover::after { transform: scaleX(1); }
+
+/* Soft warm glow halo for hero/CTA surfaces. */
+.glow-gold { box-shadow: var(--glow-gold); }
+
+/* Aurora backdrop — a slow-drifting warm blob. Place inside a relative,
+   overflow-hidden hero/section as a low-opacity decorative layer. */
+.aurora-blob {
+  position: absolute; pointer-events: none; border-radius: 9999px;
+  filter: blur(60px); opacity: 0.5; will-change: transform;
+  background: radial-gradient(circle at 50% 50%, rgba(232,163,23,0.55), transparent 70%);
+  animation: aurora 18s var(--ease-in-out) infinite;
+}
+
+/* Subtle paper grain — a near-invisible texture overlay that keeps large
+   flat fills from looking dead. Apply to a fixed/absolute decorative layer. */
+.grain::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  opacity: 0.03; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 
 /* Stagger helper — set on a parent or per-child to cascade reveals.
    Pair with .animate-fade-up / .animate-step-in on the children. */
@@ -168,13 +249,28 @@ body {
 /* Reusable interaction primitive — lift + warm shadow on hover, crisp
    press on active. Applied to cards/links that aren't <Button>. */
 .lift {
-  transition: transform var(--dur-base) var(--ease-out),
+  transition: transform var(--dur-base) var(--ease-spring),
     box-shadow var(--dur-base) var(--ease-out),
     border-color var(--dur-base) var(--ease-out);
   will-change: transform;
 }
-.lift:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
-.lift:active { transform: translateY(-1px); transition-duration: var(--dur-fast); }
+.lift:hover { transform: translateY(-4px) scale(1.012); box-shadow: var(--shadow-lg); border-color: var(--color-border-dark, #D6CEC0); }
+.lift:active { transform: translateY(-1px) scale(0.998); transition-duration: var(--dur-fast); }
+
+/* Tactile press — for compact interactive chrome (icon buttons, toggles)
+   that shouldn't lift, just respond crisply to the click. */
+.press { transition: transform var(--dur-fast) var(--ease-out); }
+.press:active { transform: scale(0.94); }
+
+/* Card spotlight — a warm radial that follows nothing but brightens the
+   top edge on hover, giving cards a sense of being lit from above. */
+.spotlight { position: relative; isolation: isolate; }
+.spotlight::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-out);
+  background: radial-gradient(120% 80% at 50% -10%, rgba(232,163,23,0.10), transparent 60%);
+}
+.spotlight:hover::before { opacity: 1; }
 
 /* Light sweep — overlay a child with .sheen on a relative, overflow-hidden
    parent to get a one-shot gloss on hover. */
@@ -185,6 +281,19 @@ body {
   transform: translateX(-120%) skewX(-18deg);
 }
 .sheen-host:hover > .sheen { animation: sheen 0.9s var(--ease-out); }
+
+/* Self-contained light sweep — no child element needed. Add `.shine` to any
+   relative element with a clipped background (e.g. the primary button) to get
+   a one-shot gloss that travels across on hover. */
+.shine { position: relative; overflow: hidden; }
+.shine::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: var(--grad-sheen);
+  transform: translateX(-150%) skewX(-18deg);
+}
+@media (hover: hover) {
+  .shine:hover::after { animation: sheen 0.85s var(--ease-out); }
+}
 
 /* Honour the OS "reduce motion" setting — collapse all animation + transition
    to near-instant so the app stays usable for motion-sensitive users. */

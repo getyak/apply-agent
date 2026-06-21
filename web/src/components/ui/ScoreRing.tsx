@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "./cn";
 
 // Circular match-score ring used in review.tsx & today-view.tsx today as ad-hoc SVG.
@@ -53,8 +53,13 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
   const offset = (c - (c * display) / 100).toFixed(2);
   const color =
     clamped >= 85 ? "#4C7A3F" : clamped >= 70 ? "#A66A00" : "#A39F99";
+  // Two-stop gradient (lighter tint → base) gives the arc volume rather than a
+  // flat band of colour.
+  const colorLight =
+    clamped >= 85 ? "#76A85F" : clamped >= 70 ? "#D69A2A" : "#C2BCB2";
   const textColor =
     clamped >= 85 ? "text-green" : clamped >= 70 ? "text-amber" : "text-ink-muted";
+  const gid = `ring-grad-${useId().replace(/[:]/g, "")}`;
 
   return (
     <div
@@ -64,6 +69,12 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
       aria-label={label ?? `Match score: ${clamped}%`}
     >
       <svg width={size} height={size} className="-rotate-90 overflow-visible">
+        <defs>
+          <linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={colorLight} />
+            <stop offset="100%" stopColor={color} />
+          </linearGradient>
+        </defs>
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -77,12 +88,15 @@ export function ScoreRing({ value, size = 72, label, className }: ScoreRingProps
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={color}
+          stroke={`url(#${gid})`}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={dash}
           strokeDashoffset={offset}
-          style={{ filter: `drop-shadow(0 0 5px ${color}33)` }}
+          style={{
+            filter: `drop-shadow(0 0 6px ${color}40)`,
+            transition: "stroke-dashoffset 0.2s linear",
+          }}
         />
       </svg>
       <div
