@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useVantage, BUILDER_STAGES } from "@/lib/store";
 import { ArrowLeft, Sparkles, Zap, Send } from "lucide-react";
 import { Button, Chip } from "@/components/ui";
@@ -21,6 +22,29 @@ export function BuilderScreen() {
   const enterApp = useVantage((s) => s.enterApp);
   const parsedResume = useVantage((s) => s.parsedResume);
   const currentUser = useVantage((s) => s.currentUser);
+
+  // BUILD4 (round-13): the round-13 builder audit pointed out that
+  // BuilderScreen tracks multi-step progress (builderStep,
+  // builderTarget, builderChoices) entirely in Zustand memory — no
+  // localStorage backup, no server-side persistence. Round-5 already
+  // installed a beforeunload guard on the Settings page (S3); the
+  // builder had the same problem and no guard. Reuse the same
+  // browser-native confirm dialog approach: when the builder is dirty
+  // (the user has advanced past step 0 or picked at least one chip)
+  // and a reload/tab-close fires, ask the user to confirm. The
+  // listener is no-op when the builder is in its clean initial state,
+  // so users who briefly open and close the screen don't get pestered.
+  const isBuilderDirty = builderStep > 0 || builderChoices.length > 0;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isBuilderDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isBuilderDirty]);
 
   const visibleStages = BUILDER_STAGES.slice(0, builderStep + 1);
   const currentStage = BUILDER_STAGES[builderStep];

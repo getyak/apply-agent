@@ -178,18 +178,42 @@ def _template_cover_letter(
 # ─── form answers ──────────────────────────────────────────────────────
 
 
+# EXT_SEC4 (round-13): the round-13 extension audit found that the
+# original deny-list missed several common form-field variants — date
+# of birth (multiple aliases), legal sex, marital status, and disability
+# disclosure synonyms used by Workday / iCIMS / Greenhouse. Each entry
+# below is matched as a case-insensitive substring against the field
+# label (see generate_form_answers below), so we ship every realistic
+# alias rather than counting on prompt engineering to catch them. New
+# entries marked with `# round-13`.
 SENSITIVE_TOKENS = (
     "race",
     "ethnicity",
     "gender",
+    "gender identity",   # round-13: Workday EEO panel uses this exact label
+    "sex",               # round-13: covers "legal sex", "sex assigned at birth"
     "disability",
     "veteran",
     "ssn",
     "social security",
+    "social security number",  # round-13: full phrasing
     "citizenship",
     "visa",
     "passport",
     "national id",
+    "national insurance",  # round-13: UK equivalent
+    "tax id",              # round-13: covers TIN / ITIN
+    "tin",                 # round-13
+    "date of birth",       # round-13
+    "dob",                 # round-13
+    "birth date",          # round-13
+    "birthdate",           # round-13
+    "marital status",      # round-13
+    "sexual orientation",  # round-13
+    "religion",            # round-13
+    "driver's license",    # round-13
+    "drivers license",     # round-13: no-apostrophe variant
+    "license number",      # round-13
 )
 
 

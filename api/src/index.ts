@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { config } from "./config";
 import { installDbShutdownHandlers, pingDbAtBoot } from "./db";
+import { installRedisShutdownHandlers, pingRedisAtBoot } from "./redis";
 import { errorHandler } from "./errors";
 import { requestId, requestLogger } from "./middleware/observability";
 import {
@@ -67,6 +68,11 @@ app.onError(errorHandler);
 // the source of truth for whether the gateway should receive traffic.
 installDbShutdownHandlers();
 void pingDbAtBoot();
+// REDIS-bundle (round-13): same lifecycle posture as PG above —
+// drain on SIGTERM/SIGINT, ping at boot. Round-11 closed the gap on
+// PG; round-13 closes the parallel gap on Redis.
+installRedisShutdownHandlers();
+void pingRedisAtBoot();
 
 const port = config.API_PORT;
 
