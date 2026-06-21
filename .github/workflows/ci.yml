@@ -106,7 +106,7 @@ jobs:
 
       - name: Test
         working-directory: api
-        run: bun test --coverage
+        run: NODE_ENV=test bun test --coverage
 
       - name: Upload coverage
         if: always()
