@@ -146,7 +146,7 @@ export default async function HomePage({
             <div className="w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
-            <span className="font-display font-bold text-lg tracking-[3px] text-brown">
+            <span className="wordmark-gleam font-display font-bold text-lg tracking-[3px] text-brown">
               VANTAGE
             </span>
           </div>
@@ -167,6 +167,10 @@ export default async function HomePage({
 
       {/* HERO */}
       <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
+        {/* Ambient cursor light — a warm pool that tracks the reader's pointer
+            across the hero, so the surface feels lit by a lamp they're holding.
+            Driven by PointerFX; rests dark + invisible with no JS. */}
+        <div aria-hidden className="ambient-light -z-10" />
         {/* Warm aurora drift behind the hero — low-opacity light that keeps the
             paper fill from reading dead. Purely decorative. */}
         <div aria-hidden data-parallax="34" className="aurora-blob parallax -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
@@ -401,6 +405,9 @@ export default async function HomePage({
         {/* Ember-toned drifting mesh — gives the near-black panel atmospheric
             depth so it reads as lit, not a dead fill. Purely decorative. */}
         <div aria-hidden className="aurora-mesh on-dark -z-0 opacity-70" />
+        {/* Pointer-tracked ember — the dark panel lights up where the reader
+            looks, layered over the drifting mesh. */}
+        <div aria-hidden className="ambient-light on-dark -z-0" />
         <div className="relative z-10 max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
             <span className="eyebrow-dot" aria-hidden />Three bets we made
@@ -431,7 +438,7 @@ export default async function HomePage({
 
       {/* CTA */}
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
-        <div data-reveal className="group grad-border relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
+        <div data-reveal className="group grad-border edge-light relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
           {/* Warm light pooling under the headline. */}
           <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">
@@ -457,7 +464,7 @@ export default async function HomePage({
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
-            <span className="font-display font-bold text-[15px] tracking-[2.5px] text-brown">
+            <span className="wordmark-gleam font-display font-bold text-[15px] tracking-[2.5px] text-brown">
               VANTAGE
             </span>
           </div>

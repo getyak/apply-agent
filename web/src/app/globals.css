@@ -1009,3 +1009,87 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
 .dots:hover > span:nth-child(2) { background-color: #e8b84b; }
 .dots:hover > span:nth-child(3) { background-color: #6fbf7f; }
 .dots:hover > span { transform: scale(1.08); }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Kinetic-light layer (v8) — where v4 lit the surfaces and v5 made light
+   travel, v8 hands the light to the reader: a warm pool that tracks the
+   cursor across whole sections, a glowing comet that rides the scroll rail,
+   and a couple of crisper "alive" cues on first-tier chrome. Every class is
+   additive + opt-in; each effect rests at a neutral value so a surface is
+   pixel-identical to its no-JS state until the pointer moves, and the whole
+   layer collapses under the prefers-reduced-motion guard above.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Ambient cursor light — a large warm pool that follows the reader's pointer
+   across a section, so the whole surface feels lit by a lamp they're holding.
+   PointerFX writes --ax/--ay (as %, section-relative) and toggles data-lit.
+   With no JS it rests at top-centre as a calm static glow, so it degrades
+   gracefully. Drop into a relative, overflow-hidden section as a -z layer. */
+.ambient-light {
+  position: absolute; inset: 0; pointer-events: none;
+  opacity: 0; transition: opacity var(--dur-slow) var(--ease-out);
+  mix-blend-mode: multiply;
+  background: radial-gradient(560px circle at var(--ax, 50%) var(--ay, 0%),
+    rgba(232, 163, 23, 0.12), rgba(232, 163, 23, 0.035) 40%, transparent 62%);
+  will-change: background;
+}
+.ambient-light[data-lit="true"] { opacity: 1; }
+/* On the near-black panel the pool reads as a travelling ember, not a shadow. */
+.ambient-light.on-dark {
+  mix-blend-mode: screen;
+  background: radial-gradient(620px circle at var(--ax, 50%) var(--ay, 0%),
+    rgba(232, 163, 23, 0.18), rgba(217, 164, 95, 0.05) 42%, transparent 64%);
+}
+
+/* Scroll comet — a small glowing head that rides the leading edge of the
+   scroll-progress rail. LandingMotion writes its `left` from rAF; it only
+   shows once the page has scrolled so the resting top reads clean. */
+.scroll-comet {
+  position: fixed; top: 0; left: 0; z-index: 61;
+  width: 16px; height: 2.5px; margin-left: -8px; border-radius: 9999px;
+  pointer-events: none; opacity: 0;
+  background: radial-gradient(circle, #fff4d8 0%, #f3c869 38%, transparent 76%);
+  box-shadow: 0 0 16px 3px rgba(243, 200, 105, 0.85),
+    0 0 4px 1px rgba(255, 255, 255, 0.7);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+[data-scrolled="true"] .scroll-comet { opacity: 1; }
+
+/* Wordmark gleam — a slow specular band that drifts through the brand wordmark
+   so the logo reads as warm metal rather than flat ink. Self-contained: put
+   `.wordmark-gleam` on the text element; the highlight is clipped to the glyphs
+   via background-clip, leaving the base colour intact between passes. */
+@keyframes wordmark-gleam {
+  0%, 72% { background-position: -140% 0; }
+  100% { background-position: 240% 0; }
+}
+.wordmark-gleam {
+  background-image:
+    linear-gradient(100deg, transparent 40%, rgba(255, 240, 200, 0.95) 50%, transparent 60%),
+    linear-gradient(var(--gleam-base, #5D3000), var(--gleam-base, #5D3000));
+  background-size: 220% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: wordmark-gleam 7s var(--ease-out) 2s infinite;
+}
+
+/* Settle-in — a refined first-paint for a single hero element: it rises a hair
+   while a soft warm underglow blooms and fades, marking the moment it lands.
+   Heavier than fade-up but lighter than the cinematic rise; for one focal
+   chip/badge, not whole grids. */
+@keyframes settle-in {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: none; }
+}
+.animate-settle { animation: settle-in 0.7s var(--ease-spring) both; }
+
+/* Edge-light hairline — a top border that carries a faint, always-on warm
+   gradient (no hover needed), for hero/CTA panels that should look permanently
+   lit from above. Calmer cousin of `.ignite-rule`. */
+.edge-light { position: relative; }
+.edge-light::before {
+  content: ""; position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+  border-radius: 2px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(243, 200, 105, 0.65), transparent);
+}

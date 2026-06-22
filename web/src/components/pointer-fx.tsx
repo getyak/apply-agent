@@ -82,6 +82,35 @@ export default function PointerFX() {
       });
     });
 
+    // ── Ambient cursor light ────────────────────────────────────────────────
+    // Each `.ambient-light` pool tracks the pointer across its host section, so
+    // a whole surface feels lit by a lamp the reader is holding. We write %s so
+    // the gradient's no-JS resting position stays valid, and toggle data-lit so
+    // it fades out cleanly when the cursor leaves the section.
+    document
+      .querySelectorAll<HTMLElement>(".ambient-light")
+      .forEach((pool) => {
+        const host = pool.parentElement;
+        if (!host) return;
+        const onMove = (e: PointerEvent) => {
+          const r = host.getBoundingClientRect();
+          const ax = ((e.clientX - r.left) / r.width) * 100;
+          const ay = ((e.clientY - r.top) / r.height) * 100;
+          pool.style.setProperty("--ax", `${ax}%`);
+          pool.style.setProperty("--ay", `${ay}%`);
+          pool.dataset.lit = "true";
+        };
+        const onLeave = () => {
+          pool.dataset.lit = "false";
+        };
+        host.addEventListener("pointermove", onMove);
+        host.addEventListener("pointerleave", onLeave);
+        cleanups.push(() => {
+          host.removeEventListener("pointermove", onMove);
+          host.removeEventListener("pointerleave", onLeave);
+        });
+      });
+
     // ── Aurora parallax ─────────────────────────────────────────────────────
     // Uses the independent `translate` property so it composes cleanly with the
     // blobs' existing `transform`-driven drift animation instead of fighting it.

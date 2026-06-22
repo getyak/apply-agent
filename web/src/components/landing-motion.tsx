@@ -53,8 +53,9 @@ export default function LandingMotion() {
       targets.forEach((el) => io!.observe(el));
     }
 
-    // ── Scroll-progress + nav condense ─────────────────────────────────────
+    // ── Scroll-progress + comet head + nav condense ────────────────────────
     const bar = document.getElementById("scroll-progress");
+    const comet = document.getElementById("scroll-comet");
     let raf = 0;
     const onScroll = () => {
       if (raf) return;
@@ -63,6 +64,8 @@ export default function LandingMotion() {
         const max = root.scrollHeight - root.clientHeight;
         const progress = max > 0 ? Math.min(root.scrollTop / max, 1) : 0;
         if (bar) bar.style.transform = `scaleX(${progress})`;
+        // The comet rides the leading edge of the filled rail.
+        if (comet) comet.style.left = `${progress * 100}%`;
         root.dataset.scrolled = root.scrollTop > 8 ? "true" : "false";
       });
     };
@@ -78,5 +81,10 @@ export default function LandingMotion() {
     };
   }, []);
 
-  return <div id="scroll-progress" className="scroll-progress" aria-hidden />;
+  return (
+    <>
+      <div id="scroll-progress" className="scroll-progress" aria-hidden />
+      <div id="scroll-comet" className="scroll-comet" aria-hidden />
+    </>
+  );
 }
