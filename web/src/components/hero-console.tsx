@@ -35,7 +35,7 @@ export default function HeroConsole() {
   }, []);
 
   return (
-    <div className="bg-dark rounded-[18px] border border-dark-border/40 shadow-[0_24px_70px_rgba(40,25,5,0.22)] overflow-hidden">
+    <div className="tilt-shine bg-dark rounded-[18px] border border-dark-border/40 shadow-[0_24px_70px_rgba(40,25,5,0.22)] overflow-hidden">
       {/* Title bar */}
       <div className="group h-[46px] border-b border-dark-border/40 flex items-center px-4 gap-2">
         <div className="dots flex gap-1.5">

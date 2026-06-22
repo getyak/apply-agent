@@ -345,7 +345,7 @@ export default async function HomePage({
             </span>
           </div>
           <div className="p-[22px_20px] flex flex-col gap-3.5">
-            <div className="self-end bg-brown text-[#FAF8F6] rounded-[13px_13px_4px_13px] py-[11px] px-[15px] font-body text-[13.5px] leading-[1.45] max-w-[80%]">
+            <div style={{ "--md": "260ms" } as CSSProperties} className="mock-step self-end bg-brown text-[#FAF8F6] rounded-[13px_13px_4px_13px] py-[11px] px-[15px] font-body text-[13.5px] leading-[1.45] max-w-[80%]">
               Tailor my résumé to the Linear role and start the application.
             </div>
             <div className="flex gap-2.5 items-start">
@@ -353,30 +353,30 @@ export default async function HomePage({
                 <Star size={13} className="text-[#FAF8F6]" strokeWidth={1.8} />
               </div>
               <div className="max-w-[80%]">
-                <div className="bg-white border border-border rounded-[4px_13px_13px_13px] py-3 px-[15px] font-body text-[13.5px] leading-[1.5] text-ink shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                <div style={{ "--md": "420ms" } as CSSProperties} className="mock-step bg-white border border-border rounded-[4px_13px_13px_13px] py-3 px-[15px] font-body text-[13.5px] leading-[1.5] text-ink shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
                   On it — running two agents now.
                 </div>
                 <div className="flex flex-col gap-[7px] mt-[9px]">
-                  <div className="flex items-center gap-2.5 bg-white border border-cream-border rounded-[9px] py-[9px] px-3">
+                  <div style={{ "--md": "560ms" } as CSSProperties} className="mock-step mock-row flex items-center gap-2.5 bg-white border border-cream-border rounded-[9px] py-[9px] px-3">
                     <Zap size={14} className="text-brown" strokeWidth={2} />
                     <span className="flex-1 font-mono text-[10px] tracking-[0.5px] uppercase text-brown">
                       Résumé agent
                     </span>
-                    <span className="font-mono text-[9px] tracking-[0.5px] uppercase text-green">
+                    <span style={{ "--md": "900ms" } as CSSProperties} className="mock-done font-mono text-[9px] tracking-[0.5px] uppercase text-green">
                       done
                     </span>
                   </div>
-                  <div className="flex items-center gap-2.5 bg-white border border-cream-border rounded-[9px] py-[9px] px-3">
+                  <div style={{ "--md": "680ms" } as CSSProperties} className="mock-step mock-row flex items-center gap-2.5 bg-white border border-cream-border rounded-[9px] py-[9px] px-3">
                     <FileText size={14} className="text-brown" strokeWidth={2} />
                     <span className="flex-1 font-mono text-[10px] tracking-[0.5px] uppercase text-brown">
                       Application agent
                     </span>
-                    <span className="font-mono text-[9px] tracking-[0.5px] uppercase text-green">
+                    <span style={{ "--md": "1020ms" } as CSSProperties} className="mock-done font-mono text-[9px] tracking-[0.5px] uppercase text-green">
                       done
                     </span>
                   </div>
                 </div>
-                <div className="mt-[9px] bg-[#FFFBF4] border border-cream-border rounded-[11px] py-3 px-3.5 flex items-center gap-2.5">
+                <div style={{ "--md": "1160ms" } as CSSProperties} className="mock-step mt-[9px] bg-[#FFFBF4] border border-cream-border rounded-[11px] py-3 px-3.5 flex items-center gap-2.5">
                   <div className="flex-1 font-body text-[13px] text-[#3a352e]">
                     Your Linear application is ready — <b className="font-semibold">94% match</b>, 2 fields drafted by AI.
                   </div>

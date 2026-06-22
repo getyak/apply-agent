@@ -585,13 +585,13 @@ body {
 
 /* Pointer tilt — the element tips toward the cursor in 3D (JS writes
    --tlt-x/--tlt-y in degrees). Unlike `.tilt-3d` there is no fixed hover
-   transform, so the cursor stays in command of the angle. A short transition
-   gives the lean a silky, slightly trailing glide rather than a rigid snap. */
+   transform, so the cursor stays in command of the angle. v13: the lean's
+   trailing glide is now owned by the PointerFX inertial spring, so the CSS
+   transition no longer smooths `transform` (that would double-smooth into a
+   laggy follow) — only box-shadow eases here. */
 .tilt-pointer {
   transform-style: preserve-3d;
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    box-shadow var(--dur-base) var(--ease-out);
+  transition: box-shadow var(--dur-base) var(--ease-out);
   transform: perspective(1100px) rotateX(var(--tlt-x, 0deg))
     rotateY(var(--tlt-y, 0deg));
   will-change: transform;
@@ -602,9 +602,11 @@ body {
 
 /* Parallax drift — uses the independent `translate` property (JS writes it
    directly) so it layers on top of any `transform`-based animation without
-   conflict. The transition smooths the cursor follow into a gentle float. */
+   conflict. v13: the float is now driven by the PointerFX inertial spring
+   (a very slow per-frame ease), so the depth field breathes after the cursor
+   rather than tracking it 1:1 — no CSS transition needed, and none here would
+   only fight the spring. */
 .parallax {
-  transition: translate var(--dur-slow) var(--ease-out);
   will-change: translate;
 }
 
@@ -1478,6 +1480,101 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
    the calm static finish. The global guard already neutralises durations, but
    we also hard-hide the purely-decorative grain + breath so nothing lingers
    mid-keyframe. */
+/* ── Composer micro-interactions (v14 · alive input) ─────────────────────────
+   The main chat composer is the product's primary surface of intent. These
+   touches give staging a file, dictating, and arming Send a little life — each
+   one a single, weighted gesture, never a loop that nags. All one-shots
+   collapse under the global reduced-motion guard; the one idle loop (the mic
+   halo) is hard-stopped in the block below. */
+
+/* Staged attachment chips spring up as they're added — a quick weighted pop so
+   a freshly-attached file announces itself, overshoots a hair, then settles. */
+@keyframes chip-pop-in {
+  0%   { opacity: 0; transform: translateY(7px) scale(0.90); }
+  62%  { opacity: 1; transform: translateY(-2px) scale(1.015); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-chip-pop { animation: chip-pop-in 0.36s var(--ease-spring) both; }
+
+/* Live "on-air" halo — twin amber rings breathe outward from the mic while
+   speech capture is active, so dictation reads as genuinely listening. The
+   host button must be `position: relative`; the rings ride ::before/::after so
+   no extra DOM is needed. */
+@keyframes mic-listen-ring {
+  0%   { transform: scale(0.80); opacity: 0.55; }
+  70%  { transform: scale(1.42); opacity: 0; }
+  100% { transform: scale(1.42); opacity: 0; }
+}
+.mic-listening::before,
+.mic-listening::after {
+  content: ""; position: absolute; inset: 0; border-radius: 9999px;
+  border: 1.5px solid rgba(232, 163, 23, 0.62); pointer-events: none;
+  animation: mic-listen-ring 1.7s var(--ease-out) infinite;
+}
+.mic-listening::after { animation-delay: 0.85s; }
+
+/* Send arms — a one-shot spring pop with a warm gold ring-pulse the instant the
+   button becomes sendable, quietly rewarding the keystroke that made the
+   message valid. No fill, so the button's own inline shadow resumes after. */
+@keyframes send-arm {
+  0%   { transform: scale(0.62); box-shadow: 0 0 0 0 rgba(232, 163, 23, 0.0); }
+  55%  { transform: scale(1.14); box-shadow: 0 0 0 7px rgba(232, 163, 23, 0.18); }
+  100% { transform: scale(1);    box-shadow: 0 2px 6px rgba(93, 48, 0, 0.22); }
+}
+.animate-send-arm { animation: send-arm 0.42s var(--ease-spring); }
+
+/* ── Living product mock (v15 · the story tells itself) ──────────────────────
+   The landing `#chat` panel *is* the pitch: a conversation where agents quietly
+   do the work. It used to sit frozen with everything pre-finished. Now, the
+   first time the panel scrolls into view, its contents assemble the way the real
+   product fills in — the ask lands, the reply arrives, each agent row slides up
+   and computes behind a one-shot light sweep, its status snaps to "done", and
+   the result card blooms last. The whole sequence is gated on the panel's own
+   `[data-reveal].revealed`, so it plays exactly once on first sight and never
+   loops. Fallbacks: with no JS the `.reveal-ready` scope never arms, so the
+   panel renders fully finished; under reduced motion the observer marks it
+   revealed immediately and the global guard collapses every step to its end
+   state — the same calm, finished panel. */
+@keyframes mock-rise {
+  0%   { opacity: 0; transform: translateY(11px) scale(0.985); filter: blur(4px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes mock-compute {
+  0%   { transform: translateX(-130%) skewX(-16deg); opacity: 0; }
+  18%  { opacity: 1; }
+  100% { transform: translateX(280%) skewX(-16deg); opacity: 0; }
+}
+@keyframes mock-done-pop {
+  0%   { transform: scale(0.5); opacity: 0; box-shadow: 0 0 0 0 rgba(76, 122, 63, 0.0); }
+  55%  { transform: scale(1.18); opacity: 1; box-shadow: 0 0 0 5px rgba(76, 122, 63, 0.16); }
+  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(76, 122, 63, 0); }
+}
+
+/* Each tagged step is held hidden only while the reveal layer is armed, then
+   rises into place on its own `--md` delay once the panel is seen. */
+.reveal-ready [data-reveal] .mock-step { opacity: 0; }
+.reveal-ready [data-reveal].revealed .mock-step {
+  animation: mock-rise 0.62s var(--ease-out) var(--md, 0ms) both;
+}
+
+/* Agent rows clip a single warm light sweep that travels across as they "land",
+   reading as freshly computed rather than painted. Host stays relative+clipped
+   so the ::after can ride edge to edge without leaking. */
+.mock-row { position: relative; overflow: hidden; }
+.reveal-ready [data-reveal].revealed .mock-row::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(232, 163, 23, 0.22), transparent);
+  transform: translateX(-130%) skewX(-16deg); opacity: 0;
+  animation: mock-compute 0.95s var(--ease-out) var(--md, 0ms) both;
+}
+
+/* The green "done" badge stays invisible until its row has settled, then snaps
+   in with a quick confirming ring-pulse — the moment the work completes. */
+.reveal-ready [data-reveal] .mock-done { opacity: 0; }
+.reveal-ready [data-reveal].revealed .mock-done {
+  animation: mock-done-pop 0.46s var(--ease-spring) var(--md, 0ms) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .grain-overlay,
   .cta-breathe::after,
@@ -1485,7 +1582,13 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   .beam,
   .cta-conic::before,
   .cta-conic::after,
+  .mic-listening::before,
+  .mic-listening::after,
+  .reveal-ready [data-reveal].revealed .mock-row::after,
   .halo-card::before { display: none !important; }
+  /* Never leave a staged mock step or status badge hidden when motion is off. */
+  .reveal-ready [data-reveal] .mock-step,
+  .reveal-ready [data-reveal] .mock-done { opacity: 1 !important; }
   .orbit-ring::before { animation: none !important; }
   .reveal-ready [data-reveal].reveal-wipe { clip-path: none !important; }
 }
