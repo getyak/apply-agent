@@ -45,6 +45,7 @@ export default function PointerFX() {
     ).matches;
     if (reduce || !finePointer) return;
 
+    const root = document.documentElement;
     const cleanups: Array<() => void> = [];
 
     // ── Inertial spring engine ───────────────────────────────────────────────
@@ -251,6 +252,52 @@ export default function PointerFX() {
     if (blobs.length) {
       window.addEventListener("pointermove", onWindowMove, { passive: true });
     }
+
+    // ── Living atmosphere + idle life (v21) ──────────────────────────────────
+    // A single viewport-wide warm aura glides after the cursor on its own slow
+    // spring, dissolving the per-section pools into one continuous light field —
+    // the page reads as lit by a lamp the reader carries from top to bottom. The
+    // node is appended to <body> here (no markup opts in) and rests transparent +
+    // centred, so a no-JS page is untouched. Alongside it, the page gains *idle
+    // life*: holding still flips `html[data-idle]` so the field eases into a slow
+    // breath; the next cursor move clears it and resumes tracking.
+    const aura = document.createElement("div");
+    aura.className = "page-aura";
+    aura.setAttribute("aria-hidden", "true");
+    document.body.appendChild(aura);
+    const auraSpring = makeSpring([50, 42], 0.08, (v) => {
+      aura.style.setProperty("--px", `${v[0].toFixed(2)}%`);
+      aura.style.setProperty("--py", `${v[1].toFixed(2)}%`);
+    });
+    const IDLE_MS = 2600; // stillness before the field settles into its breath
+    let idleTimer = 0;
+    const onAtmosphere = (e: PointerEvent) => {
+      auraSpring.target[0] = (e.clientX / window.innerWidth) * 100;
+      auraSpring.target[1] = (e.clientY / window.innerHeight) * 100;
+      aura.dataset.active = "true";
+      root.dataset.idle = "false";
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        root.dataset.idle = "true";
+      }, IDLE_MS);
+      wake();
+    };
+    const onAtmosphereLeave = () => {
+      aura.dataset.active = "false";
+      window.clearTimeout(idleTimer);
+      root.dataset.idle = "false";
+    };
+    window.addEventListener("pointermove", onAtmosphere, { passive: true });
+    // `mouseleave` on the document fires when the cursor exits the window, so the
+    // field fades out instead of freezing at the last in-window position.
+    document.addEventListener("mouseleave", onAtmosphereLeave);
+    cleanups.push(() => {
+      window.removeEventListener("pointermove", onAtmosphere);
+      document.removeEventListener("mouseleave", onAtmosphereLeave);
+      window.clearTimeout(idleTimer);
+      aura.remove();
+      delete root.dataset.idle;
+    });
 
     return () => {
       cleanups.forEach((fn) => fn());

@@ -1927,3 +1927,66 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   .scroll-comet::after { display: none !important; }
   .scroll-comet { transform: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v21 — Living atmosphere & idle life
+   v4–v20 lit the surfaces, moved the light, choreographed the arrival,
+   connected the page into one system, handed the reader the lamp, and let the
+   page feel its own reading *velocity*. Every one of those layers reacted to a
+   direct input — where the cursor rests, how far (and how fast) the page is
+   scrolled — and each pool of warmth was bounded to a single section. v21 adds
+   the two dimensions none of them touched: a *continuous* light field, and
+   *idle life*.
+
+   First, a single viewport-wide warm aura now glides after the reader's cursor
+   across the whole page, dissolving the seams between the per-section pools
+   into one unbroken atmosphere — the paper reads as lit by a lamp the reader
+   carries from section to section rather than each surface waking in isolation.
+   Second, the page gains a pulse of its own: hold still and the field calms and
+   slowly breathes (`html[data-idle]`); the first flick of the cursor wakes it.
+
+   Additive + opt-in, as ever. PointerFX appends the aura node to <body> and
+   drives it on the same inertial spring engine, so no existing markup opts in
+   and nothing renders without JS. The pool rests fully transparent and centred,
+   blends `multiply` over the warm paper (so it only ever *warms*, never dims
+   text), and never intercepts a pointer. The island only arms on a fine pointer
+   with hover and bails entirely under reduced motion, so touch / keyboard /
+   motion-sensitive readers get the unchanged static page; the guard below pins
+   the calm state belt-and-braces.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Page aura — the continuous warm light field. Fixed to the viewport, painted
+   behind interaction (pointer-events:none) and blended `multiply` so it warms
+   the paper without ever darkening the copy it passes over. PointerFX writes
+   --px/--py (viewport %, eased) and toggles data-active at the window edge; with
+   no JS the node is never created, so the page is pixel-identical to its prior
+   state. */
+.page-aura {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  opacity: 0; mix-blend-mode: multiply; will-change: opacity, background;
+  transition: opacity var(--dur-slow) var(--ease-out);
+  background:
+    radial-gradient(760px circle at var(--px, 50%) var(--py, 42%),
+      rgba(232, 163, 23, 0.10), rgba(232, 163, 23, 0.03) 38%, transparent 60%),
+    radial-gradient(1100px circle at var(--px, 50%) var(--py, 42%),
+      rgba(122, 63, 0, 0.025), transparent 66%);
+}
+.page-aura[data-active="true"] { opacity: 1; }
+
+/* Idle breath — once the reader holds still (root gains data-idle), the live
+   field eases into a slow, low-amplitude breath so the page never reads as
+   frozen between gestures. The first cursor move clears data-idle and the pool
+   resumes tracking. One calm idle loop; hard-stopped under reduced motion. */
+@keyframes aura-breathe {
+  0%, 100% { opacity: 0.62; }
+  50%      { opacity: 0.96; }
+}
+html[data-idle="true"] .page-aura[data-active="true"] {
+  animation: aura-breathe 6.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The island never starts under reduced motion (so the node is never even
+     appended), but pin the calm state in case a stale attribute lingers. */
+  .page-aura { opacity: 0 !important; animation: none !important; }
+}
