@@ -515,6 +515,46 @@ body {
 .stagger > *:nth-child(11) { animation-delay: 0.64s; }
 .stagger > *:nth-child(12) { animation-delay: 0.70s; }
 
+/* ───────────────────────────────────────────────────────────────────────
+   Page choreography — driven by the LandingMotion client island. A scroll
+   rail, scroll-triggered reveals, and a condensing nav. The hidden pre-reveal
+   state is gated behind `html.reveal-ready`, which JS only adds once it has
+   mounted, so the page is fully visible if scripts never run.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Scroll-progress rail — a warm-gold thread pinned to the top of the viewport
+   that fills as the reader travels down. `scaleX` is written from rAF. */
+.scroll-progress {
+  position: fixed; top: 0; left: 0; right: 0; height: 2.5px; z-index: 60;
+  transform: scaleX(0); transform-origin: left;
+  background: linear-gradient(90deg, #A66A00, #e8a317 45%, #f3c869);
+  box-shadow: 0 0 12px -1px rgba(232, 163, 23, 0.7);
+  will-change: transform; pointer-events: none;
+}
+
+/* Scroll-reveal — elements rise + un-blur into place on first view. Per-element
+   cascade comes from inline `--reveal-delay`. Only armed once JS is live. */
+.reveal-ready [data-reveal] {
+  opacity: 0; transform: translateY(26px) scale(0.985); filter: blur(7px);
+  transition:
+    opacity 0.72s var(--ease-out) var(--reveal-delay, 0ms),
+    transform 0.72s var(--ease-out) var(--reveal-delay, 0ms),
+    filter 0.72s var(--ease-out) var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+.reveal-ready [data-reveal].revealed {
+  opacity: 1; transform: none; filter: blur(0);
+}
+
+/* Nav condense — once scrolled, the sticky header tightens its height, deepens
+   its blur, and lifts off the page with a hairline + shadow. */
+.site-nav { transition: height var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), background-color var(--dur-base) var(--ease-out); }
+[data-scrolled="true"] .site-nav {
+  height: 58px;
+  background: rgba(250, 248, 246, 0.92);
+  box-shadow: 0 6px 22px -14px rgba(61, 42, 20, 0.5), inset 0 -1px 0 var(--color-border, #EDE8DF);
+}
+
 /* Honour the OS "reduce motion" setting — collapse all animation + transition
    to near-instant so the app stays usable for motion-sensitive users. */
 @media (prefers-reduced-motion: reduce) {
@@ -524,6 +564,8 @@ body {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+  /* Reveal targets must never be left hidden when motion is suppressed. */
+  .reveal-ready [data-reveal] { opacity: 1 !important; transform: none !important; filter: none !important; }
 }
 
 /* DayPage Design System — semantic classes from colors_and_type.css */

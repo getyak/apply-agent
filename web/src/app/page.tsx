@@ -13,8 +13,10 @@ import {
   Zap,
   Send,
 } from "lucide-react";
+import type { CSSProperties } from "react";
 import HeroConsole from "@/components/hero-console";
 import PricingSection from "@/components/pricing-section";
+import LandingMotion from "@/components/landing-motion";
 
 const ASKS = [
   '"Find me product design roles under $200k, remote."',
@@ -120,6 +122,7 @@ export default async function HomePage({
   const showRedirectNotice = params.source === "app_redirect";
   return (
     <div className="min-h-screen">
+      <LandingMotion />
       {showRedirectNotice && (
         <div
           role="status"
@@ -135,8 +138,8 @@ export default async function HomePage({
         </div>
       )}
       {/* NAV */}
-      <header className="sticky top-0 z-40 backdrop-blur-[20px] bg-paper/82 border-b border-border">
-        <div className="max-w-[1140px] mx-auto px-4 sm:px-8 h-[66px] flex items-center gap-3.5">
+      <header className="site-nav sticky top-0 z-40 backdrop-blur-[20px] bg-paper/82 border-b border-border h-[66px]">
+        <div className="max-w-[1140px] mx-auto px-4 sm:px-8 h-full flex items-center gap-3.5">
           <div className="flex items-center gap-[9px]">
             <div className="w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -206,12 +209,19 @@ export default async function HomePage({
 
       {/* ATS strip */}
       <section className="max-w-[1140px] mx-auto px-6 sm:px-8 pt-2 pb-16">
-        <div className="flex items-center justify-center gap-[30px] flex-wrap">
+        <div data-reveal className="flex items-center justify-center gap-[30px] flex-wrap">
           <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-ink-muted">
             Fills forms on
           </span>
-          {["Greenhouse", "Lever", "Ashby", "Workday", "Workable"].map((name) => (
-            <span key={name} className="font-display font-semibold text-[17px] text-[#8a857d]">{name}</span>
+          {["Greenhouse", "Lever", "Ashby", "Workday", "Workable"].map((name, i) => (
+            <span
+              key={name}
+              data-reveal
+              style={{ "--reveal-delay": `${i * 60}ms` } as CSSProperties}
+              className="press font-display font-semibold text-[17px] text-[#8a857d] transition-[color,transform] duration-200 ease-out hover:text-brown hover:-translate-y-0.5"
+            >
+              {name}
+            </span>
           ))}
         </div>
       </section>
@@ -219,19 +229,19 @@ export default async function HomePage({
       {/* HOW IT WORKS */}
       <section id="how" className="bg-white border-y border-border">
         <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
-          <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
+          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             The loop<span className="eyebrow-rule" aria-hidden />
           </div>
-          <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
             From &ldquo;I need a job&rdquo; to submitted — in a handful of clicks.
           </h2>
-          <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
+          <p data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
             One calm loop that gets smarter every time you use it. No
             spray-and-pray. No filling the same form twice.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-[18px]">
-            {STEPS.map((step) => (
-              <div key={step.no} className="group">
+            {STEPS.map((step, i) => (
+              <div key={step.no} data-reveal style={{ "--reveal-delay": `${i * 80}ms` } as CSSProperties} className="group">
                 <div className="font-mono text-[11px] tracking-[0.5px] text-border-dark mb-3.5 transition-colors duration-200 group-hover:text-amber">
                   {step.no}
                 </div>
@@ -252,7 +262,7 @@ export default async function HomePage({
 
       {/* CHAT FIRST */}
       <section id="chat" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[90px] grid grid-cols-1 md:grid-cols-[1fr_1.05fr] gap-10 md:gap-[60px] items-center">
-        <div>
+        <div data-reveal>
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             Chat is the interface<span className="eyebrow-rule" aria-hidden />
           </div>
@@ -280,7 +290,7 @@ export default async function HomePage({
         </div>
 
         {/* Mini chat mock */}
-        <div className="group grad-border lift bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
+        <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="group grad-border lift bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
           <div className="h-12 border-b border-border flex items-center gap-2.5 px-[18px] bg-white">
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -348,16 +358,18 @@ export default async function HomePage({
       {/* FEATURES */}
       <section id="features" className="bg-white border-t border-border">
         <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
-          <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
+          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             What it does<span className="eyebrow-rule" aria-hidden />
           </div>
-          <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
             Six agents. One career context that keeps growing.
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {FEATURES.map((f) => (
+            {FEATURES.map((f, i) => (
               <div
                 key={f.title}
+                data-reveal
+                style={{ "--reveal-delay": `${(i % 3) * 80}ms` } as CSSProperties}
                 className="group lift spotlight sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
               >
                 <span className="sheen" aria-hidden />
@@ -379,15 +391,15 @@ export default async function HomePage({
       {/* DIFFERENTIATORS */}
       <section className="bg-dark">
         <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
-          <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
+          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
             Three bets we made
           </div>
-          <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
             Built the opposite way to every mass-apply bot.
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">
-            {BETS.map((b) => (
-              <div key={b.k} className="group border-t border-dark-border pt-[22px] transition-colors duration-300 hover:border-gold/50">
+            {BETS.map((b, i) => (
+              <div key={b.k} data-reveal style={{ "--reveal-delay": `${i * 90}ms` } as CSSProperties} className="group border-t border-dark-border pt-[22px] transition-colors duration-300 hover:border-gold/50">
                 <div className="font-display font-bold text-[30px] gradient-text mb-3.5 transition-transform duration-300 ease-out group-hover:-translate-y-0.5">
                   {b.k}
                 </div>
@@ -408,7 +420,7 @@ export default async function HomePage({
 
       {/* CTA */}
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
-        <div className="group grad-border relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
+        <div data-reveal className="group grad-border relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
           {/* Warm light pooling under the headline. */}
           <div aria-hidden className="aurora-blob -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">
