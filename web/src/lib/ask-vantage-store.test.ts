@@ -135,3 +135,60 @@ describe("updateTaskGraphStepById", () => {
     ).not.toThrow();
   });
 });
+
+describe("appendReasoning", () => {
+  it("appends onto the most recently started running agent event", () => {
+    useDock.getState().updateAgentEvent({
+      id: "evt-1",
+      agent: "coordinator",
+      label: "COORDINATOR · thinking",
+      state: "running",
+      statusText: "Thinking",
+      ts: 100,
+    });
+    useDock.getState().updateAgentEvent({
+      id: "evt-2",
+      agent: "jobmatch_agent",
+      label: "SCOUT AGENT · thinking",
+      state: "running",
+      statusText: "Thinking",
+      ts: 200,
+    });
+    useDock.getState().appendReasoning("first chunk");
+    useDock.getState().appendReasoning(" second chunk");
+    const evt2 = useDock.getState().agentEvents["evt-2"];
+    expect(evt2.reasoningText).toBe("first chunk second chunk");
+    const evt1 = useDock.getState().agentEvents["evt-1"];
+    expect(evt1.reasoningText).toBeUndefined();
+  });
+
+  it("ignores reasoning when no agent is running", () => {
+    useDock.getState().updateAgentEvent({
+      id: "evt-done",
+      agent: "coordinator",
+      label: "COORDINATOR · done",
+      state: "done",
+      statusText: "Done · 1.2s",
+      ts: 300,
+    });
+    expect(() =>
+      useDock.getState().appendReasoning("orphan reasoning"),
+    ).not.toThrow();
+    const evt = useDock.getState().agentEvents["evt-done"];
+    expect(evt.reasoningText).toBeUndefined();
+  });
+
+  it("drops empty text without mutating state", () => {
+    useDock.getState().updateAgentEvent({
+      id: "evt-3",
+      agent: "coordinator",
+      label: "COORDINATOR · thinking",
+      state: "running",
+      statusText: "Thinking",
+      ts: 400,
+    });
+    useDock.getState().appendReasoning("");
+    const evt = useDock.getState().agentEvents["evt-3"];
+    expect(evt.reasoningText).toBeUndefined();
+  });
+});

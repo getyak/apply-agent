@@ -15,6 +15,7 @@ from typing import Literal
 from langchain_openai import ChatOpenAI
 
 Tier = Literal["heavy", "general", "fast"]
+ReasoningEffort = Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True)
@@ -33,13 +34,40 @@ MODELS: dict[Tier, ModelSpec] = {
 }
 
 
-def pick_model(tier: Tier, temperature: float = 0.3, max_tokens: int = 4096) -> ChatOpenAI:
-    """Return a ChatOpenAI bound to OpenRouter with the chosen tier."""
+def pick_model(
+    tier: Tier,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    reasoning_effort: ReasoningEffort | None = "medium",
+) -> ChatOpenAI:
+    """Return a ChatOpenAI bound to OpenRouter with the chosen tier.
+
+    ``reasoning_effort`` opts the request into OpenRouter's extended-thinking
+    passthrough. DeepSeek V4 Pro and GLM-4.7 return a ``reasoning`` field on
+    each stream delta when this is set; V4 Flash silently returns empty
+    (dock_agent drops empty reasoning chunks). Pass ``None`` to suppress the
+    passthrough entirely (saves ~1-3% tokens on tiers that don't reason).
+    """
     spec = MODELS[tier]
     base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
+
+    extra_body: dict[str, object] = {
+        # Lock provider routing for stability on critical prompts (see
+        # cicd-aiops-harness.md § 6 pitfall #2 — OpenRouter silent provider swaps).
+        "provider": {"allow_fallbacks": True},
+    }
+    if reasoning_effort is not None:
+        # OpenRouter extended-thinking passthrough. The `reasoning` field
+        # asks the upstream provider to surface chain-of-thought; the
+        # `include_reasoning: True` belt-and-braces is for providers that
+        # honor the legacy flag instead. dock_agent reads the deltas from
+        # AIMessageChunk.additional_kwargs["reasoning"] and emits them as
+        # `reasoning_delta` SSE frames the dock renders inline.
+        extra_body["reasoning"] = {"effort": reasoning_effort}
+        extra_body["include_reasoning"] = True
 
     return ChatOpenAI(
         model=spec.openrouter_id,
@@ -57,9 +85,7 @@ def pick_model(tier: Tier, temperature: float = 0.3, max_tokens: int = 4096) -> 
         # leak file descriptors.
         max_retries=3,
         request_timeout=30,
-        # Lock provider routing for stability on critical prompts (see
-        # cicd-aiops-harness.md § 6 pitfall #2 — OpenRouter silent provider swaps).
-        model_kwargs={"extra_body": {"provider": {"allow_fallbacks": True}}},
+        model_kwargs={"extra_body": extra_body},
     )
 
 

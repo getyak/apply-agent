@@ -253,6 +253,149 @@ def test_translate_event_unknown_returns_none():
     assert dock_agent._translate_event({}) is None
 
 
+# ─── Inline-detail upgrade tests ─────────────────────────────────────
+# Reasoning passthrough + same-chunk text/reasoning + result truncation.
+
+def test_extract_reasoning_from_additional_kwargs():
+    """OpenRouter primary path: chunk.additional_kwargs['reasoning']."""
+
+    class _Chunk:
+        content = ""
+        additional_kwargs = {"reasoning": "Let me think about this…"}
+
+    assert (
+        dock_agent._extract_reasoning(_Chunk())
+        == "Let me think about this…"
+    )
+
+
+def test_extract_reasoning_from_reasoning_content_fallback():
+    """Some providers use the legacy `reasoning_content` key."""
+
+    class _Chunk:
+        content = ""
+        additional_kwargs = {"reasoning_content": "fallback thought"}
+
+    assert dock_agent._extract_reasoning(_Chunk()) == "fallback thought"
+
+
+def test_extract_reasoning_from_content_block():
+    """Anthropic-style content list with a type: reasoning block."""
+
+    class _Chunk:
+        additional_kwargs = {}
+        content = [
+            {"type": "reasoning", "text": "block-a"},
+            {"type": "text", "text": "actual answer"},
+            {"type": "reasoning", "text": "block-b"},
+        ]
+
+    assert dock_agent._extract_reasoning(_Chunk()) == "block-ablock-b"
+
+
+def test_extract_reasoning_returns_empty_when_absent():
+    """No reasoning anywhere → empty string (caller drops the event)."""
+
+    class _Chunk:
+        content = "just text"
+        additional_kwargs = {}
+
+    assert dock_agent._extract_reasoning(_Chunk()) == ""
+
+
+def test_extract_text_skips_reasoning_blocks():
+    """Content-list reasoning blocks must NOT leak into the user-visible text."""
+
+    class _Chunk:
+        content = [
+            {"type": "reasoning", "text": "secret thought"},
+            {"type": "text", "text": "hello"},
+        ]
+        additional_kwargs = {}
+
+    assert dock_agent._extract_text(_Chunk()) == "hello"
+
+
+def test_translate_event_multi_emits_reasoning_delta_only():
+    """A chunk with only reasoning → one reasoning_delta DockEvent."""
+
+    class _Chunk:
+        content = ""
+        additional_kwargs = {"reasoning": "thinking out loud"}
+
+    out = dock_agent._translate_event_multi(
+        {"event": "on_chat_model_stream", "data": {"chunk": _Chunk()}}
+    )
+    assert len(out) == 1
+    assert out[0].kind == "reasoning_delta"
+    assert out[0].payload == {"text": "thinking out loud"}
+
+
+def test_translate_event_multi_emits_both_text_and_reasoning():
+    """Same chunk carries both lanes — emit reasoning first, then text."""
+
+    class _Chunk:
+        content = "the answer is X"
+        additional_kwargs = {"reasoning": "I considered Y and Z"}
+
+    out = dock_agent._translate_event_multi(
+        {"event": "on_chat_model_stream", "data": {"chunk": _Chunk()}}
+    )
+    assert [(e.kind, e.payload["text"]) for e in out] == [
+        ("reasoning_delta", "I considered Y and Z"),
+        ("assistant_delta", "the answer is X"),
+    ]
+
+
+def test_translate_event_multi_passes_through_non_chat_events():
+    """on_tool_start still flows through the single-event translator."""
+
+    out = dock_agent._translate_event_multi(
+        {
+            "event": "on_tool_start",
+            "name": "find_jobs",
+            "data": {"input": {"query": "react"}},
+        }
+    )
+    assert len(out) == 1
+    assert out[0].kind == "tool_start"
+    assert out[0].payload == {"tool": "find_jobs", "args": {"query": "react"}}
+
+
+def test_cap_for_wire_passes_small_value_through():
+    """Small results round-trip unchanged so JsonBlock pretty-prints them."""
+
+    small = {"matches": [{"id": "j1"}, {"id": "j2"}]}
+    assert dock_agent._cap_for_wire(small) == small
+
+
+def test_cap_for_wire_truncates_oversize_value():
+    """Anything bigger than the 8 KiB cap is stringified + suffixed."""
+
+    huge = {"items": ["x" * 100 for _ in range(500)]}
+    capped = dock_agent._cap_for_wire(huge)
+    assert isinstance(capped, str)
+    assert capped.endswith("…[truncated]")
+    assert len(capped.encode("utf-8")) <= dock_agent._TOOL_RESULT_CAP_BYTES + 32
+
+
+def test_tool_end_payload_carries_capped_result():
+    """on_tool_end branch runs results through _cap_for_wire."""
+
+    big = {"rows": ["x" * 50 for _ in range(500)]}
+    evt = dock_agent._translate_event(
+        {
+            "event": "on_tool_end",
+            "name": "find_jobs",
+            "data": {"output": big},
+        }
+    )
+    assert evt is not None
+    assert evt.kind == "tool_end"
+    assert isinstance(evt.payload["result"], str)
+    assert evt.payload["result"].endswith("…[truncated]")
+
+
 def test_build_dock_graph_invalid_tier():
     with pytest.raises(ValueError, match="invalid dock tier"):
         dock_agent.build_dock_graph(tier="ultra")

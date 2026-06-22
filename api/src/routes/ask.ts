@@ -242,6 +242,15 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
     // itself; we'll let those override the synthesis (TODO once the
     // upstream event lands).
     let graphEmitted = false;
+    // Inline-detail upgrade: tool_start arrives as an SSE `thinking` frame
+    // carrying { tool, args }; tool_end arrives as a `tool_trace` frame
+    // carrying { tool, result }. We stash the args from the start frame
+    // here keyed by tool name so the matching trace frame can pick them up
+    // and emit a single NDJSON tool_trace with BOTH input + output. If a
+    // tool runs twice in a turn the second start overwrites the first
+    // (LangGraph never interleaves the same tool name within one
+    // create_react_agent step, so this is safe in practice).
+    const pendingToolArgs = new Map<string, unknown>();
 
     try {
       while (true) {
@@ -302,6 +311,23 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
             }
             continue;
           }
+          // Reasoning lane. dock_agent emits `event: "reasoning"` when the
+          // upstream provider (DeepSeek V4 Pro / GLM-4.7 via OpenRouter's
+          // extended-thinking passthrough) returns a chain-of-thought
+          // delta. The dock paints these inside the "Thinking" body so the
+          // user can watch the model's reasoning stream live. We don't
+          // append to assistantBuf — reasoning is *not* the user-visible
+          // turn message; only `text` deltas belong to the history record.
+          if (payload.event === "reasoning") {
+            const text =
+              typeof payload.text === "string" ? (payload.text as string) : "";
+            if (text) {
+              await out.write(
+                JSON.stringify({ kind: "reasoning_delta", text }) + "\n",
+              );
+            }
+            continue;
+          }
           // Step 1 — Narrator chip. dock_agent emits `event: "narrator"`
           // when the LLM calls the `narrate(thought)` tool right before an
           // execution tool. We forward it as a `narrator` NDJSON frame.
@@ -316,6 +342,22 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
           // result event for every visible execution tool. The dock
           // renders it as a one-line collapsible "console" row.
           if (payload.event === "tool_trace") {
+            // Hydrate args from the matching prior `thinking` frame (if
+            // any). Consumed once so a re-emitted trace doesn't claim
+            // stale args. The result field already rides on the trace
+            // frame itself — toolTraceNdjson forwards it verbatim.
+            const toolName =
+              typeof payload.tool === "string"
+                ? (payload.tool as string)
+                : "";
+            if (
+              toolName &&
+              payload.args === undefined &&
+              pendingToolArgs.has(toolName)
+            ) {
+              payload.args = pendingToolArgs.get(toolName);
+              pendingToolArgs.delete(toolName);
+            }
             const line = toolTraceNdjson(payload);
             if (line) await out.write(line + "\n");
             continue;
@@ -349,6 +391,22 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
             if (graph) {
               graphEmitted = true;
               await out.write(JSON.stringify({ kind: "task_graph", graph }) + "\n");
+            }
+          }
+          // Inline-detail upgrade: when the upstream emits a `thinking`
+          // frame for a tool_start it stamps `tool` + `args` on the
+          // envelope (see api/server.py::_dock_event_to_sse). We stash
+          // them so the upcoming matching tool_trace frame can carry
+          // BOTH input + output. The frame itself still goes through
+          // toNdjson below — args are silently ignored there because the
+          // legacy agent_start record has no field for them.
+          if (payload.event === "thinking") {
+            const toolName =
+              typeof payload.tool === "string"
+                ? (payload.tool as string)
+                : "";
+            if (toolName && payload.args !== undefined) {
+              pendingToolArgs.set(toolName, payload.args);
             }
           }
           for (const line of toNdjson(payload, seenAgents)) {
@@ -992,6 +1050,13 @@ export function toolTraceNdjson(payload: Record<string, unknown>): string | null
   // strings; anything else is silently dropped.
   const planStep =
     typeof payload.plan_step === "string" ? (payload.plan_step as string) : "";
+  // Inline-detail upgrade: forward args + result so the dock's ToolTraceRow
+  // can render Input / Output blocks. Both are optional — dock_agent strips
+  // huge results to 8 KiB before they ever reach us, and the gateway
+  // doesn't try to validate the shape (any JSON value is fine — JsonBlock
+  // on the client pretty-prints with defensive truncation).
+  const args = payload.args;
+  const result = payload.result;
   return JSON.stringify({
     kind: "tool_trace",
     tool,
@@ -1000,6 +1065,8 @@ export function toolTraceNdjson(payload: Record<string, unknown>): string | null
     status,
     summary,
     ...(planStep ? { plan_step: planStep } : {}),
+    ...(args !== undefined ? { args } : {}),
+    ...(result !== undefined ? { result } : {}),
   });
 }
 
@@ -1117,6 +1184,10 @@ routes.post("/resume", validateBody(AskResumeBody), async (c) => {
     let buf = "";
     const seenAgents = new Set<string>();
     const threadId = resume_token.split("#", 1)[0];
+    // Mirror of /ask/stream's pendingToolArgs: capture args from the
+    // upstream `thinking` frame so the matching `tool_trace` can fold
+    // them into the same NDJSON line.
+    const pendingToolArgs = new Map<string, unknown>();
 
     try {
       while (true) {
@@ -1138,6 +1209,17 @@ routes.post("/resume", validateBody(AskResumeBody), async (c) => {
             }
             continue;
           }
+          // Reasoning lane (resume path mirrors /ask/stream).
+          if (payload.event === "reasoning") {
+            const text =
+              typeof payload.text === "string" ? (payload.text as string) : "";
+            if (text) {
+              await out.write(
+                JSON.stringify({ kind: "reasoning_delta", text }) + "\n",
+              );
+            }
+            continue;
+          }
           // Step 1 — Narrator chip (resume path mirrors /ask/stream).
           if (payload.event === "narrator") {
             const line = narratorNdjson(payload.text);
@@ -1146,6 +1228,18 @@ routes.post("/resume", validateBody(AskResumeBody), async (c) => {
           }
           // Step 3 — Tool console (resume path mirrors /ask/stream).
           if (payload.event === "tool_trace") {
+            const toolName =
+              typeof payload.tool === "string"
+                ? (payload.tool as string)
+                : "";
+            if (
+              toolName &&
+              payload.args === undefined &&
+              pendingToolArgs.has(toolName)
+            ) {
+              payload.args = pendingToolArgs.get(toolName);
+              pendingToolArgs.delete(toolName);
+            }
             const line = toolTraceNdjson(payload);
             if (line) await out.write(line + "\n");
             continue;
@@ -1160,6 +1254,17 @@ routes.post("/resume", validateBody(AskResumeBody), async (c) => {
             const line = toHitlNdjson(payload.value, threadId);
             if (line) await out.write(line + "\n");
             continue;
+          }
+          // Stash tool args from `thinking` frames so tool_trace can pick
+          // them up (mirrors /ask/stream).
+          if (payload.event === "thinking") {
+            const toolName =
+              typeof payload.tool === "string"
+                ? (payload.tool as string)
+                : "";
+            if (toolName && payload.args !== undefined) {
+              pendingToolArgs.set(toolName, payload.args);
+            }
           }
           for (const line of toNdjson(payload, seenAgents)) {
             await out.write(line + "\n");

@@ -744,3 +744,104 @@ def test_ask_stream_dock_no_plan_omits_plan_step(client, monkeypatch):
     events = _parse_sse(resp.text)
     for ev in events:
         assert "plan_step" not in ev, f"unexpected plan_step on {ev}"
+
+
+# ─── Inline-detail upgrade SSE protocol tests ──────────────────────────
+
+def test_ask_stream_dock_forwards_reasoning_event(client, monkeypatch):
+    """reasoning_delta DockEvent must surface as `event: reasoning` on the wire."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    tc, _ = client
+
+    async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
+        yield _make_dock_event("reasoning_delta", {"text": "let me check…"})
+        yield _make_dock_event("reasoning_delta", {"text": " and weigh options."})
+        yield _make_dock_event("assistant_delta", {"text": "Sure thing."})
+        yield _make_dock_event("done", {})
+
+    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
+        "agents.api.server.persist_turn", new=AsyncMock()
+    ):
+        resp = tc.post("/ask/stream", json={"message": "anything"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    reasoning_frames = [e for e in events if e.get("event") == "reasoning"]
+    assert [r["text"] for r in reasoning_frames] == [
+        "let me check…",
+        " and weigh options.",
+    ]
+
+
+def test_ask_stream_dock_empty_reasoning_is_dropped(client, monkeypatch):
+    """An empty reasoning payload must not produce a wire frame."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    tc, _ = client
+
+    async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
+        yield _make_dock_event("reasoning_delta", {"text": ""})
+        yield _make_dock_event("done", {})
+
+    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
+        "agents.api.server.persist_turn", new=AsyncMock()
+    ):
+        resp = tc.post("/ask/stream", json={"message": "anything"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert not any(e.get("event") == "reasoning" for e in events)
+
+
+def test_ask_stream_dock_tool_start_carries_tool_and_args(client, monkeypatch):
+    """The `thinking` frame for a visible tool must carry tool + args inline."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    tc, _ = client
+
+    async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
+        yield _make_dock_event(
+            "tool_start",
+            {"tool": "list_my_applications", "args": {"status": "open"}},
+        )
+        yield _make_dock_event(
+            "tool_end",
+            {
+                "tool": "list_my_applications",
+                "result": {"status": "ok", "items": [], "count": 0},
+            },
+        )
+        yield _make_dock_event("done", {})
+
+    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
+        "agents.api.server.persist_turn", new=AsyncMock()
+    ):
+        resp = tc.post("/ask/stream", json={"message": "list my apps"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    thinking = [e for e in events if e.get("event") == "thinking"]
+    assert any(
+        t.get("tool") == "list_my_applications"
+        and t.get("args") == {"status": "open"}
+        for t in thinking
+    )
+
+
+def test_ask_stream_dock_tool_trace_includes_result(client, monkeypatch):
+    """The tool_trace frame must surface the (capped) result for the dock console."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    tc, _ = client
+
+    result_body = {"status": "ok", "items": [{"id": "j1"}], "count": 1}
+
+    async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
+        yield _make_dock_event(
+            "tool_end", {"tool": "list_my_applications", "result": result_body}
+        )
+        yield _make_dock_event("done", {})
+
+    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
+        "agents.api.server.persist_turn", new=AsyncMock()
+    ):
+        resp = tc.post("/ask/stream", json={"message": "list my apps"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    traces = [e for e in events if e.get("event") == "tool_trace"]
+    assert len(traces) == 1
+    assert traces[0]["result"] == result_body

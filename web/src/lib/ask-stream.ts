@@ -125,6 +125,12 @@ export interface ApprovalFrame {
 
 type StreamFrame =
   | { kind: "text"; delta: string }
+  // Provider chain-of-thought delta. Only emitted when the picked tier
+  // honors OpenRouter's `reasoning` passthrough (DeepSeek V4 Pro / GLM-
+  // 4.7); V4 Flash drops these so the dock's Thinking body stays empty
+  // for cheap-tier turns. Always additive — pre-reasoning clients
+  // (e.g. older extension builds) hit the default branch and ignore it.
+  | { kind: "reasoning_delta"; text: string }
   | { kind: "task_graph"; graph: TaskGraph }
   // Step 1 — italic "thought-aloud" chip the dock_agent emits immediately
   // before each execution tool. One short user-facing sentence; no CoT.
@@ -142,6 +148,10 @@ type StreamFrame =
       status: "ok" | "error";
       summary: string;
       plan_step?: string;
+      // Inline-detail upgrade: raw input + (server-capped) output. Both
+      // optional so older Python backends still parse cleanly.
+      args?: unknown;
+      result?: unknown;
     }
   // Step 4 — `plan_step` is optional (only present when the dock_agent
   // path is on AND the model called a plan-aligned tool). Older legacy
@@ -290,7 +300,17 @@ export interface AskStreamCallbacks {
     status: "ok" | "error";
     summary: string;
     planStep?: string;
+    // Inline-detail upgrade: raw tool input + (capped) output. Optional —
+    // older Python backends won't ship them, in which case the dock's
+    // ToolTraceRow keeps its prior metadata-only expand panel.
+    args?: unknown;
+    result?: unknown;
   }) => void;
+  // Provider chain-of-thought delta. Fires only when the picked tier
+  // honours OpenRouter's `reasoning` passthrough (DeepSeek V4 Pro / GLM-
+  // 4.7). Optional: callers that don't want to render reasoning just
+  // omit the handler and the lane is dropped silently.
+  onReasoning?: (text: string) => void;
   // Coordinator's plan for the current turn. Fires once, before any
   // agent_start. The dock renders it as a task-graph card so users see
   // *what's about to happen* instead of waiting for opaque agent spinners.
@@ -387,6 +407,11 @@ export async function runAskStream({
       case "text":
         cb.onAssistantDelta(frame.delta);
         return "continue";
+      case "reasoning_delta":
+        // Provider chain-of-thought. Drop silently for callers that
+        // haven't opted in; the lane is purely additive.
+        if (cb.onReasoning) cb.onReasoning(frame.text);
+        return "continue";
       case "narrator":
         // Drop silently for callers that haven't opted in. Resume Studio's
         // local-callback flow doesn't render narrators yet; dropping keeps
@@ -402,6 +427,8 @@ export async function runAskStream({
             status: frame.status,
             summary: frame.summary,
             planStep: frame.plan_step,
+            args: frame.args,
+            result: frame.result,
           });
         }
         return "continue";
@@ -808,6 +835,15 @@ export async function sendAsk(
     abortController: controller,
     callbacks: {
       onAssistantDelta: updateAssistant,
+      onReasoning: (text) => {
+        // Provider chain-of-thought delta — append to the most recent
+        // running agent event so the dock's ReasoningSummary can paint
+        // the live transcript inside its expandable Thinking body.
+        // Dropped on the floor if no agent is currently running (the
+        // store mutator handles that case so we don't have to here).
+        if (!ourBubbleAlive()) return;
+        dock.appendReasoning(text);
+      },
       onNarrator: (text) => {
         // Each narrator chip lives as its own message so it interleaves
         // naturally with task_graph / agents / artifact in the dock log.
@@ -846,6 +882,12 @@ export async function sendAsk(
           toolStatus: frame.status,
           toolSummary: frame.summary,
           toolStartedAt: Date.now(),
+          // Inline-detail upgrade: surface raw input + (capped) output
+          // so the dock's ToolTraceRow can render expandable
+          // Input / Output JSON blocks. Both undefined → falls back to
+          // the prior metadata-only expand panel.
+          toolArgs: frame.args,
+          toolResult: frame.result,
         });
       },
       onTaskGraph: (graph) => {

@@ -467,10 +467,10 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
           <div
             style={{
               borderTop: "1px solid #F0E8DA",
-              padding: "8px 14px 12px 38px",
+              padding: "10px 14px 12px 38px",
               display: "flex",
               flexDirection: "column",
-              gap: 4,
+              gap: 8,
               background: "#FBF8F3",
             }}
           >
@@ -489,9 +489,91 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
             <div className="ds-mono-9" style={{ color: "#A39F99" }}>
               status · <span style={{ color: dotColor }}>{status}</span>
             </div>
+            {/* Inline-detail upgrade: surface the raw tool input + output
+                so a user (or developer) can see exactly what the agent
+                said and what came back. The Output is server-capped to
+                8 KiB; JsonBlock additionally clamps render to ~200 lines.
+                When either is undefined the section silently disappears
+                (older backends won't ship the fields). */}
+            {m.toolArgs !== undefined ? (
+              <JsonBlock label="Input" value={m.toolArgs} />
+            ) : null}
+            {m.toolResult !== undefined ? (
+              <JsonBlock label="Output" value={m.toolResult} />
+            ) : null}
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// JsonBlock — small pretty-printed JSON viewer used inside ToolTraceRow's
+// expand panel. Caps rendering to the first ~200 lines (matches the
+// 8 KiB server-side truncation in dock_agent._cap_for_wire) so a runaway
+// tool result can't blow up the dock's layout. A "show more" toggle
+// lets the curious unfold the rest in-place; nothing is hidden from
+// keyboard / copy.
+const JSONBLOCK_PREVIEW_LINES = 200;
+function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const pretty = useMemo(() => {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      // Circular ref or other JSON crash — fall back to a plain string
+      // so we at least show *something* instead of crashing the row.
+      return String(value);
+    }
+  }, [value]);
+  const lines = pretty.split("\n");
+  const overflowing = lines.length > JSONBLOCK_PREVIEW_LINES;
+  const visible =
+    overflowing && !expanded
+      ? lines.slice(0, JSONBLOCK_PREVIEW_LINES).join("\n")
+      : pretty;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div className="ds-mono-9" style={{ color: "#A39F99" }}>
+        {label.toLowerCase()}
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          background: "#FFFFFF",
+          border: "1px solid #F0E8DA",
+          borderRadius: 6,
+          padding: "8px 10px",
+          maxHeight: 220,
+          overflowY: "auto",
+          overflowX: "auto",
+          fontFamily: "JetBrains Mono, ui-monospace, monospace",
+          fontSize: 11.5,
+          lineHeight: 1.5,
+          color: "#2B2822",
+          whiteSpace: "pre",
+          wordBreak: "normal",
+        }}
+      >
+        {visible}
+        {overflowing && !expanded ? `\n…${lines.length - JSONBLOCK_PREVIEW_LINES} more lines` : ""}
+      </pre>
+      {overflowing ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="ds-mono-9"
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            color: "#5D3000",
+            alignSelf: "flex-start",
+            padding: "2px 0",
+          }}
+        >
+          {expanded ? "show less" : "show all"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1329,7 +1411,12 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    // Tighter rhythm — vantage-ui-mapping.md §0 "Vantage is one
+    // conversation": the RECENT rail is a glanceable index, not
+    // featured content. Reduced row gap + padding + leading so a
+    // long history fits without scrolling and visually defers to
+    // the live conversation column on the right.
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {anchors.map((a) => {
         const isMiss = pulseId === `miss:${a.id}`;
         return (
@@ -1342,7 +1429,7 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
               all: "unset",
               cursor: "pointer",
               display: "block",
-              padding: "8px 8px",
+              padding: "6px 8px",
               borderRadius: 8,
               transition: "background .12s ease-out",
               background: isMiss ? "#FCE9E1" : "transparent",
@@ -1357,8 +1444,8 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
             <div
               style={{
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 13,
-                lineHeight: 1.4,
+                fontSize: 12.5,
+                lineHeight: 1.35,
                 color: "#2B2822",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -1369,7 +1456,7 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
             </div>
             <div
               className="ds-mono-9"
-              style={{ marginTop: 2, color: isMiss ? "#A23A2E" : "#A39F99" }}
+              style={{ marginTop: 1, color: isMiss ? "#A23A2E" : "#A39F99" }}
             >
               {isMiss ? "older — open thread to see" : relativeTime(a.createdAt)}
             </div>
@@ -1551,6 +1638,12 @@ export function AskVantageDock() {
   }
 
   if (state === "closed") {
+    // Slim launcher — vantage-ui-mapping.md §0 spec: "54px slim
+    // launcher". A floating brand-cream pill (vs. the previous solid
+    // brown chip) so the closed dock reads as "the conversation is
+    // resting here", not "press this big button". Vertical, brand-mark
+    // only, with a calm shadow that mirrors the composer's lifted
+    // card — the two surfaces feel like one design language.
     return (
       <button
         onClick={toggleDock}
@@ -1561,34 +1654,75 @@ export function AskVantageDock() {
         style={{
           position: "fixed",
           bottom: 26,
-          right: 26,
+          right: 16,
           zIndex: 50,
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
-          gap: 9,
-          background: "#5D3000",
-          color: "#FAF8F6",
-          border: "none",
-          borderRadius: 999,
-          padding: "13px 19px 13px 15px",
-          boxShadow: "0 10px 30px rgba(40,25,5,.30)",
+          justifyContent: "center",
+          gap: 8,
+          width: 54,
+          height: 116,
+          background: "#FAF8F6",
+          color: "#5D3000",
+          border: "1px solid rgba(40,25,5,.08)",
+          borderRadius: 27,
+          padding: "14px 0",
+          // Lifted-card shadow — same tone as the composer card so the
+          // dock surfaces read as one floating-paper family.
+          boxShadow:
+            "0 1px 2px rgba(40,25,5,.05), 0 12px 32px rgba(40,25,5,.10)",
           cursor: "pointer",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontWeight: 600,
-          fontSize: 14,
-          transition: "background .16s, transform .16s",
+          fontFamily: "JetBrains Mono, ui-monospace, monospace",
+          transition:
+            "background .18s ease, transform .18s ease, box-shadow .18s ease, border-color .18s ease",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "#7A3F00";
+          e.currentTarget.style.background = "#FFFFFF";
           e.currentTarget.style.transform = "translateY(-1px)";
+          e.currentTarget.style.borderColor = "rgba(93,48,0,.18)";
+          e.currentTarget.style.boxShadow =
+            "0 2px 4px rgba(40,25,5,.06), 0 16px 40px rgba(40,25,5,.14)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = "#5D3000";
+          e.currentTarget.style.background = "#FAF8F6";
           e.currentTarget.style.transform = "translateY(0)";
+          e.currentTarget.style.borderColor = "rgba(40,25,5,.08)";
+          e.currentTarget.style.boxShadow =
+            "0 1px 2px rgba(40,25,5,.05), 0 12px 32px rgba(40,25,5,.10)";
         }}
       >
-        <VantageMark size={18} />
-        Ask Vantage
+        <span
+          aria-hidden
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            background: "#5D3000",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#FAF8F6",
+          }}
+        >
+          <VantageMark size={16} />
+        </span>
+        <span
+          aria-hidden
+          style={{
+            // Vertical "ASK" — visual signature like the agent status
+            // chips (COORDINATOR · THINKING) up in the dock header.
+            // writing-mode tilts the text so it reads bottom-to-top.
+            writingMode: "vertical-rl",
+            transform: "rotate(180deg)",
+            fontSize: 9,
+            letterSpacing: 1.5,
+            textTransform: "uppercase",
+            color: "#A39F99",
+          }}
+        >
+          Ask
+        </span>
       </button>
     );
   }
@@ -2066,6 +2200,10 @@ function Composer({
   const [listening, setListening] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
+  // Focus state drives the composer's "lift" — deeper shadow + warmer border
+  // when the user is actively writing, so the input feels tactile instead of
+  // static. Cheap to track; nothing else reads it.
+  const [focused, setFocused] = useState(false);
 
   // Auto-grow textarea — caps at maxHeight via CSS but we still want the
   // box to follow content up to that ceiling.
@@ -2202,8 +2340,9 @@ function Composer({
     <div
       style={{
         flexShrink: 0,
-        borderTop: "1px solid #EDE8DF",
-        padding: "12px 16px 16px",
+        // No top border — the composer card carries its own shadow so the
+        // outer surface stays a quiet background, not a "toolbar shelf".
+        padding: "10px 16px 16px",
         background: "#FBF8F3",
         position: "relative",
       }}
@@ -2359,14 +2498,19 @@ function Composer({
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: 10,
           background: "#FFFFFF",
-          border: "1px solid #E0D6C5",
-          borderRadius: 16,
-          padding: "10px 12px 8px",
-          boxShadow:
-            "0 1px 2px rgba(40,25,5,.04), 0 8px 24px rgba(40,25,5,.05)",
-          transition: "border-color .14s, box-shadow .14s",
+          // Hairline border carries the resting silhouette; shadow does the
+          // "lifted card" work. On focus both warm up together.
+          border: focused
+            ? "1px solid rgba(93,48,0,.28)"
+            : "1px solid rgba(40,25,5,.07)",
+          borderRadius: 22,
+          padding: "14px 16px 10px",
+          boxShadow: focused
+            ? "0 1px 2px rgba(40,25,5,.05), 0 12px 36px rgba(40,25,5,.10)"
+            : "0 1px 2px rgba(40,25,5,.04), 0 8px 28px rgba(40,25,5,.06)",
+          transition: "border-color .18s ease, box-shadow .18s ease",
         }}
       >
         <textarea
@@ -2374,9 +2518,16 @@ function Composer({
           value={input}
           onChange={handleInputChange}
           onKeyDown={onKeyDown}
-          onBlur={() => setTimeout(() => setMentionOpen(false), 120)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            // Delay closing the mention popover so a click inside it still lands.
+            setTimeout(() => setMentionOpen(false), 120);
+          }}
           data-vantage-composer="1"
-          placeholder="Ask anything, attach a résumé, or @team to delegate…"
+          // Single calm invitation. Discoverability for attach / @team lives
+          // on the icons (tooltip) and the chip groups, not on the placeholder.
+          placeholder="Ask anything"
           rows={1}
           style={{
             width: "100%",
@@ -2385,11 +2536,11 @@ function Composer({
             resize: "none",
             background: "transparent",
             fontFamily: "Inter, system-ui, sans-serif",
-            fontSize: 14,
-            lineHeight: 1.5,
+            fontSize: 14.5,
+            lineHeight: 1.55,
             color: "#2B2822",
-            maxHeight: 140,
-            minHeight: 24,
+            maxHeight: 160,
+            minHeight: 22,
             padding: 0,
           }}
         />
@@ -2397,7 +2548,7 @@ function Composer({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 4,
           }}
         >
           <input
@@ -2412,41 +2563,21 @@ function Composer({
               if (fileInputRef.current) fileInputRef.current.value = "";
             }}
           />
+          {/* Attach + @ are core actions, surfaced flat. Mic is secondary —
+              only appears while empty, and only when the browser supports it,
+              so the trailing edge is never crowded next to Send. */}
           <CircleIconButton
-            label="Attach file"
+            label="Attach file (PDF / DOCX / TXT)"
             disabled={uploading || streaming}
             onClick={() => fileInputRef.current?.click()}
           >
-            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
               <path d="M21.44 11.05L12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </CircleIconButton>
 
-          {/* Mic ⇄ Send swap (Claude-Code-style): when the textarea is empty,
-              show the mic; once the user starts typing or attaches a file,
-              hide the mic and show send. Keeps the trailing edge calm. */}
-          {!hasContent ? (
-            <CircleIconButton
-              label={
-                !speechSupported
-                  ? "Voice input unsupported in this browser"
-                  : listening
-                    ? "Stop voice input"
-                    : "Start voice input"
-              }
-              disabled={!speechSupported || streaming}
-              active={listening}
-              onClick={() => (listening ? stopListening() : startListening())}
-            >
-              <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="2" width="6" height="12" rx="3" />
-                <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3" />
-              </svg>
-            </CircleIconButton>
-          ) : null}
-
           <CircleIconButton
-            label="Mention agent team"
+            label="Mention an agent team"
             disabled={streaming}
             onClick={() => {
               const el = textareaRef.current;
@@ -2461,51 +2592,104 @@ function Composer({
               }, 0);
             }}
           >
-            <span style={{ fontFamily: "JetBrains Mono, ui-monospace, monospace", fontSize: 13 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                fontSize: 13,
+                fontWeight: 500,
+                lineHeight: 1,
+              }}
+            >
               @
             </span>
           </CircleIconButton>
 
+          {!hasContent && speechSupported ? (
+            <CircleIconButton
+              label={listening ? "Stop voice input" : "Voice input"}
+              disabled={streaming}
+              active={listening}
+              onClick={() => (listening ? stopListening() : startListening())}
+            >
+              <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3" />
+                <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3" />
+              </svg>
+            </CircleIconButton>
+          ) : null}
+
           <div style={{ flex: 1 }} />
 
-          <span className="ds-mono-9" style={{ color: "#A39F99" }}>
-            ⌘↵ SEND
-          </span>
-
-          {hasContent ? (
-            <button
-              onClick={onSubmit}
-              disabled={sendDisabled}
-              style={{
-                cursor: sendDisabled ? "not-allowed" : "pointer",
-                border: "none",
-                background: sendDisabled ? "#E0D6C5" : "#5D3000",
-                width: 34,
-                height: 34,
-                borderRadius: 10,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-                transition: "background .14s, transform .14s",
-              }}
-              aria-label="Send"
-              title="Send (⌘↵)"
-              onMouseEnter={(e) => {
-                if (sendDisabled) return;
-                e.currentTarget.style.background = "#7A3F00";
-                e.currentTarget.style.transform = "translateY(-1px)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = sendDisabled ? "#E0D6C5" : "#5D3000";
-                e.currentTarget.style.transform = "translateY(0)";
-              }}
+          {/* Hotkey hint earns its place only once there's something to send —
+              it becomes the calm acknowledgement that ⌘↵ will fire, paired
+              with the live Send button on the trailing edge. */}
+          {hasContent && !sendDisabled ? (
+            <span
+              className="ds-mono-9"
+              aria-hidden="true"
+              style={{ color: "#A39F99", marginRight: 6 }}
             >
-              <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#FAF8F6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" />
-              </svg>
-            </button>
+              ⌘↵
+            </span>
           ) : null}
+
+          <button
+            onClick={onSubmit}
+            disabled={sendDisabled}
+            style={{
+              cursor: sendDisabled ? "not-allowed" : "pointer",
+              border: "none",
+              // Resting state: low-saturation pebble — present, not noisy.
+              // Active state: solid brand brown — the moment "you can send".
+              background: sendDisabled ? "#F0E8DA" : "#5D3000",
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              transition:
+                "background .18s ease, transform .18s ease, box-shadow .18s ease",
+              boxShadow: sendDisabled
+                ? "none"
+                : "0 2px 6px rgba(93,48,0,.22)",
+            }}
+            aria-label={sendDisabled ? "Type a message to send" : "Send"}
+            title={sendDisabled ? "Type to send" : "Send (⌘↵)"}
+            onMouseEnter={(e) => {
+              if (sendDisabled) return;
+              e.currentTarget.style.background = "#7A3F00";
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.boxShadow =
+                "0 4px 10px rgba(93,48,0,.28)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = sendDisabled
+                ? "#F0E8DA"
+                : "#5D3000";
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.boxShadow = sendDisabled
+                ? "none"
+                : "0 2px 6px rgba(93,48,0,.22)";
+            }}
+          >
+            <svg
+              width={14}
+              height={14}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={sendDisabled ? "#B8AE9C" : "#FAF8F6"}
+              strokeWidth={2.25}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ transform: "translateY(-1px)" }}
+            >
+              {/* Up-arrow — the universally-read "send" glyph, matches Claude. */}
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          </button>
         </div>
       </div>
     </div>
@@ -2537,18 +2721,22 @@ function CircleIconButton({
         cursor: disabled ? "not-allowed" : "pointer",
         background: active ? "#F5EDE3" : "transparent",
         border: "none",
-        width: 30,
-        height: 30,
-        borderRadius: 8,
+        // 32px hit target = circle, same as Send. Keeps the trailing edge
+        // metrically consistent so attach / @ / mic / send all read as
+        // siblings, not a mixed toolbar.
+        width: 32,
+        height: 32,
+        borderRadius: 999,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        color: active ? "#5D3000" : disabled ? "#D6CEC0" : "#6B6560",
-        transition: "background .14s, color .14s",
+        color: active ? "#5D3000" : disabled ? "#D6CEC0" : "#8C857C",
+        transition:
+          "background .18s ease, color .18s ease, transform .18s ease",
       }}
       onMouseEnter={(e) => {
         if (disabled) return;
-        e.currentTarget.style.background = active ? "#F0E4D2" : "#FBF8F3";
+        e.currentTarget.style.background = active ? "#F0E4D2" : "#F5EFE5";
         e.currentTarget.style.color = "#5D3000";
       }}
       onMouseLeave={(e) => {
@@ -2557,7 +2745,7 @@ function CircleIconButton({
           ? "#5D3000"
           : disabled
             ? "#D6CEC0"
-            : "#6B6560";
+            : "#8C857C";
       }}
     >
       {children}

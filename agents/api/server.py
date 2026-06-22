@@ -578,6 +578,7 @@ def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[
 
     if kind == "tool_start":
         tool_name = evt.payload.get("tool") or ""
+        tool_args = evt.payload.get("args")
         agent, _action = _TOOL_AGENT_MAP.get(
             tool_name, ("coordinator", tool_name or "tool")
         )
@@ -592,6 +593,14 @@ def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[
         envelope: dict[str, Any] = {"event": "thinking", "agent": agent}
         if step_id:
             envelope["plan_step"] = step_id
+        # Inline-detail upgrade: forward the tool name + args so the gateway
+        # can stamp them onto the upcoming tool_trace frame. The dock's
+        # ToolTraceRow renders an Input block when args are present and
+        # falls back to metadata-only otherwise.
+        if tool_name and tool_name not in _CONSOLE_HIDDEN_TOOLS:
+            envelope["tool"] = tool_name
+            if tool_args:
+                envelope["args"] = tool_args
         return [_sse(envelope)]
 
     if kind == "tool_end":
@@ -620,6 +629,12 @@ def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[
             }
             if step_id:
                 trace_env["plan_step"] = step_id
+            # Inline-detail upgrade: surface the (capped) raw result so the
+            # dock's ToolTraceRow can render an Output block. Already capped
+            # to 8 KiB inside dock_agent._cap_for_wire; we don't re-encode
+            # here — JsonBlock on the client side does the pretty-print.
+            if result is not None:
+                trace_env["result"] = result
             out.append(_sse(trace_env))
         if isinstance(result, dict):
             result_env = {"event": "result", "agent": agent, "action": action, **result}
@@ -675,6 +690,16 @@ def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[
         # Additive "delta" event — TS gateway can fold it into a `text`
         # NDJSON frame in a follow-up; existing clients drop it silently.
         return [_sse({"event": "delta", "text": evt.payload.get("text", "")})]
+
+    if kind == "reasoning_delta":
+        # Provider chain-of-thought delta. Forwarded as its own SSE event
+        # so the gateway can promote it to an NDJSON `reasoning_delta`
+        # frame the dock paints inside the "Thinking" body. Pre-reasoning
+        # clients ignore the event entirely; the lane is additive.
+        text = evt.payload.get("text", "")
+        if not text:
+            return []
+        return [_sse({"event": "reasoning", "text": text})]
 
     if kind == "partial_artifact":
         # Step 5 — stream the in-progress snapshot through verbatim. The

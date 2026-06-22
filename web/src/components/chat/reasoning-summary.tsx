@@ -158,9 +158,60 @@ export function ReasoningSummary({ events, children }: ReasoningSummaryProps) {
             gap: 8,
           }}
         >
+          <ReasoningTranscript events={events} running={running} />
           {children}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// Live transcript of the provider's chain-of-thought. Concatenates
+// reasoning text across every AgentEvent in start order so a multi-agent
+// turn reads as one continuous thought-stream. Hidden when no event has
+// any reasoning yet (cheap tiers like V4 Flash never populate it).
+function ReasoningTranscript({
+  events,
+  running,
+}: {
+  events: AgentEvent[];
+  running: boolean;
+}) {
+  const transcript = useMemo(() => {
+    const parts: string[] = [];
+    for (const ev of events) {
+      const t = ev.reasoningText?.trim();
+      if (t) parts.push(t);
+    }
+    return parts.join("\n\n");
+  }, [events]);
+
+  if (!transcript) return null;
+
+  return (
+    <div
+      style={{
+        background: "#FFFFFF",
+        border: "1px solid #F0E8DA",
+        borderRadius: 8,
+        padding: "10px 12px",
+        maxHeight: 280,
+        overflowY: "auto",
+        // Mono + warm ink — visually distinct from the assistant prose
+        // bubble (Inter, dark ink) so a quick glance reads "this is the
+        // model thinking out loud, not its answer".
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+        fontSize: 12,
+        lineHeight: 1.55,
+        letterSpacing: 0.1,
+        color: "#5D3000",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+      aria-live={running ? "polite" : "off"}
+      aria-label="Model reasoning transcript"
+    >
+      {transcript}
     </div>
   );
 }

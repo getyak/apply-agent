@@ -32,6 +32,7 @@ Notes on harness wiring:
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -65,6 +66,11 @@ class DockEvent:
       - "tool_end"         — execution tool finished; payload = {tool, result}
       - "tool_error"       — execution tool raised; payload = {tool, error}
       - "assistant_delta"  — model text delta; payload = {text}
+      - "reasoning_delta"  — model chain-of-thought delta (when the picked
+        tier returns OpenRouter ``reasoning``); payload = {text}. A single
+        chat-model chunk can produce *both* a reasoning_delta and an
+        assistant_delta in the same tick; the multi-event translator
+        emits both, in reasoning-then-text order.
       - "partial_artifact" — Step 5: a tool emitted an in-progress snapshot
         of the artifact it's still building. payload = {artifact_id, kind,
         title?, sub?, progress, payload}. The dock UI merges these
@@ -75,6 +81,13 @@ class DockEvent:
 
     kind: str
     payload: dict[str, Any]
+
+
+# Tool result body cap. Anything larger gets stringified to this limit and
+# suffixed with "…[truncated]" so a single 100k-row find_matches dump can't
+# bloat an SSE frame. 8 KiB matches what the dock JsonBlock renders (~200
+# lines of pretty JSON); raise both ends together if you ever change it.
+_TOOL_RESULT_CAP_BYTES = 8 * 1024
 
 
 @lru_cache(maxsize=1)
@@ -161,8 +174,7 @@ async def run_dock_turn(
     messages = [*extras, HumanMessage(content=message)]
 
     async for event in graph.astream_events({"messages": messages}, version="v2", config=cfg):
-        evt = _translate_event(event)
-        if evt is not None:
+        for evt in _translate_event_multi(event):
             yield evt
 
 
@@ -220,12 +232,43 @@ async def emit_partial_artifact(
         log.debug("emit_partial_artifact.no_runner", artifact_id=artifact_id)
 
 
+def _translate_event_multi(event: dict[str, Any]) -> list[DockEvent]:
+    """Translate one LangGraph stream event into 0..n DockEvents.
+
+    Most LangGraph events still map 1:1 — those delegate straight to the
+    single-event ``_translate_event``. The exception is
+    ``on_chat_model_stream``: a single chunk may carry *both* a reasoning
+    delta (provider chain-of-thought, surfaced when OpenRouter's
+    ``reasoning`` passthrough is enabled in harness/llm.py) *and* a normal
+    text delta. Emitting them as two separate DockEvents — reasoning first
+    so the dock can paint the "Thinking" body live before any user-visible
+    text — lets the UI render both lanes without us re-shaping the chunk.
+    """
+    name = event.get("event") or ""
+    if name == "on_chat_model_stream":
+        data = event.get("data") or {}
+        chunk = data.get("chunk")
+        out: list[DockEvent] = []
+        reasoning = _extract_reasoning(chunk)
+        if reasoning:
+            out.append(DockEvent(kind="reasoning_delta", payload={"text": reasoning}))
+        text = _extract_text(chunk)
+        if text:
+            out.append(DockEvent(kind="assistant_delta", payload={"text": text}))
+        return out
+    evt = _translate_event(event)
+    return [evt] if evt is not None else []
+
+
 def _translate_event(event: dict[str, Any]) -> DockEvent | None:
     """Translate a LangGraph astream event into a DockEvent (or None to skip).
 
     Coverage:
       - ``on_tool_start`` / ``on_tool_end`` / ``on_tool_error``: 1:1 → tool_*
       - ``on_chat_model_stream``: token delta → assistant_delta
+        (reasoning lane is handled by ``_translate_event_multi``; this
+        single-event entry point still emits only the assistant text for
+        backwards compatibility with the existing test suite.)
       - ``on_chain_end`` on the root: → done
       - everything else (chain_start, retriever events, ...): None
     """
@@ -263,9 +306,10 @@ def _translate_event(event: dict[str, Any]) -> DockEvent | None:
                 # meaningful to say. Don't surface a blank chip.
                 return None
             return DockEvent(kind="narrator", payload={"text": text})
+        capped = _cap_for_wire(decoded if decoded is not None else result)
         return DockEvent(
             kind="tool_end",
-            payload={"tool": tool_name, "result": decoded if decoded is not None else result},
+            payload={"tool": tool_name, "result": capped},
         )
 
     if name == "on_tool_error":
@@ -323,6 +367,12 @@ def _extract_text(chunk: Any) -> str:
         out: list[str] = []
         for part in content:
             if isinstance(part, dict):
+                # Reasoning blocks (when the provider returns them inside
+                # ``content`` instead of additional_kwargs) belong to the
+                # reasoning lane — skip them here so they don't leak into
+                # the user-visible assistant text.
+                if part.get("type") == "reasoning":
+                    continue
                 txt = part.get("text") or part.get("content") or ""
                 if isinstance(txt, str):
                     out.append(txt)
@@ -330,6 +380,77 @@ def _extract_text(chunk: Any) -> str:
                 out.append(part)
         return "".join(out)
     return ""
+
+
+def _extract_reasoning(chunk: Any) -> str:
+    """Pull a reasoning (chain-of-thought) delta out of the chunk.
+
+    OpenRouter's extended-thinking passthrough (enabled in harness/llm.py
+    when ``reasoning_effort`` is set) hands reasoning back in one of three
+    shapes, and we accept all of them so a langchain-openai version bump
+    or a provider quirk doesn't silently kill the "Thinking" body in the
+    dock:
+
+      1. ``chunk.additional_kwargs["reasoning"]`` — string (OpenRouter
+         primary path; what most DeepSeek / GLM responses use).
+      2. ``chunk.additional_kwargs["reasoning_content"]`` — string
+         fallback used by a few providers and by older OpenRouter docs.
+      3. ``chunk.content`` is a list with ``{"type": "reasoning", "text"}``
+         blocks — Anthropic-style "thinking" blocks, defensive against a
+         future routing change.
+
+    Returns the empty string when nothing is found (caller treats that as
+    "no reasoning this tick").
+    """
+    if chunk is None:
+        return ""
+    extras = getattr(chunk, "additional_kwargs", None)
+    if isinstance(extras, dict):
+        for key in ("reasoning", "reasoning_content"):
+            val = extras.get(key)
+            if isinstance(val, str) and val:
+                return val
+    content = getattr(chunk, "content", None)
+    if isinstance(content, list):
+        out: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "reasoning":
+                txt = part.get("text") or part.get("content") or ""
+                if isinstance(txt, str):
+                    out.append(txt)
+        if out:
+            return "".join(out)
+    return ""
+
+
+def _cap_for_wire(value: Any, *, cap_bytes: int = _TOOL_RESULT_CAP_BYTES) -> Any:
+    """Cap a tool result so a single SSE frame can't bloat past the limit.
+
+    Strategy:
+      - JSON-encodable values that fit under ``cap_bytes`` pass through
+        unchanged (the dock JsonBlock renders them as pretty JSON).
+      - Anything bigger is serialised to a string, truncated to
+        ``cap_bytes`` characters, and suffixed with the elision marker so
+        the dock can show "huge result" without truncating mid-codepoint
+        being too obvious.
+      - Non-JSON-serialisable values (objects, sets, …) are str()-coerced
+        first, then capped via the same path.
+
+    The dock UI matches this cap and stops rendering past 200 lines, so
+    they're sized together: if you raise one, raise the other.
+    """
+    try:
+        encoded = json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        encoded = str(value)
+    if len(encoded.encode("utf-8")) <= cap_bytes:
+        return value
+    # Truncate the *string* form (not the encoded bytes) so we never split
+    # a multibyte codepoint mid-character. cap_bytes is an upper bound on
+    # the resulting UTF-8 length; the elision tail is ASCII so it adds
+    # exactly 12 bytes on top, well within typical SSE frame budgets.
+    truncated = encoded[:cap_bytes]
+    return f"{truncated}…[truncated]"
 
 
 def _safe_str(value: Any, *, cap: int = 400) -> str:

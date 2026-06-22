@@ -34,6 +34,13 @@ export interface AgentEvent {
   state: AgentEventState;
   statusText: string;
   ts: number;
+  // Inline-detail upgrade: accumulated provider chain-of-thought for this
+  // agent's current run. Populated from the SSE `reasoning_delta` lane
+  // (only present when the picked tier honors OpenRouter's reasoning
+  // passthrough — DeepSeek V4 Pro / GLM-4.7). Empty / undefined means
+  // "this tier doesn't reason out loud" and the dock's Thinking body
+  // just shows the spinner header without a transcript.
+  reasoningText?: string;
 }
 
 export type DockMsgKind =
@@ -170,6 +177,13 @@ export interface DockMessage {
   toolStatus?: "ok" | "error";
   toolSummary?: string;
   toolStartedAt?: number;
+  // Inline-detail upgrade: raw tool input + (capped) output for the
+  // expandable Input / Output blocks. Both are optional — dock_agent caps
+  // result to 8 KiB upstream; if either is undefined the ToolTraceRow
+  // falls back to its prior metadata-only expand panel so old agents stay
+  // legible.
+  toolArgs?: unknown;
+  toolResult?: unknown;
   // HITL payload — present only when kind starts with "hitl_". The token
   // is what /api/ask/resume needs to match the paused LangGraph thread.
   hitlStatus?: HitlStatus;
@@ -243,6 +257,15 @@ interface DockStateShape {
     status: TaskGraphStepStatus,
   ) => void;
   updateAgentEvent: (e: AgentEvent) => void;
+  // Append a reasoning_delta chunk to the most recent *running* agent
+  // event. The dock_agent SSE protocol guarantees these arrive between
+  // an `agent_start` and the matching `agent_done`, so "most recent
+  // running" is unambiguous. If no agent is currently running (the
+  // model emitted reasoning before any tool/agent fired — rare on the
+  // dock path), the delta is dropped on purpose: there's no spinner row
+  // to attach it to yet, and we'd rather lose a few words than create
+  // a phantom "coordinator" event the user has no way to interpret.
+  appendReasoning: (text: string) => void;
   // Step 5: merge-or-push for a partial_artifact snapshot. Matches by
   // partialArtifactId; if a row with the same id exists in messages, we
   // patch it in place (so the user sees the live card update); otherwise
@@ -385,6 +408,26 @@ export const useDock = create<DockStateShape>((set, get) => ({
     })),
   updateAgentEvent: (e) =>
     set((s) => ({ agentEvents: { ...s.agentEvents, [e.id]: e } })),
+  appendReasoning: (text) => {
+    if (!text) return;
+    set((s) => {
+      // Pick the most recently created event that's still running. We
+      // iterate values once and pick the largest ts to avoid relying on
+      // insertion order, which Record<string,…> doesn't guarantee
+      // post-React 18 strict-mode remounts.
+      let target: AgentEvent | null = null;
+      for (const ev of Object.values(s.agentEvents)) {
+        if (ev.state !== "running") continue;
+        if (!target || ev.ts > target.ts) target = ev;
+      }
+      if (!target) return s;
+      const updated: AgentEvent = {
+        ...target,
+        reasoningText: (target.reasoningText ?? "") + text,
+      };
+      return { agentEvents: { ...s.agentEvents, [target.id]: updated } };
+    });
+  },
   upsertPartialArtifact: (snap) => {
     const state = get();
     const existing = state.messages.find(
