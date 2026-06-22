@@ -1697,3 +1697,84 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   .orbit-ring::before { animation: none !important; }
   .reveal-ready [data-reveal].reveal-wipe { clip-path: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v18 — Connected & considered
+   v4–v17 lit the surfaces, moved the light, and choreographed the arrival.
+   v18 makes the page read as one connected system and finishes its flattest
+   surface. The "How it works" steps gain a warm thread that draws itself
+   across the row when the section is first seen — the opaque icon tiles mask
+   it into segments, so the five steps read as one pipeline instead of five
+   islands. The pricing wall — the conversion surface that still snapped flat —
+   gets a sliding gold thumb on its billing toggle, prices that swap with a
+   weighted rise instead of blinking, and cards that compose in on a cascade.
+   Every class is additive + opt-in; the thread reuses LandingMotion's existing
+   `[data-reveal].revealed` switch (so it shares the observer + the no-JS /
+   reduced-motion fallbacks), and the whole layer collapses under the guard
+   below — leaving the same calm, fully-arrived page.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Flow thread — a warm rail threading the How-it-works icon row. Rests fully
+   drawn with no JS (the styling below is unscoped); once the reveal layer is
+   armed it starts collapsed and draws left→right when the row is seen. A bright
+   photon rides the drawing head. Sits on z-0 so the opaque icon tiles paint
+   over it, masking the line into connector segments between the steps. */
+.flow-rail { position: absolute; left: 0; right: 0; top: 62px; height: 2px; z-index: 0; pointer-events: none; }
+.flow-rail::before {
+  content: ""; position: absolute; inset: 0; border-radius: 2px; transform-origin: left;
+  background: linear-gradient(90deg,
+    transparent, rgba(232, 163, 23, 0.16) 6%,
+    rgba(232, 163, 23, 0.55) 50%,
+    rgba(232, 163, 23, 0.16) 94%, transparent);
+}
+.reveal-ready .flow-rail::before {
+  transform: scaleX(0);
+  transition: transform 1.15s var(--ease-out) 0.15s;
+}
+.reveal-ready .flow-rail.revealed::before { transform: scaleX(1); }
+.flow-rail::after {
+  content: ""; position: absolute; top: 50%; left: 0; width: 12px; height: 12px;
+  margin-top: -6px; margin-left: -6px; border-radius: 9999px; opacity: 0;
+  background: radial-gradient(circle, #fff4d8, #f3c869 45%, transparent 72%);
+  box-shadow: 0 0 12px 2px rgba(243, 200, 105, 0.8);
+}
+@keyframes flow-spark {
+  0%   { left: 0%;   opacity: 0; }
+  12%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+.reveal-ready .flow-rail.revealed::after { animation: flow-spark 1.2s var(--ease-out) 0.15s both; }
+
+/* Sliding billing toggle — the active segment now rides under a soft raised
+   gold thumb that glides between options, instead of two buttons recolouring in
+   place. PricingSection writes the thumb's left/width from a layout effect so it
+   tracks the real label widths; the spring transition gives the slide weight. */
+.seg-track { position: relative; }
+.seg-thumb {
+  position: absolute; top: 4px; bottom: 4px; left: 0; width: 0; z-index: 0;
+  border-radius: 9999px; pointer-events: none;
+  background: linear-gradient(180deg, #6f3a02 0%, #5D3000 100%);
+  box-shadow:
+    0 6px 16px -8px rgba(93, 48, 0, 0.6),
+    inset 0 1px 0 rgba(255, 244, 216, 0.18);
+  transition:
+    left 0.42s var(--ease-spring),
+    width 0.42s var(--ease-spring);
+}
+
+/* Price swap — the figure rises + un-blurs into place when the billing period
+   flips, so a price change reads as recomputed rather than a flicker. Keyed on
+   the value in React so it remounts and replays. */
+@keyframes price-swap {
+  0%   { opacity: 0; transform: translateY(8px); filter: blur(5px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.animate-price-swap { display: inline-block; animation: price-swap 0.42s var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* One-shot decorative bits that must never linger mid-keyframe. */
+  .flow-rail.revealed::after { display: none !important; }
+  /* Never leave the thread collapsed when motion is suppressed. */
+  .reveal-ready .flow-rail::before { transform: scaleX(1) !important; }
+}
