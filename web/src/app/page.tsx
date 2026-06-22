@@ -172,7 +172,7 @@ export default async function HomePage({
         <div aria-hidden data-parallax="34" className="aurora-blob parallax -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
         <div aria-hidden data-parallax="-22" className="aurora-blob parallax -z-10 w-[360px] h-[360px] top-[40px] -right-[80px] [animation-delay:-6s] opacity-30" />
         <div className="relative animate-fade-up">
-          <div className="inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
+          <div className="badge-glint inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
             <span className="w-[7px] h-[7px] rounded-full bg-green animate-pulse-dot" />
             <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-brown">
               Client-side agents · zero account risk
@@ -181,7 +181,7 @@ export default async function HomePage({
           <h1 className="font-display font-bold text-[52px] leading-[1.05] tracking-[-1px] text-ink m-0 mb-5">
             Your job hunt,
             <br />
-            run by <span className="gradient-text text-halo">agents</span>.
+            run by <span className="gradient-text text-halo crown">agents</span>.
             <br />
             <span className="text-brown">Reviewed by you.</span>
           </h1>
@@ -248,10 +248,10 @@ export default async function HomePage({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-[18px]">
             {STEPS.map((step, i) => (
               <div key={step.no} data-reveal style={{ "--reveal-delay": `${i * 80}ms` } as CSSProperties} className="group">
-                <div className="font-mono text-[11px] tracking-[0.5px] text-border-dark mb-3.5 transition-colors duration-200 group-hover:text-amber">
+                <div className="ghost-num select-none text-[34px] tracking-[-1px] mb-2 leading-none">
                   {step.no}
                 </div>
-                <div className="w-[42px] h-[42px] rounded-[11px] bg-cream border border-cream-border flex items-center justify-center mb-3.5 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-gold-bg group-hover:-translate-y-0.5 group-hover:shadow-[0_6px_14px_-6px_rgba(61,42,20,0.3)]">
+                <div className="icon-glow w-[42px] h-[42px] rounded-[11px] bg-cream border border-cream-border flex items-center justify-center mb-3.5 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-gold-bg group-hover:-translate-y-0.5 group-hover:shadow-[0_6px_14px_-6px_rgba(61,42,20,0.3)]">
                   {step.icon}
                 </div>
                 <div className="font-body font-semibold text-[15px] text-ink mb-1.5">
@@ -381,7 +381,7 @@ export default async function HomePage({
                 className="group lift rim spotlight sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
               >
                 <span className="sheen" aria-hidden />
-                <div className="w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-cream group-hover:scale-[1.06] group-hover:-rotate-3">
+                <div className="icon-glow w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-cream group-hover:scale-[1.06] group-hover:-rotate-3">
                   {f.icon}
                 </div>
                 <div className="font-body font-semibold text-base text-ink mb-[7px]">
@@ -410,7 +410,7 @@ export default async function HomePage({
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">
             {BETS.map((b, i) => (
-              <div key={b.k} data-reveal style={{ "--reveal-delay": `${i * 90}ms` } as CSSProperties} className="group border-t border-dark-border pt-[22px] transition-colors duration-300 hover:border-gold/50">
+              <div key={b.k} data-reveal style={{ "--reveal-delay": `${i * 90}ms` } as CSSProperties} className="group ignite-rule border-t border-dark-border pt-[22px] transition-colors duration-300 hover:border-gold/50">
                 <div className="font-display font-bold text-[30px] gradient-text mb-3.5 transition-transform duration-300 ease-out group-hover:-translate-y-0.5">
                   {b.k}
                 </div>
@@ -436,7 +436,7 @@ export default async function HomePage({
           <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">
             <h2 className="font-display font-bold text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
-              Hand the busywork to the <span className="gradient-text text-halo">agents</span>.
+              Hand the busywork to the <span className="gradient-text text-halo crown">agents</span>.
             </h2>
             <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
               Upload a résumé, or just start talking. You&apos;ll have applications

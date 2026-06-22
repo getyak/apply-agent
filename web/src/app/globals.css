@@ -780,3 +780,94 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   50% { transform: translateY(-9px) rotate(-0.25deg); }
 }
 .animate-buoy { animation: buoy 7s var(--ease-in-out) infinite; }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Living-light layer (v5) — the boldest pass yet. Where v4 lit the surfaces,
+   v5 makes light *move*: idle glints travel across badges, index numerals glow
+   awake as their group activates, dark rules ignite on hover, and a one-shot
+   specular sweep crowns the hero on first paint. Every class is additive and
+   opt-in; nothing here mutates an existing primitive, and the whole layer
+   collapses under the prefers-reduced-motion guard above (it matches `*` with
+   !important), so motion-sensitive users keep the calm static version.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Badge glint — a slow specular band that drifts across a pill at rest, so a
+   status chip reads as live rather than a painted label. Self-contained: add to
+   any relative, rounded element; the highlight is clipped to its bounds. */
+@keyframes badge-glint {
+  0% { transform: translateX(-180%) skewX(-18deg); }
+  100% { transform: translateX(320%) skewX(-18deg); }
+}
+.badge-glint { position: relative; overflow: hidden; isolation: isolate; }
+.badge-glint::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 42%;
+  pointer-events: none; z-index: 1;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  transform: translateX(-180%) skewX(-18deg);
+  animation: badge-glint 6.5s var(--ease-out) 1.4s infinite;
+}
+
+/* Ghost index numeral — a large translucent figure (e.g. "01") that sits as a
+   quiet watermark and warms to gold as its group is hovered, giving numbered
+   grids a sense of depth and sequence. Put `.group` on the row and `.ghost-num`
+   on the numeral. */
+.ghost-num {
+  font-family: var(--font-display, 'Space Grotesk', sans-serif);
+  font-weight: 700; line-height: 1; color: transparent;
+  -webkit-text-stroke: 1.4px rgba(166, 106, 0, 0.20);
+  transition:
+    color var(--dur-base) var(--ease-out),
+    -webkit-text-stroke-color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+  will-change: transform;
+}
+.group:hover .ghost-num {
+  color: rgba(166, 106, 0, 0.10);
+  -webkit-text-stroke-color: rgba(166, 106, 0, 0.55);
+  transform: translateY(-2px);
+}
+
+/* Ignite rule — a top hairline (typically on a dark section card) that lights
+   up gold and bleeds a soft glow as its group activates. Pairs with a
+   `border-t`; the ::before paints the lit overlay so the resting border is
+   untouched. */
+.ignite-rule { position: relative; }
+.ignite-rule::before {
+  content: ""; position: absolute; top: -1px; left: 0; right: 0; height: 2px;
+  border-radius: 2px; transform-origin: left; transform: scaleX(0);
+  background: linear-gradient(90deg, #f3c869, #e8a317 50%, transparent);
+  box-shadow: 0 0 12px -1px rgba(232, 163, 23, 0.7);
+  opacity: 0; transition:
+    transform var(--dur-slow) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.group:hover .ignite-rule::before { transform: scaleX(1); opacity: 1; }
+
+/* Specular crown — a single bright band that sweeps once across a headline word
+   on first paint, so a gradient headline "catches the light" as it lands. Apply
+   to the same span that wears `.gradient-text` (it overlays via a clipped
+   pseudo and does not disturb the text fill). */
+@keyframes crown-sweep {
+  0% { transform: translateX(-120%) skewX(-14deg); opacity: 0; }
+  12% { opacity: 1; }
+  100% { transform: translateX(220%) skewX(-14deg); opacity: 0; }
+}
+.crown { position: relative; isolation: isolate; }
+.crown::after {
+  content: ""; position: absolute; inset: -10% -6%; z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 248, 230, 0.85), transparent);
+  mix-blend-mode: screen; transform: translateX(-120%) skewX(-14deg); opacity: 0;
+  animation: crown-sweep 1.5s var(--ease-out) 0.7s 1 both;
+}
+
+/* Icon tile glow — a warm bloom that wakes under an icon chip as its group is
+   hovered, so the tile feels powered rather than merely re-bordered. Stacks
+   with the existing border/scale group-hover treatments. */
+.icon-glow { position: relative; isolation: isolate; }
+.icon-glow::before {
+  content: ""; position: absolute; inset: -45%; z-index: -1; border-radius: 9999px;
+  pointer-events: none; filter: blur(16px); opacity: 0;
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.5), transparent 72%);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.group:hover .icon-glow::before { opacity: 0.8; }
