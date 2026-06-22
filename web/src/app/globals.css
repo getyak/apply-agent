@@ -674,3 +674,109 @@ body {
 textarea[data-vantage-composer]::placeholder { color: #A39F99; opacity: 1; }
 textarea[data-vantage-composer]::-webkit-input-placeholder { color: #A39F99; }
 textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Bold accent layer (v4) — a confident, additive pass that turns up the
+   "warm-metal" character on hero, headline, cards, and primary CTAs without
+   touching any existing primitive. Every class is opt-in and every animation
+   is caught by the prefers-reduced-motion guard above (it matches `*` with
+   !important), so motion-sensitive users get the calm static version for free.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Text halo — a soft warm pool of light bloomed behind gold gradient text so
+   a headline word reads as genuinely lit, not painted. Layer it on the same
+   span that wears `.gradient-text`. The glow breathes very slowly. */
+@keyframes halo-breathe {
+  0%, 100% { opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.9; transform: translate(-50%, -50%) scale(1.08); }
+}
+.text-halo { position: relative; isolation: isolate; }
+.text-halo::before {
+  content: ""; position: absolute; left: 50%; top: 52%; z-index: -1;
+  width: 130%; height: 150%; pointer-events: none; border-radius: 9999px;
+  transform: translate(-50%, -50%); filter: blur(26px);
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.40), rgba(232, 163, 23, 0.08) 60%, transparent 75%);
+  animation: halo-breathe 5.5s var(--ease-in-out) infinite;
+}
+
+/* Aurora mesh — a richer, two-tone drifting backdrop. Bolder than a single
+   `.aurora-blob`: two offset radial pools counter-drift to give a large flat
+   section real atmospheric depth. Drop into a relative, overflow-hidden
+   parent as a decorative -z layer. */
+@keyframes mesh-drift-a {
+  0%, 100% { transform: translate3d(-6%, -3%, 0) scale(1); }
+  50% { transform: translate3d(7%, 5%, 0) scale(1.12); }
+}
+@keyframes mesh-drift-b {
+  0%, 100% { transform: translate3d(5%, 4%, 0) scale(1.08); }
+  50% { transform: translate3d(-7%, -5%, 0) scale(1); }
+}
+.aurora-mesh { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.aurora-mesh::before, .aurora-mesh::after {
+  content: ""; position: absolute; border-radius: 9999px;
+  filter: blur(80px); will-change: transform;
+}
+.aurora-mesh::before {
+  width: 55%; height: 80%; top: -20%; left: -10%; opacity: 0.5;
+  background: radial-gradient(circle at 50% 50%, rgba(232, 163, 23, 0.55), transparent 68%);
+  animation: mesh-drift-a 22s var(--ease-in-out) infinite;
+}
+.aurora-mesh::after {
+  width: 50%; height: 75%; bottom: -25%; right: -8%; opacity: 0.38;
+  background: radial-gradient(circle at 50% 50%, rgba(122, 63, 0, 0.40), transparent 70%);
+  animation: mesh-drift-b 26s var(--ease-in-out) infinite;
+}
+/* Tuned for the dark section — gold + amber pools read as embers on near-black. */
+.aurora-mesh.on-dark::before { background: radial-gradient(circle at 50% 50%, rgba(217, 164, 95, 0.30), transparent 66%); opacity: 0.6; }
+.aurora-mesh.on-dark::after { background: radial-gradient(circle at 50% 50%, rgba(232, 163, 23, 0.22), transparent 70%); opacity: 0.5; }
+
+/* Rim light — a crisp bright hairline along the top edge of a card plus a
+   warmer inner glow that intensifies on hover, so a surface looks like a
+   physical panel catching overhead light. Stacks cleanly with `.lift`. */
+.rim {
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+.rim:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(232, 163, 23, 0.12),
+    0 18px 40px -16px rgba(166, 106, 0, 0.28);
+}
+
+/* Kinetic eyebrow dot — a tiny gold marker that draws the eye to a section
+   label. Pair before an eyebrow; it emits a slow concentric pulse. */
+.eyebrow-dot {
+  display: inline-block; width: 6px; height: 6px; margin-right: 9px;
+  border-radius: 9999px; vertical-align: middle; position: relative;
+  background: var(--grad-gold, #e8a317);
+  box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7);
+}
+.eyebrow-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: rgba(232, 163, 23, 0.6);
+  animation: live-ring 2.6s var(--ease-out) infinite;
+}
+
+/* CTA aura — a soft gold bloom that wakes up under a primary button on hover,
+   making the press feel powered rather than flat. Put on the <a>/<button>;
+   it paints behind the content and fades in. */
+.cta-aura { position: relative; isolation: isolate; }
+.cta-aura::before {
+  content: ""; position: absolute; inset: -40% -16%; z-index: -1; border-radius: 9999px;
+  opacity: 0; pointer-events: none; filter: blur(22px);
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.55), transparent 72%);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .cta-aura:hover::before { opacity: 0.85; }
+}
+
+/* Buoyant float — a slightly larger, slower lift than `.animate-float`, for a
+   hero centrepiece (the console) so it feels weightless without distracting. */
+@keyframes buoy {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-9px) rotate(-0.25deg); }
+}
+.animate-buoy { animation: buoy 7s var(--ease-in-out) infinite; }
