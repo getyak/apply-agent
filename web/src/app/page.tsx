@@ -197,6 +197,10 @@ export default async function HomePage({
             field under the hero reads as material, not flat fill. Behind all
             content; pointer-transparent; hidden under reduced-motion. */}
         <div aria-hidden className="grain-overlay" />
+        {/* God-ray (v11) — a soft volumetric beam rakes once across the hero on
+            first paint, like sun through a window. One-shot, decorative, behind
+            all content; hidden under reduced-motion. */}
+        <div aria-hidden className="beam -z-10" />
         {/* Ambient cursor light — a warm pool that tracks the reader's pointer
             across the hero, so the surface feels lit by a lamp they're holding.
             Driven by PointerFX; rests dark + invisible with no JS. */}
@@ -206,7 +210,7 @@ export default async function HomePage({
         <div aria-hidden data-parallax="34" className="aurora-blob parallax -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
         <div aria-hidden data-parallax="-22" className="aurora-blob parallax -z-10 w-[360px] h-[360px] top-[40px] -right-[80px] [animation-delay:-6s] opacity-30" />
         <div className="relative animate-fade-up">
-          <div className="badge-glint inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
+          <div className="badge-glint orbit-ring inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
             <span className="w-[7px] h-[7px] rounded-full bg-green animate-pulse-dot" />
             <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-brown">
               Client-side agents · zero account risk
@@ -331,7 +335,7 @@ export default async function HomePage({
 
         {/* Mini chat mock */}
         <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties}>
-          <div data-tilt="5" className="group grad-border tilt-pointer bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
+          <div data-tilt="5" className="group grad-border tilt-pointer tilt-shine bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
           <div className="h-12 border-b border-border flex items-center gap-2.5 px-[18px] bg-white">
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -434,6 +438,9 @@ export default async function HomePage({
       <section className="relative overflow-hidden bg-dark">
         {/* Ember-toned drifting mesh — gives the near-black panel atmospheric
             depth so it reads as lit, not a dead fill. Purely decorative. */}
+        {/* Engineered dot-field (v11) — a faint warm grid that gives the dark
+            panel blueprint-like depth beneath the softer mesh + embers. */}
+        <div aria-hidden className="dot-field -z-0" />
         <div aria-hidden className="aurora-mesh on-dark -z-0 opacity-70" />
         {/* Pointer-tracked ember — the dark panel lights up where the reader
             looks, layered over the drifting mesh. */}
@@ -497,6 +504,10 @@ export default async function HomePage({
       {/* CTA */}
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
         <div data-reveal className="group grad-border edge-light relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
+          {/* Conic halo (v11) — a slow-rotating ring of warm light behind the
+              panel so the closing CTA reads as genuinely radiant. Self-contained
+              decorative layer; hidden under reduced-motion. */}
+          <div aria-hidden className="cta-conic -z-0" />
           {/* Warm light pooling under the headline. */}
           <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">

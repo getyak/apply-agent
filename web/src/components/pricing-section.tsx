@@ -34,7 +34,7 @@ export default function PricingSection() {
   const period = annual ? "/mo · billed yearly" : "/ month";
 
   const pillBase =
-    "cursor-pointer border-none font-body font-semibold text-[13px] px-[18px] py-[9px] rounded-full transition-all";
+    "press cursor-pointer border-none font-body font-semibold text-[13px] px-[18px] py-[9px] rounded-full transition-all";
 
   return (
     <section id="pricing" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
@@ -63,7 +63,7 @@ export default function PricingSection() {
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-[22px] items-start">
-        <div className="bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+        <div className="lift bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
           <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-ink-light mb-2">Free</div>
           <div className="font-body text-[13.5px] text-ink-muted mb-5">Try the full loop</div>
           <div className="flex items-baseline gap-1 mb-6">
@@ -80,8 +80,8 @@ export default function PricingSection() {
             ))}
           </div>
         </div>
-        <div className="bg-dark border border-dark rounded-2xl p-[30px] shadow-[0_20px_50px_rgba(40,25,5,0.20)] relative">
-          <span className="absolute -top-[11px] left-[30px] font-mono text-[10px] tracking-[0.6px] uppercase text-dark bg-gold px-[11px] py-[5px] rounded-[6px]">Most popular</span>
+        <div className="lift halo-card bg-dark border border-dark rounded-2xl p-[30px] shadow-[0_20px_50px_rgba(40,25,5,0.20)] relative">
+          <span className="badge-glint absolute -top-[11px] left-[30px] font-mono text-[10px] tracking-[0.6px] uppercase text-dark bg-gold px-[11px] py-[5px] rounded-[6px]">Most popular</span>
           <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-dark-gold mb-2">Pro</div>
           <div className="font-body text-[13.5px] text-[#9a9082] mb-5">For an active search</div>
           <div className="flex items-baseline gap-1 mb-6">
@@ -98,7 +98,7 @@ export default function PricingSection() {
             ))}
           </div>
         </div>
-        <div className="bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+        <div className="lift bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
           <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-ink-light mb-2">Max</div>
           <div className="font-body text-[13.5px] text-ink-muted mb-5">Serious, time-boxed hunt</div>
           <div className="flex items-baseline gap-1 mb-6">

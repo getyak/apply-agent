@@ -1312,6 +1312,168 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
 }
 .lift-pop:active { transform: translateY(0) scale(0.97); transition-duration: var(--dur-fast); }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   v11 — Material light & dimensional finish
+   Where v4–v10 lit the surfaces, moved the light, and made controls feel
+   physical, v11 makes light behave like a *material*: a specular highlight that
+   slides across the tilt cards as they lean (so the 3D mocks genuinely catch
+   the light), a soft volumetric god-ray that crosses the hero once on first
+   paint, a slow conic halo that makes the closing CTA radiate, and an engineered
+   dot-field that gives the dark panel real depth beneath the embers. Every class
+   is additive and opt-in; nothing here mutates an existing primitive, each
+   pointer-driven effect reuses custom properties the PointerFX island already
+   writes (no JS change), and the whole layer collapses under the
+   prefers-reduced-motion guard below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tilt specular — a broad soft highlight that slides across a card as it leans
+   toward the cursor, reusing the `--tlt-x` / `--tlt-y` degrees PointerFX writes
+   on `[data-tilt]`. The highlight's position is derived from the lean, so the
+   gloss tracks the light source the tilt implies — the single biggest lift to
+   the "this is a physical object" read. Put `.tilt-shine` on the same element
+   that wears `.tilt-pointer` (must be overflow-clipped + rounded). Rests fully
+   transparent at zero tilt, so a static card is untouched. */
+.tilt-shine { position: relative; }
+.tilt-shine::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit;
+  pointer-events: none; mix-blend-mode: screen;
+  /* The highlight centre swings opposite the lean: tilt right → light pools
+     left, as a real overhead light would. Scaled from deg into % offset. */
+  background: radial-gradient(
+    150% 120% at
+      calc(50% - var(--tlt-y, 0deg) * 5%)
+      calc(38% + var(--tlt-x, 0deg) * 5%),
+    rgba(255, 248, 232, 0.5), rgba(255, 248, 232, 0.12) 32%, transparent 58%);
+  opacity: 0; transition: opacity var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .tilt-shine:hover::after { opacity: 1; }
+}
+
+/* Hero god-ray — a single wide, soft volumetric beam that sweeps once across a
+   section on first paint, raking warm light over the hero like sun through a
+   window. Decorative -z layer; drop into a relative, overflow-hidden section.
+   One-shot, so it lands and clears rather than looping. */
+@keyframes beam-sweep {
+  0%   { opacity: 0; transform: translateX(-60%) rotate(18deg); }
+  18%  { opacity: 0.85; }
+  100% { opacity: 0; transform: translateX(120%) rotate(18deg); }
+}
+.beam { position: absolute; inset: -40% -20%; pointer-events: none; overflow: hidden; }
+.beam::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 36%;
+  background: linear-gradient(100deg,
+    transparent, rgba(255, 240, 205, 0.55) 45%, rgba(243, 200, 105, 0.18) 60%, transparent);
+  filter: blur(22px); mix-blend-mode: screen; transform: translateX(-60%) rotate(18deg);
+  animation: beam-sweep 2.6s var(--ease-out) 0.35s 1 both;
+  will-change: transform, opacity;
+}
+
+/* Conic CTA halo — a slow-rotating wheel of warm light behind a closing panel
+   so the surface reads as genuinely radiant, not just bordered. Implemented as
+   a self-contained decorative *child* layer (not host pseudo-elements) so it
+   composes cleanly with panels that already own `::before` via `.grad-border` /
+   `.edge-light`. Drop `<div class="cta-conic" aria-hidden />` inside a relative,
+   overflow-hidden panel as a low-z layer. */
+@keyframes conic-spin { to { transform: rotate(360deg); } }
+.cta-conic {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+}
+.cta-conic::before {
+  content: ""; position: absolute;
+  left: 50%; top: 50%; width: 150%; aspect-ratio: 1; border-radius: 9999px;
+  transform: translate(-50%, -50%); transform-origin: center;
+  opacity: 0.45; filter: blur(8px); mix-blend-mode: screen;
+  background: conic-gradient(from 0deg,
+    transparent 0deg, rgba(232, 163, 23, 0.0) 70deg,
+    rgba(243, 200, 105, 0.55) 135deg, rgba(232, 163, 23, 0.22) 205deg,
+    transparent 290deg, transparent 360deg);
+  animation: conic-spin 11s linear infinite;
+  will-change: transform;
+}
+.cta-conic::after {
+  content: ""; position: absolute; inset: 20%; border-radius: 9999px;
+  filter: blur(48px); opacity: 0.65;
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.26), transparent 72%);
+}
+
+/* Dot field — a faint, perspective-less grid of warm dots that gives a large
+   dark panel an engineered, blueprint-like depth beneath softer decoration
+   (embers / mesh). Pointer-transparent decorative layer; the radial mask fades
+   it toward the edges so it never reads as a hard tile. */
+.dot-field {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(rgba(217, 164, 95, 0.16) 1px, transparent 1.4px);
+  background-size: 26px 26px;
+  -webkit-mask: radial-gradient(120% 90% at 50% 40%, #000 30%, transparent 78%);
+  mask: radial-gradient(120% 90% at 50% 40%, #000 30%, transparent 78%);
+  opacity: 0.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v12 — Radiant finish
+   v11 made light behave like a material; v12 puts that light to work on the two
+   surfaces that still read flat: the hero's trust pill and the pricing wall.
+   A single warm photon now orbits the "zero account risk" badge — drawing the
+   eye to the one promise that matters — and the "Most popular" plan gains a
+   slow-breathing gold halo so it radiates off the page instead of merely sitting
+   in a darker box. Both are additive, self-contained, and collapse under the
+   reduced-motion guard. No JS touched: the orbit is a registered-angle keyframe,
+   the halo a blurred sibling glow.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Registered angle so the conic ring can actually animate its sweep start.
+   Browsers without @property simply hold the ring at its resting 0deg gradient —
+   a static warm accent, never a broken state. */
+@property --orbit-a {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes orbit-spin { to { --orbit-a: 360deg; } }
+
+/* Orbit ring — a thin warm photon traces the border of a pill, pooling bright
+   at its head and trailing off, so a small trust badge feels alive and earns a
+   glance. Border-gradient mask trick keeps it a true 1px ring on any radius;
+   uses the free `::before` slot (so it composes with `.badge-glint`'s `::after`
+   sweep). Drop `.orbit-ring` on a `position: relative`, rounded element. */
+.orbit-ring { position: relative; isolation: isolate; }
+.orbit-ring::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: 1;
+  padding: 1.2px; pointer-events: none;
+  background: conic-gradient(from var(--orbit-a, 0deg),
+    transparent 0 58%,
+    rgba(232, 163, 23, 0.35) 72%,
+    rgba(243, 200, 105, 0.95) 84%,
+    rgba(255, 246, 224, 1) 88%,
+    rgba(243, 200, 105, 0.5) 94%,
+    transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: orbit-spin 4.8s linear infinite;
+}
+
+/* Halo card — a soft, slow-breathing gold aura set just behind a panel so it
+   reads as genuinely radiant. Rendered as a negative-z `::before` (sits behind
+   the host's own background, glow peeking past every edge), it composes with
+   panels that already own `::after`. Intensifies and tightens on hover, so the
+   recommended plan visibly responds to attention. Drop `.halo-card` on a
+   `position: relative` panel (pair with `.lift` for the rise). */
+@keyframes halo-breathe {
+  0%, 100% { opacity: 0.40; transform: scale(0.985); }
+  50%      { opacity: 0.72; transform: scale(1.02); }
+}
+.halo-card::before {
+  content: ""; position: absolute; inset: -7px; z-index: -1; border-radius: inherit;
+  pointer-events: none; filter: blur(16px);
+  background: linear-gradient(135deg,
+    rgba(243, 200, 105, 0.6), rgba(232, 163, 23, 0.22) 42%, transparent 72%);
+  animation: halo-breathe 5.6s var(--ease-in-out) infinite;
+}
+.halo-card:hover::before { animation-duration: 3.6s; filter: blur(20px); }
+
 /* Reduced-motion: drop the always-on idle loops so motion-sensitive users get
    the calm static finish. The global guard already neutralises durations, but
    we also hard-hide the purely-decorative grain + breath so nothing lingers
@@ -1319,6 +1481,11 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
 @media (prefers-reduced-motion: reduce) {
   .grain-overlay,
   .cta-breathe::after,
-  .avatar-gleam::after { display: none !important; }
+  .avatar-gleam::after,
+  .beam,
+  .cta-conic::before,
+  .cta-conic::after,
+  .halo-card::before { display: none !important; }
+  .orbit-ring::before { animation: none !important; }
   .reveal-ready [data-reveal].reveal-wipe { clip-path: none !important; }
 }
