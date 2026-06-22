@@ -160,7 +160,7 @@ export default async function HomePage({
       {/* NAV */}
       <header className="site-nav sticky top-0 z-40 backdrop-blur-[20px] bg-paper/82 border-b border-border h-[66px]">
         <div className="max-w-[1140px] mx-auto px-4 sm:px-8 h-full flex items-center gap-3.5">
-          <div className="flex items-center gap-[9px]">
+          <div className="nav-assemble flex items-center gap-[9px]" style={{ "--ni": 0 } as CSSProperties}>
             <div className="w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
@@ -171,12 +171,12 @@ export default async function HomePage({
           {/* Anchor nav collapses on mobile — the Sign in + Start free CTAs in
               the right-hand cluster are the only nav users need below md. */}
           <nav className="ml-[34px] hidden md:flex items-center gap-7">
-            <a href="#how" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">How it works</a>
-            <a href="#chat" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">The agents</a>
-            <a href="#features" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Features</a>
-            <a href="#pricing" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Pricing</a>
+            <a href="#how" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 1 } as CSSProperties}>How it works</a>
+            <a href="#chat" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 2 } as CSSProperties}>The agents</a>
+            <a href="#features" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 3 } as CSSProperties}>Features</a>
+            <a href="#pricing" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 4 } as CSSProperties}>Pricing</a>
           </nav>
-          <div className="ml-auto flex items-center gap-4">
+          <div className="nav-assemble ml-auto flex items-center gap-4" style={{ "--ni": 5 } as CSSProperties}>
             {isSignedIn ? (
               // Avatar chip (name + initials) so the signed-in state is
               // visible at a glance; resolves the name client-side via me().
@@ -216,12 +216,20 @@ export default async function HomePage({
               Client-side agents · zero account risk
             </span>
           </div>
-          <h1 className="fluid-display font-display font-bold text-ink m-0 mb-5">
-            Your job hunt,
+          <h1 className="kinetic-head fluid-display font-display font-bold text-ink m-0 mb-5">
+            <span className="kw" style={{ "--kw": 0 } as CSSProperties}>Your</span>{" "}
+            <span className="kw" style={{ "--kw": 1 } as CSSProperties}>job</span>{" "}
+            <span className="kw" style={{ "--kw": 2 } as CSSProperties}>hunt,</span>
             <br />
-            run by <span className="gradient-text text-halo crown">agents</span>.
+            <span className="kw" style={{ "--kw": 3 } as CSSProperties}>run</span>{" "}
+            <span className="kw" style={{ "--kw": 4 } as CSSProperties}>by</span>{" "}
+            <span className="kw gradient-text text-halo crown" style={{ "--kw": 5 } as CSSProperties}>agents</span><span className="kw" style={{ "--kw": 6 } as CSSProperties}>.</span>
             <br />
-            <span className="text-brown">Reviewed by you.</span>
+            <span className="text-brown">
+              <span className="kw" style={{ "--kw": 7 } as CSSProperties}>Reviewed</span>{" "}
+              <span className="kw" style={{ "--kw": 8 } as CSSProperties}>by</span>{" "}
+              <span className="kw" style={{ "--kw": 9 } as CSSProperties}>you.</span>
+            </span>
           </h1>
           <p className="font-body text-lg leading-[1.55] text-ink-light m-0 mb-8 max-w-[480px]">
             Just tell Vantage what you want. Its agents find the right roles,
@@ -306,7 +314,7 @@ export default async function HomePage({
 
       {/* CHAT FIRST */}
       <section id="chat" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[90px] grid grid-cols-1 md:grid-cols-[1fr_1.05fr] gap-10 md:gap-[60px] items-center">
-        <div data-reveal>
+        <div data-reveal className="reveal-l">
           <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             <span className="eyebrow-dot" aria-hidden />Chat is the interface<span className="eyebrow-rule" aria-hidden />
           </div>
@@ -334,7 +342,7 @@ export default async function HomePage({
         </div>
 
         {/* Mini chat mock */}
-        <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties}>
+        <div data-reveal className="reveal-r" style={{ "--reveal-delay": "120ms" } as CSSProperties}>
           <div data-tilt="5" className="group grad-border tilt-pointer tilt-shine bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
           <div className="h-12 border-b border-border flex items-center gap-2.5 px-[18px] bg-white">
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
@@ -503,7 +511,7 @@ export default async function HomePage({
 
       {/* CTA */}
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
-        <div data-reveal className="group grad-border edge-light relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
+        <div data-reveal className="reveal-scale group grad-border edge-light relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
           {/* Conic halo (v11) — a slow-rotating ring of warm light behind the
               panel so the closing CTA reads as genuinely radiant. Self-contained
               decorative layer; hidden under reduced-motion. */}
@@ -511,8 +519,13 @@ export default async function HomePage({
           {/* Warm light pooling under the headline. */}
           <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">
-            <h2 className="font-display font-bold text-[28px] sm:text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
-              Hand the busywork to the <span className="gradient-text text-halo crown">agents</span>.
+            <h2 className="kinetic-head font-display font-bold text-[28px] sm:text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
+              <span className="kw" style={{ "--kw": 0 } as CSSProperties}>Hand</span>{" "}
+              <span className="kw" style={{ "--kw": 1 } as CSSProperties}>the</span>{" "}
+              <span className="kw" style={{ "--kw": 2 } as CSSProperties}>busywork</span>{" "}
+              <span className="kw" style={{ "--kw": 3 } as CSSProperties}>to</span>{" "}
+              <span className="kw" style={{ "--kw": 4 } as CSSProperties}>the</span>{" "}
+              <span className="kw gradient-text text-halo crown" style={{ "--kw": 5 } as CSSProperties}>agents</span><span className="kw" style={{ "--kw": 6 } as CSSProperties}>.</span>
             </h2>
             <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
               Upload a résumé, or just start talking. You&apos;ll have applications

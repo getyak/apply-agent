@@ -1575,6 +1575,69 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   animation: mock-done-pop 0.46s var(--ease-spring) var(--md, 0ms) both;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   v16 — Arrival & depth choreography
+   v4–v15 lit the surfaces, moved the light, and made controls feel physical.
+   v16 owns the *arrival*: the moment content lands. Headline words now type
+   themselves into being with a staggered rise, sections enter from their own
+   side of the page (text from the left, the mock from the right) so a layout
+   reads as composing rather than snapping flat, focal panels bloom up from a
+   confident scale, the lead hero metric counts up to its real number, and the
+   top nav assembles in a quick left-to-right cascade on first paint. Every
+   class is additive and opt-in; nothing here mutates an existing primitive.
+   The directional reveals reuse the existing `[data-reveal].revealed` switch
+   (so they share LandingMotion's observer and its no-JS / reduced-motion
+   fallbacks), and every one-shot collapses under the global reduced-motion
+   guard below — leaving the same calm, fully-arrived page.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Kinetic headline — each word rises + un-blurs into place on its own beat, so
+   a hero line reads as assembled by hand rather than pasted whole. Opacity is
+   intentionally left to the parent block's `.animate-fade-up` (or to nothing,
+   if the head isn't inside one), so words only ever drive transform + blur and
+   never fight a container fade. Wrap each word in `<span class="kw">` and set
+   inline `--kw` to its index for the cascade. */
+@keyframes kw-rise {
+  0%   { transform: translateY(0.42em) rotate(0.6deg); filter: blur(7px); }
+  100% { transform: none; filter: blur(0); }
+}
+.kinetic-head .kw {
+  display: inline-block;
+  animation: kw-rise 0.72s var(--ease-out) both;
+  animation-delay: calc(0.14s + var(--kw, 0) * 0.075s);
+  will-change: transform, filter;
+}
+
+/* Directional scroll-reveal — modifiers on `[data-reveal]` that change *where*
+   an element travels in from. They override only the resting transform (scoped
+   to `:not(.revealed)` so they never block the settle), and inherit the base
+   reveal's opacity / blur / transition + per-element `--reveal-delay`. So a
+   section can compose from its own edge: paired blocks lean in toward each
+   other, focal panels bloom up from scale. */
+.reveal-ready [data-reveal].reveal-l:not(.revealed) {
+  transform: translateX(-38px) scale(0.99);
+}
+.reveal-ready [data-reveal].reveal-r:not(.revealed) {
+  transform: translateX(38px) scale(0.99);
+}
+.reveal-ready [data-reveal].reveal-scale:not(.revealed) {
+  transform: scale(0.93) translateY(14px);
+}
+
+/* Count-up figure — a stat that animates from a lead-in to its real value reads
+   as freshly computed. The recolour + tabular figures keep the width from
+   jittering as digits change; JS (HeroConsole) writes the interim numbers. */
+.count-up { font-variant-numeric: tabular-nums; transition: color var(--dur-base) var(--ease-out); }
+
+/* Nav assemble — the brand cluster + links cascade in left-to-right on first
+   paint, so the header reads as built rather than already-there. Drive the
+   cascade with inline `--ni`; pure one-shot, so it never re-runs on scroll. */
+@keyframes nav-item-in {
+  0%   { opacity: 0; transform: translateY(-7px); filter: blur(3px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.nav-assemble { animation: nav-item-in 0.5s var(--ease-out) both; animation-delay: calc(var(--ni, 0) * 55ms); }
+
 @media (prefers-reduced-motion: reduce) {
   .grain-overlay,
   .cta-breathe::after,

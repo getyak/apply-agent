@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Upload,
   MessageSquare,
@@ -24,6 +24,54 @@ const methods: { key: Method; label: string; icon: React.ReactNode }[] = [
   { key: "paste", label: "Paste", icon: <ClipboardPaste size={15} /> },
   { key: "link", label: "Link", icon: <Link2 size={15} /> },
 ];
+
+/**
+ * CountUp — a small figure that animates from 0 to its target once on mount,
+ * so a freshly-computed stat reads as just-landed rather than painted in. Eases
+ * on the system's calm decel curve, formats with locale grouping, and honours
+ * reduced motion (it shows the final value immediately). Self-contained: no
+ * external deps, parks itself the moment it reaches the target.
+ */
+function CountUp({
+  to,
+  duration = 1200,
+  delay = 0,
+}: {
+  to: number;
+  duration?: number;
+  delay?: number;
+}) {
+  const [value, setValue] = useState(0);
+  const raf = useRef(0);
+
+  useEffect(() => {
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (reduce) {
+      setValue(to);
+      return;
+    }
+    let start = 0;
+    let timer = 0;
+    const ease = (t: number) => 1 - Math.pow(1 - t, 3); // cubic-out
+    const step = (now: number) => {
+      if (!start) start = now;
+      const p = Math.min((now - start) / duration, 1);
+      setValue(Math.round(ease(p) * to));
+      if (p < 1) raf.current = requestAnimationFrame(step);
+    };
+    timer = window.setTimeout(() => {
+      raf.current = requestAnimationFrame(step);
+    }, delay);
+    return () => {
+      window.clearTimeout(timer);
+      if (raf.current) cancelAnimationFrame(raf.current);
+    };
+  }, [to, duration, delay]);
+
+  return <>{value.toLocaleString()}</>;
+}
 
 export default function HeroConsole() {
   const [method, setMethod] = useState<Method>("upload");
@@ -165,7 +213,9 @@ export default function HeroConsole() {
                   result: (
                     <>
                       Scanned{" "}
-                      <span className="text-white font-semibold">1,240</span>{" "}
+                      <span className="count-up text-white font-semibold">
+                        <CountUp to={1240} delay={450} />
+                      </span>{" "}
                       live roles → 8 strong fits
                     </>
                   ),
