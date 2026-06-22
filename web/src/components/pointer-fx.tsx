@@ -111,6 +111,26 @@ export default function PointerFX() {
         });
       });
 
+    // ── Press ripple ──────────────────────────────────────────────────────────
+    // Anchor CTAs (`data-ripple`) aren't <Button>s, so they get their ripple
+    // here: a warm bloom radiates from the contact point on press. The host is
+    // already overflow-clipped (`.shine`), so we append the node straight to it.
+    document.querySelectorAll<HTMLElement>("[data-ripple]").forEach((el) => {
+      const onDown = (e: PointerEvent) => {
+        const r = el.getBoundingClientRect();
+        const size = Math.max(r.width, r.height) * 2.1;
+        const dot = document.createElement("span");
+        dot.className = "ripple";
+        dot.style.setProperty("--rx", `${e.clientX - r.left}px`);
+        dot.style.setProperty("--ry", `${e.clientY - r.top}px`);
+        dot.style.setProperty("--rs", `${size}px`);
+        dot.addEventListener("animationend", () => dot.remove(), { once: true });
+        el.appendChild(dot);
+      };
+      el.addEventListener("pointerdown", onDown);
+      cleanups.push(() => el.removeEventListener("pointerdown", onDown));
+    });
+
     // ── Aurora parallax ─────────────────────────────────────────────────────
     // Uses the independent `translate` property so it composes cleanly with the
     // blobs' existing `transform`-driven drift animation instead of fighting it.

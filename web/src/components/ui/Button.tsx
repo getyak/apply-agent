@@ -1,6 +1,13 @@
 "use client";
 
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useRef,
+  type ButtonHTMLAttributes,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "./cn";
 
 // Vantage button primitive — single source of truth for the brown/cream/amber palette,
@@ -55,14 +62,45 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
     className,
     children,
     type,
+    onPointerDown,
     ...rest
   },
   ref,
 ) {
+  // Ripple layer — a warm bloom radiates from the exact contact point on press,
+  // so a click reads as a physical impact. The ripple lives in a dedicated
+  // clipped layer (not the button itself) so the focus-visible ring is never
+  // clipped. Honours prefers-reduced-motion and skips when disabled.
+  const rippleHost = useRef<HTMLSpanElement>(null);
+  const handlePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLButtonElement>) => {
+      onPointerDown?.(e);
+      if (e.defaultPrevented || rest.disabled) return;
+      if (
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      )
+        return;
+      const host = rippleHost.current;
+      if (!host) return;
+      const r = host.getBoundingClientRect();
+      const size = Math.max(r.width, r.height) * 2.1;
+      const dot = document.createElement("span");
+      dot.className = "ripple";
+      dot.style.setProperty("--rx", `${e.clientX - r.left}px`);
+      dot.style.setProperty("--ry", `${e.clientY - r.top}px`);
+      dot.style.setProperty("--rs", `${size}px`);
+      dot.addEventListener("animationend", () => dot.remove(), { once: true });
+      host.appendChild(dot);
+    },
+    [onPointerDown, rest.disabled],
+  );
+
   return (
     <button
       ref={ref}
       type={type ?? "button"}
+      onPointerDown={handlePointerDown}
       className={cn(
         BASE,
         VARIANTS[variant],
@@ -72,6 +110,7 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       )}
       {...rest}
     >
+      <span ref={rippleHost} aria-hidden className="ripple-layer" />
       {leadingIcon && (
         <span className={cn(ICON, "motion-safe:group-hover/btn:-translate-x-[1px]")}>
           {leadingIcon}

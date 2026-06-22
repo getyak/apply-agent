@@ -1093,3 +1093,94 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   border-radius: 2px; pointer-events: none;
   background: linear-gradient(90deg, transparent, rgba(243, 200, 105, 0.65), transparent);
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Tactile depth & atmosphere layer (v9) — where v8 handed the light to the
+   reader, v9 makes contact *physical*: a primary press now blooms a warm
+   ripple from the exact point the finger lands, surfaces compress with a real
+   inner-shadow under the touch, the dark hero panel drifts with slow rising
+   embers, and the wordmark gains weight as the eye settles on it. Every class
+   is additive + opt-in; the ripple/ember motion is driven by ::before/::after
+   or JS-spawned nodes that rest at a neutral value, so each surface is
+   pixel-identical to its no-JS state until touched, and the whole layer
+   collapses under the prefers-reduced-motion guard above.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Pointer ripple — a warm gold bloom that radiates from the precise point of
+   contact on press, so a click reads as a physical impact rather than a state
+   flip. The host clips it; JS (Button primitive + PointerFX) spawns a `.ripple`
+   node with --rx/--ry (contact point) and --rs (diameter), and removes it on
+   animationend. The dedicated `.ripple-layer` lets a Button stay non-overflow
+   so its focus ring is never clipped. */
+@keyframes ripple-out {
+  0% { transform: translate(-50%, -50%) scale(0); opacity: 0.5; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+.ripple-layer {
+  position: absolute; inset: 0; z-index: 0;
+  border-radius: inherit; overflow: hidden; pointer-events: none;
+}
+.ripple {
+  position: absolute; top: var(--ry, 50%); left: var(--rx, 50%);
+  width: var(--rs, 200px); height: var(--rs, 200px); border-radius: 9999px;
+  pointer-events: none;
+  background: radial-gradient(circle,
+    rgba(255, 244, 216, 0.65), rgba(232, 163, 23, 0.30) 42%, transparent 70%);
+  transform: translate(-50%, -50%) scale(0);
+  animation: ripple-out 0.62s var(--ease-out) forwards;
+}
+
+/* Tactile compress — a surface that visibly takes the press: it shrinks a hair
+   and gains a soft inner shadow, so the click feels like pushing a real button.
+   Pairs cleanly with `.lift` / `.magnet` (which own the hover lift). */
+.pressure {
+  transition: transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.pressure:active {
+  transform: scale(0.985);
+  box-shadow: inset 0 2px 9px -4px rgba(61, 42, 20, 0.30);
+}
+
+/* Rising embers — a slow column of warm motes that drift up across a dark
+   panel, giving the near-black differentiators section the feel of a banked
+   fire rather than a flat fill. Put `.embers` over a relative section and seed
+   a handful of `.ember` spans with inline left / --dur / --delay / --drift. */
+@keyframes ember-rise {
+  0% { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
+  12% { opacity: 0.85; }
+  85% { opacity: 0.45; }
+  100% {
+    transform: translateY(-150px) translateX(var(--drift, 12px)) scale(0.35);
+    opacity: 0;
+  }
+}
+.embers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.ember {
+  position: absolute; bottom: -10px; width: 4px; height: 4px; border-radius: 9999px;
+  background: radial-gradient(circle, #f3c869, rgba(232, 163, 23, 0.25) 60%, transparent 72%);
+  box-shadow: 0 0 8px 1px rgba(232, 163, 23, 0.45);
+  animation: ember-rise var(--dur, 9s) linear var(--delay, 0s) infinite;
+  will-change: transform, opacity;
+}
+
+/* Weighted wordmark — the brand letters spread and bloom a faint halo as the
+   eye settles on the logo, a small "warm metal under light" flourish. Layers
+   over `.wordmark-gleam` without touching the resting tracking. */
+.weight-hover {
+  transition: letter-spacing var(--dur-base) var(--ease-out),
+    text-shadow var(--dur-base) var(--ease-out);
+}
+.weight-hover:hover {
+  letter-spacing: 3.7px;
+  text-shadow: 0 0 18px rgba(232, 163, 23, 0.35);
+}
+
+/* Sheen-on-reveal headline — a one-shot gradient figure reveal that pairs a
+   rise with a settle, for a section's lead numeral/stat. Lighter than `.crown`,
+   it just lifts and warms once on first paint. */
+@keyframes lift-warm {
+  0% { opacity: 0; transform: translateY(14px); filter: blur(5px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.animate-lift-warm { animation: lift-warm 0.7s var(--ease-out) both; }

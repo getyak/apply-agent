@@ -146,7 +146,7 @@ export default async function HomePage({
             <div className="w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
-            <span className="wordmark-gleam font-display font-bold text-lg tracking-[3px] text-brown">
+            <span className="wordmark-gleam weight-hover font-display font-bold text-lg tracking-[3px] text-brown">
               VANTAGE
             </span>
           </div>
@@ -160,7 +160,7 @@ export default async function HomePage({
           </nav>
           <div className="ml-auto flex items-center gap-4">
             <a href="/auth?mode=login" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
-            <a href="/auth" data-magnetic="0.35" className="magnet shine cta-aura no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
+            <a href="/auth" data-magnetic="0.35" data-ripple className="magnet shine cta-aura no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
           </div>
         </div>
       </header>
@@ -195,12 +195,12 @@ export default async function HomePage({
             interviews — you review and hit submit.
           </p>
           <div className="flex flex-wrap items-center gap-3.5 mb-[22px]">
-            <a href="/auth" data-magnetic="0.3" className="group magnet shine cta-aura sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
+            <a href="/auth" data-magnetic="0.3" data-ripple className="group magnet shine cta-aura sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
               <span className="sheen" aria-hidden />
               Start free
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
             </a>
-            <a href="#how" className="press no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] transition-[border-color,box-shadow] duration-200 ease-out hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.3)]">
+            <a href="#how" className="pressure no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] transition-[border-color,box-shadow,transform] duration-200 ease-out hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.3)]">
               See how it works
             </a>
           </div>
@@ -408,6 +408,34 @@ export default async function HomePage({
         {/* Pointer-tracked ember — the dark panel lights up where the reader
             looks, layered over the drifting mesh. */}
         <div aria-hidden className="ambient-light on-dark -z-0" />
+        {/* Rising embers — a slow column of warm motes drifting up the panel so
+            it reads as a banked fire, not a flat fill. Purely decorative. */}
+        <div aria-hidden className="embers -z-0">
+          {[
+            { left: "8%", dur: "9.5s", delay: "0s", drift: "14px" },
+            { left: "18%", dur: "11s", delay: "1.6s", drift: "-10px" },
+            { left: "29%", dur: "8.5s", delay: "3.1s", drift: "8px" },
+            { left: "41%", dur: "12s", delay: "0.8s", drift: "-16px" },
+            { left: "52%", dur: "10s", delay: "2.4s", drift: "12px" },
+            { left: "63%", dur: "9s", delay: "4s", drift: "-9px" },
+            { left: "73%", dur: "11.5s", delay: "1.2s", drift: "16px" },
+            { left: "84%", dur: "8.8s", delay: "3.6s", drift: "-12px" },
+            { left: "93%", dur: "10.5s", delay: "2s", drift: "10px" },
+          ].map((e, i) => (
+            <span
+              key={i}
+              className="ember"
+              style={
+                {
+                  left: e.left,
+                  "--dur": e.dur,
+                  "--delay": e.delay,
+                  "--drift": e.drift,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
         <div className="relative z-10 max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
             <span className="eyebrow-dot" aria-hidden />Three bets we made
@@ -449,7 +477,7 @@ export default async function HomePage({
               Upload a résumé, or just start talking. You&apos;ll have applications
               ready to review in minutes.
             </p>
-            <a href="/auth" data-magnetic="0.3" className="group/cta magnet shine cta-aura no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
+            <a href="/auth" data-magnetic="0.3" data-ripple className="group/cta magnet shine cta-aura no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
               Start free
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover/cta:translate-x-1" />
             </a>
@@ -464,7 +492,7 @@ export default async function HomePage({
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
-            <span className="wordmark-gleam font-display font-bold text-[15px] tracking-[2.5px] text-brown">
+            <span className="wordmark-gleam weight-hover font-display font-bold text-[15px] tracking-[2.5px] text-brown">
               VANTAGE
             </span>
           </div>
