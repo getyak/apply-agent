@@ -1638,7 +1638,49 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
 }
 .nav-assemble { animation: nav-item-in 0.5s var(--ease-out) both; animation-delay: calc(var(--ni, 0) * 55ms); }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   v17 — The considered finish
+   v16 owned the arrival; v17 tightens the two surfaces that still read flat and
+   deepens the touch everywhere else. The integration strip now reads as live
+   wiring — a slow warm beam scans across the supported ATS platforms, so the
+   "fills forms on …" row feels like a connected pipeline rather than a static
+   logo list. The feature cards become physical objects: they lean toward the
+   cursor and catch a soft specular highlight (reusing the `--tlt-x/--tlt-y`
+   tilt PointerFX already writes on `[data-tilt]` — no JS change). And the
+   secondary hero action gains the same one-shot gloss as the primary, so the
+   pair reads as a matched set. Every class is additive + opt-in; nothing here
+   mutates an existing primitive, and the whole layer collapses under the
+   reduced-motion guard below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Scan strip — a wide, soft warm beam travels left→right behind a row of
+   integration logos, raking brand light across them so the strip reads as a
+   live pipeline. The host clips it and sits it on a -z layer (via isolation),
+   so the beam glows *behind* the logos without washing the text. Idle loop;
+   hard-stopped under reduced motion. */
+@keyframes scan-sweep {
+  0%   { transform: translateX(-130%); opacity: 0; }
+  14%  { opacity: 1; }
+  86%  { opacity: 1; }
+  100% { transform: translateX(130%); opacity: 0; }
+}
+.scan-strip { position: relative; isolation: isolate; overflow: hidden; }
+.scan-strip::after {
+  content: ""; position: absolute; top: -30%; bottom: -30%; left: 0; width: 32%;
+  z-index: -1; pointer-events: none; border-radius: 9999px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(232, 163, 23, 0.14) 42%,
+    rgba(243, 200, 105, 0.22) 55%,
+    transparent);
+  filter: blur(10px);
+  transform: translateX(-130%);
+  animation: scan-sweep 8s var(--ease-in-out) 1.2s infinite;
+  will-change: transform, opacity;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .scan-strip::after,
   .grain-overlay,
   .cta-breathe::after,
   .avatar-gleam::after,

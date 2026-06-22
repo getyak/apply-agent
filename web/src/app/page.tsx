@@ -242,7 +242,7 @@ export default async function HomePage({
               {primaryCtaLabel}
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
             </a>
-            <a href="#how" className="lift-pop pressure no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] hover:border-brown">
+            <a href="#how" className="lift-pop pressure shine no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] hover:border-brown">
               See how it works
             </a>
           </div>
@@ -261,7 +261,7 @@ export default async function HomePage({
 
       {/* ATS strip */}
       <section className="max-w-[1140px] mx-auto px-6 sm:px-8 pt-2 pb-16">
-        <div data-reveal className="flex items-center justify-center gap-[30px] flex-wrap">
+        <div data-reveal className="scan-strip flex items-center justify-center gap-[30px] flex-wrap py-2">
           <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-ink-muted">
             Fills forms on
           </span>
@@ -423,8 +423,9 @@ export default async function HomePage({
               <div
                 key={f.title}
                 data-reveal
+                data-tilt="3.5"
                 style={{ "--reveal-delay": `${(i % 3) * 80}ms` } as CSSProperties}
-                className="group lift rim spotlight sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
+                className="group tilt-pointer tilt-shine rim spotlight sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
               >
                 <span className="sheen" aria-hidden />
                 <div className="icon-glow w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-cream group-hover:scale-[1.06] group-hover:-rotate-3">
