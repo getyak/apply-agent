@@ -178,7 +178,7 @@ export default async function HomePage({
               Client-side agents · zero account risk
             </span>
           </div>
-          <h1 className="font-display font-bold text-[52px] leading-[1.05] tracking-[-1px] text-ink m-0 mb-5">
+          <h1 className="fluid-display font-display font-bold text-ink m-0 mb-5">
             Your job hunt,
             <br />
             run by <span className="gradient-text text-halo crown">agents</span>.
@@ -190,7 +190,7 @@ export default async function HomePage({
             tailor every application, draft your answers, and prep your
             interviews — you review and hit submit.
           </p>
-          <div className="flex items-center gap-3.5 mb-[22px]">
+          <div className="flex flex-wrap items-center gap-3.5 mb-[22px]">
             <a href="/auth" data-magnetic="0.3" className="group magnet shine cta-aura sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
               <span className="sheen" aria-hidden />
               Start free
@@ -435,7 +435,7 @@ export default async function HomePage({
           {/* Warm light pooling under the headline. */}
           <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">
-            <h2 className="font-display font-bold text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
+            <h2 className="font-display font-bold text-[28px] sm:text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
               Hand the busywork to the <span className="gradient-text text-halo crown">agents</span>.
             </h2>
             <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
@@ -465,9 +465,9 @@ export default async function HomePage({
             Quality over quantity. Your account, never at risk.
           </span>
           <div className="ml-auto flex gap-6">
-            <a href="/legal/privacy" className="no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Privacy</a>
-            <a href="/legal/security" className="no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Security</a>
-            <a href="/legal/docs" className="no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Docs</a>
+            <a href="/legal/privacy" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Privacy</a>
+            <a href="/legal/security" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Security</a>
+            <a href="/legal/docs" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">Docs</a>
             <span className="font-mono text-[11px] tracking-[0.4px] text-ink-muted">
               © 2026
             </span>

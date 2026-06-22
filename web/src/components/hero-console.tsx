@@ -37,8 +37,8 @@ export default function HeroConsole() {
   return (
     <div className="bg-dark rounded-[18px] border border-dark-border/40 shadow-[0_24px_70px_rgba(40,25,5,0.22)] overflow-hidden">
       {/* Title bar */}
-      <div className="h-[46px] border-b border-dark-border/40 flex items-center px-4 gap-2">
-        <div className="flex gap-1.5">
+      <div className="group h-[46px] border-b border-dark-border/40 flex items-center px-4 gap-2">
+        <div className="dots flex gap-1.5">
           <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
           <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
           <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
@@ -55,15 +55,16 @@ export default function HeroConsole() {
       <div className="p-5 pb-[22px]">
         {phase === "entry" && (
           <div className="animate-fade-in">
-            <div className="flex gap-[5px] bg-[#1b1812] border border-dark-border/40 rounded-xl p-1 mb-4">
+            <div className="seg flex gap-[5px] bg-[#1b1812] border border-dark-border/40 rounded-xl p-1 mb-4">
               {methods.map((m) => (
                 <button
                   key={m.key}
                   onClick={() => setMethod(m.key)}
-                  className={`cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-[9px] px-1.5 rounded-[9px] font-body font-semibold text-[12.5px] transition-all border ${
+                  data-active={method === m.key}
+                  className={`seg-item cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-[9px] px-1.5 rounded-[9px] font-body font-semibold text-[12.5px] border ${
                     method === m.key
                       ? "bg-[#3a3022] text-[#FAF8F6] border-dark-border"
-                      : "bg-transparent text-dark-muted border-transparent"
+                      : "bg-transparent text-dark-muted border-transparent hover:text-[#d8d0c4]"
                   }`}
                 >
                   {m.icon}

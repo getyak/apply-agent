@@ -436,18 +436,18 @@ export function TodayView() {
               {job.ready ? (
                 <button
                   onClick={() => openReview(job.id)}
-                  className="border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:bg-brown-light transition-colors"
+                  className="tap border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] transition-[background-color,box-shadow,transform] duration-200 ease-out"
                 >
-                  <Zap className="w-[15px] h-[15px]" strokeWidth={1.9} />
+                  <Zap className="w-[15px] h-[15px] transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110" strokeWidth={1.9} />
                   One-click apply
                 </button>
               ) : (
                 <button
                   onClick={() => openExtension(job.id)}
-                  className="cursor-pointer bg-white text-ink border border-border-dark font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:border-brown transition-colors"
+                  className="tap group/site cursor-pointer bg-white text-ink border border-border-dark font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.28)] transition-[border-color,box-shadow,transform] duration-200 ease-out"
                 >
                   Apply on site
-                  <ArrowUpRight className="w-[14px] h-[14px] text-ink-light" strokeWidth={1.9} />
+                  <ArrowUpRight className="w-[14px] h-[14px] text-ink-light transition-transform duration-300 ease-out group-hover/site:translate-x-0.5 group-hover/site:-translate-y-0.5" strokeWidth={1.9} />
                 </button>
               )}
             </div>

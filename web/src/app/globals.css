@@ -871,3 +871,70 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   transition: opacity var(--dur-base) var(--ease-out);
 }
 .group:hover .icon-glow::before { opacity: 0.8; }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Refinement layer (v6) — a craft + responsiveness pass. Where v4/v5 added
+   light and motion, v6 tightens the details that decide whether the product
+   feels considered: type that scales fluidly instead of snapping at one
+   breakpoint, a universal tactile press for the many inline buttons that
+   don't go through the <Button> primitive, segmented controls that respond to
+   touch, and a couple of small "alive" cues. Every class is opt-in and
+   additive — no existing primitive is mutated — and all of it collapses under
+   the prefers-reduced-motion guard above (it matches `*` with !important).
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Fluid display heading — clamp()-based so the hero headline glides from a
+   comfortable mobile size up to its full desktop scale with no jarring
+   breakpoint jump. Pair on the hero <h1>; line-height + tracking come along so
+   the proportions hold at every width. */
+.fluid-display {
+  font-size: clamp(2rem, 1.3rem + 3.6vw, 3.25rem);
+  line-height: 1.06;
+  letter-spacing: -0.5px;
+}
+
+/* Universal tactile press — the lightweight tap feedback that the <Button>
+   primitive bakes in, exposed as a class for the many hand-rolled inline
+   buttons/links across the app so they all compress crisply on click instead
+   of feeling inert. Combines a gentle lift on hover with a snap on press. */
+.tap {
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+  will-change: transform;
+}
+@media (hover: hover) {
+  .tap:hover { transform: translateY(-1px); }
+}
+.tap:active { transform: translateY(0) scale(0.96); }
+
+/* Segmented control — a pill group (tabs, mode switches) whose active item
+   sits on a soft raised chip and whose items respond to touch. Put `.seg` on
+   the track and `.seg-item` on each button; the active one carries
+   `data-active="true"`. Visuals (colour/border) stay with the component so the
+   class only owns motion + the press feel. */
+.seg-item {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
+}
+.seg-item:active { transform: scale(0.95); }
+.seg-item[data-active="true"] { animation: pop-in 0.32s var(--ease-spring) both; }
+
+/* Soft focus ring for text inputs/textareas — warmer + less abrupt than the
+   global keyboard ring, for fields that are clicked into with a mouse. Opt-in
+   via `.field-ring` so other inputs keep their own styling. */
+.field-ring { transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
+.field-ring:focus-within, .field-ring:focus {
+  border-color: var(--color-gold, #e8a317);
+  box-shadow: 0 0 0 3px rgba(232, 163, 23, 0.16);
+}
+
+/* Traffic-light cluster — the macOS-style window dots warm up together when
+   their bar is hovered, a tiny "this is a live console" cue. Put `.dots` on the
+   row wrapping the three dots. */
+.dots > span { transition: background-color var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring); }
+.dots:hover > span:nth-child(1) { background-color: #e06a5a; }
+.dots:hover > span:nth-child(2) { background-color: #e8b84b; }
+.dots:hover > span:nth-child(3) { background-color: #6fbf7f; }
+.dots:hover > span { transform: scale(1.08); }
