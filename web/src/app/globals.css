@@ -1990,3 +1990,165 @@ html[data-idle="true"] .page-aura[data-active="true"] {
      appended), but pin the calm state in case a stale attribute lingers. */
   .page-aura { opacity: 0 !important; animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v22 — Continuity & arrival. Where v7 owned the seams between states and
+   v9–v21 lit the surfaces, v22 owns the *thresholds*: the instant a page
+   arrives, the bridge between full-document routes, the leading edge of the
+   reader's scroll, and the emissive weight of the gold itself. Every rule
+   here is additive — it either targets a global element (root, body, the
+   existing scroll rail) or upgrades a shared primitive (.gradient-text) in
+   place without changing its markup. The whole layer is gated behind the
+   reduced-motion guard so motion-sensitive readers keep the calm, static
+   version.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Cross-document view transitions — when a full-page navigation happens (e.g.
+   the marketing CTAs that <a href> into /auth and /app), the outgoing and
+   incoming documents cross-fade with a gentle vertical drift instead of the
+   browser's hard white flash. Soft-SPA navigations inside the Next router
+   ignore this (they're same-document), so it only adorns the real threshold
+   crossings — exactly where the flash used to live. No-op where unsupported. */
+@view-transition { navigation: auto; }
+
+@keyframes vt-fade-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.994); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes vt-fade-sink {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(-8px) scale(0.997); }
+}
+::view-transition-old(root) {
+  animation: vt-fade-sink 0.30s var(--ease-in-out) both;
+}
+::view-transition-new(root) {
+  animation: vt-fade-rise 0.42s var(--ease-out) both;
+}
+
+/* Arrival bloom — a single warm pulse of light rakes down from the top of the
+   viewport the moment any page first paints, so every surface (marketing and
+   workspace alike) opens with the same crafted breath the hero already has.
+   Painted on `body::after`, pinned to the viewport, pointer-transparent, and
+   it settles to fully transparent so it never sits between the reader and the
+   page after its one beat. */
+body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 9990; pointer-events: none;
+  opacity: 0; mix-blend-mode: screen;
+  background:
+    radial-gradient(120% 70% at 50% -8%,
+      rgba(243, 200, 105, 0.40), rgba(232, 163, 23, 0.12) 38%, transparent 64%);
+  animation: arrival-bloom 1.15s var(--ease-out) 0.04s both;
+}
+@keyframes arrival-bloom {
+  0%   { opacity: 0; transform: translateY(-14px); }
+  28%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(0); }
+}
+
+/* Comet head on the scroll rail — the existing gold progress thread gains a
+   bright, soft-glowing dot at its leading edge so the reader's travel down the
+   page reads as a moving point of light, not just a growing bar. Rides the
+   rail's own `scaleX`, so it always sits exactly at the front of progress. */
+.scroll-progress::after {
+  content: ""; position: absolute; top: 50%; right: -1px;
+  width: 7px; height: 7px; border-radius: 9999px;
+  transform: translateY(-50%);
+  background: #fbe3a6;
+  box-shadow:
+    0 0 8px 1px rgba(243, 200, 105, 0.9),
+    0 0 16px 3px rgba(232, 163, 23, 0.55);
+}
+
+/* Lit-metal depth for gold text — the shared `.gradient-text` accent (every
+   gold headline, hero numeral, and pricing figure) gains a faint emissive
+   halo so the warm gradient reads as light caught on metal rather than flat
+   paint. drop-shadow follows the clipped glyphs, so only the letters glow. */
+.gradient-text {
+  filter: drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22));
+}
+
+/* Warm caret + a fuller two-tone selection — small global touches so even raw
+   text input and highlight-to-copy feel like they belong to the warm palette. */
+* { caret-color: var(--color-amber, #A66A00); }
+::selection { background: #F2D49A; color: #2B2822; text-shadow: none; }
+::-moz-selection { background: #F2D49A; color: #2B2822; text-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* `*` doesn't reach the ::view-transition pseudo-tree or body::after's
+     one-shot, so pin them to a calm, instant state explicitly. */
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none !important; }
+  body::after { animation: none !important; opacity: 0 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v23 — Forged finish: the gold earns a drawn edge.
+   v9–v22 lit the surfaces, moved the light, choreographed the arrival, and
+   gave the gold an emissive, lit-metal weight. v23 makes that gold feel
+   *struck* rather than printed: every highlight word now lands with a hand-
+   drawn underline stroke beneath it, that stroke breathes with the page's own
+   idle life (v21), and the text links that carry the reader through the page
+   trade their flat hover bar for a glowing gold gradient. Every rule is
+   additive — it hangs a fresh pseudo on a shared primitive (.crown) or upgrades
+   one in place (.underline-grow) without touching a line of markup — and the
+   whole layer collapses to its calm, static rest under reduced motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Struck underline — beneath every gold highlight word (.crown is worn by the
+   hero highlight and the closing-CTA highlight) a thin warm-gold stroke draws
+   itself left→right just after the word settles, so the headline reads as
+   signed by hand in gilt. The crown's existing specular `::after` sweep is
+   untouched; this rides a fresh `::before` on the same relative box. Tapered
+   ends + a soft bloom keep it reading as struck light, not a flat rule. */
+.crown::before {
+  content: ""; position: absolute; left: -1%; right: -1%; bottom: -0.12em;
+  height: 3px; border-radius: 3px; z-index: 0; pointer-events: none;
+  transform: scaleX(0); transform-origin: left;
+  background:
+    linear-gradient(90deg, transparent, #e8a317 12%, #f3c869 50%, #e8a317 88%, transparent);
+  box-shadow: 0 1px 9px -1px rgba(232, 163, 23, 0.55);
+  animation: crown-underline 0.9s var(--ease-out) 0.55s both;
+}
+@keyframes crown-underline {
+  0%   { transform: scaleX(0); opacity: 0; }
+  35%  { opacity: 1; }
+  100% { transform: scaleX(1); opacity: 1; }
+}
+/* Idle breath — once the page settles (root gains data-idle from PointerFX, the
+   same signal that calms the v21 atmosphere), the struck stroke pulses its bloom
+   so the gilt edge keeps a faint pulse of life. The one-shot draw above is long
+   finished by the time idle arrives (≥2.6s of stillness), so re-declaring the
+   animation here simply takes over while holding the line fully drawn. */
+@keyframes crown-underline-breathe {
+  0%, 100% { box-shadow: 0 1px 7px -1px rgba(232, 163, 23, 0.35); }
+  50%      { box-shadow: 0 1px 13px 0px rgba(243, 200, 105, 0.7); }
+}
+html[data-idle="true"] .crown::before {
+  transform: scaleX(1);
+  animation: crown-underline-breathe 5s var(--ease-in-out) infinite;
+}
+
+/* Glowing gold link underline — the text links that thread the page (nav, footer,
+   inline affordances all share `.underline-grow`) trade their flat amber bar for
+   a warm gold gradient that lights a soft bloom as it grows in under the hand, so
+   following a link feels like the rest of the warm-metal system rather than a
+   default text-decoration. In-place upgrade: same grow-from-left mechanic, richer
+   paint. */
+.underline-grow::after {
+  background: linear-gradient(90deg, #A66A00, #e8a317 50%, #f3c869);
+  box-shadow: 0 1px 8px -2px rgba(232, 163, 23, 0);
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.underline-grow:hover::after {
+  box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `*` doesn't reach generated pseudo content, so pin the struck stroke to its
+     calm, fully-drawn rest with no draw, no breath. */
+  .crown::before { transform: scaleX(1) !important; animation: none !important; }
+}
