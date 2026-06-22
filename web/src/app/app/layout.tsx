@@ -204,7 +204,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <OnboardingBanner />
       <div className="flex flex-1 min-h-0">
         <Sidebar />
-        <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
+        {/* Key the scroll container on the route so its content plays the
+            `view-enter` rise on every navigation. The animation ends on
+            identity, so sticky headers inside a view settle normally once it's
+            done — see globals.css §Continuity layer (v7). */}
+        <main key={pathname} className="view-enter flex-1 min-w-0 overflow-y-auto">{children}</main>
         <AskVantageDock />
       </div>
       <OnboardingTour />

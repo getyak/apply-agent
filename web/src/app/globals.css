@@ -650,6 +650,77 @@ body {
   .reveal-ready [data-reveal] { opacity: 1 !important; transform: none !important; filter: none !important; }
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+   Continuity layer (v7) — where v4–v6 lit the surfaces and made light move,
+   v7 owns the moments *between* states: the seams. Route changes glide rather
+   than snap, the active nav item sits on a warm lit chip instead of a flat
+   fill, the "you" avatar wears a slow gradient ring, and a few high-touch
+   controls gain a crisper, more physical press. Every class is additive +
+   opt-in; nothing here mutates an existing primitive, and the whole layer
+   collapses under the prefers-reduced-motion guard above (it matches `*` with
+   !important, so motion-sensitive users keep the calm static version).
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* View enter — workspace content rises + un-blurs as a route's content mounts.
+   Keyed on pathname in AppLayout so each navigation reads as an intentional
+   beat rather than an instant swap. Ends on identity (no lingering transform),
+   so sticky headers inside the view are unaffected once it settles. */
+@keyframes view-enter {
+  0% { opacity: 0; transform: translateY(9px) scale(0.995); filter: blur(4px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.view-enter { animation: view-enter 0.46s var(--ease-out) both; }
+
+/* Active nav chip — a warm gradient + soft inner lift for the selected nav row,
+   so the current location reads as a raised, lit surface instead of a flat
+   cream block. Layers under the existing `.nav-rail` gold edge. Apply on the
+   active row alongside its base classes. */
+.nav-chip {
+  background: linear-gradient(180deg, #FBF2E1 0%, #F3E7D0 100%) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(122, 63, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 5px 14px -9px rgba(122, 63, 0, 0.5) !important;
+}
+
+/* Avatar ring — a slow-panning warm-gold hairline around the sidebar avatar, a
+   small "this is you" flourish. The ring is a masked gradient behind the tile,
+   so the avatar fill is untouched; it brightens on hover. */
+.avatar-ring { position: relative; isolation: isolate; }
+.avatar-ring::before {
+  content: ""; position: absolute; inset: -2px; z-index: -1; border-radius: inherit;
+  background: linear-gradient(120deg,
+    rgba(232, 163, 23, 0) 0%, rgba(232, 163, 23, 0.65) 30%,
+    rgba(243, 200, 105, 0.95) 50%, rgba(232, 163, 23, 0.65) 70%,
+    rgba(232, 163, 23, 0) 100%);
+  background-size: 220% auto;
+  animation: border-pan 5.5s linear infinite;
+  opacity: 0.5; transition: opacity var(--dur-base) var(--ease-out);
+}
+.avatar-ring:hover::before { opacity: 1; }
+
+/* Sidebar width easing — the rail's expand/collapse rides the system's calm
+   decel curve instead of a flat linear slide, so chrome settles like the rest
+   of the app. Opt-in via class so only the aside that wants it is affected. */
+.width-ease { transition: width var(--dur-base) var(--ease-out) !important; }
+
+/* Count tick — the small numeric badges (Applications / Interviews) recolour
+   and lift a hair when their value lands, reinforcing the existing count-pop
+   mount with a settled resting glow on change. */
+.count-tick { transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out); }
+
+/* Underline reveal for the sidebar "Upgrade" + inline text affordances that
+   aren't full links — a gold hairline draws in on hover so they read as
+   interactive without a permanent underline. */
+.link-pull { position: relative; }
+.link-pull::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px;
+  border-radius: 2px; background: var(--grad-gold, #e8a317);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.link-pull:hover::after { transform: scaleX(1); }
+
 /* DayPage Design System — semantic classes from colors_and_type.css */
 .ds-display-lg { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 56px; line-height: 1.02; letter-spacing: 0.5px; text-transform: uppercase; }
 .ds-h1 { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 32px; line-height: 1.15; letter-spacing: -0.2px; }

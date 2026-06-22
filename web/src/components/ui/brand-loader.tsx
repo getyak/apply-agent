@@ -21,7 +21,7 @@ export default function BrandLoader({ label }: { label?: string }) {
       />
       <div className="relative flex flex-col items-center gap-4 animate-fade-up">
         <div className="font-display text-[18px] font-bold tracking-[3px]">
-          <span className="gradient-text">VANTAGE</span>
+          <span className="gradient-text text-halo crown">VANTAGE</span>
         </div>
         <div className="flex items-center gap-[6px]" aria-hidden>
           {[0, 1, 2].map((i) => (

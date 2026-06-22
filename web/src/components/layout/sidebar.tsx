@@ -138,7 +138,7 @@ export function Sidebar() {
       collapsed ? "justify-center px-0" : "px-[10px]"
     } py-[9px] rounded-[9px] cursor-pointer text-[14px] font-medium transition-[background-color,color,box-shadow] duration-200 ${
       isActive
-        ? "bg-cream text-brown font-semibold shadow-[inset_0_0_0_1px_rgba(122,63,0,0.08)]"
+        ? "nav-chip text-brown font-semibold"
         : "text-ink-light hover:bg-[#F8F5F0] hover:text-ink"
     }`;
 
@@ -164,9 +164,9 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`${
+      className={`width-ease ${
         collapsed ? "w-[74px] px-2" : "w-[248px] px-4"
-      } shrink-0 bg-white border-r border-border flex flex-col py-[22px] transition-[width] duration-150`}
+      } shrink-0 bg-white border-r border-border flex flex-col py-[22px]`}
     >
       {/* Brand mark — also the "home" affordance. Clicking it routes to
           /app/today (the highest-signal landing screen — see app/page.tsx)
@@ -241,7 +241,7 @@ export function Sidebar() {
           {!collapsed && (
             <>
               <span>Applications</span>
-              <span key={totalApps} className="count-pop ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
+              <span key={totalApps} className="count-pop count-tick ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
                 {totalApps}
               </span>
             </>
@@ -258,7 +258,7 @@ export function Sidebar() {
             <>
               <span>Interviews</span>
               {interviewingCount > 0 && (
-                <span key={interviewingCount} className="count-pop ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
+                <span key={interviewingCount} className="count-pop count-tick ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
                   {interviewingCount}
                 </span>
               )}
@@ -334,7 +334,7 @@ export function Sidebar() {
           </div>
           <div className="font-body text-[11px] text-ink-muted mt-[9px]">
             Resets in 14 days ·{" "}
-            <span className="text-brown font-semibold cursor-pointer">Upgrade</span>
+            <span className="link-pull text-brown font-semibold cursor-pointer">Upgrade</span>
           </div>
         </div>
       )}
@@ -345,7 +345,7 @@ export function Sidebar() {
         }`}
       >
         <div
-          className="w-[34px] h-[34px] rounded-[9px] bg-brown flex items-center justify-center font-display font-bold text-[14px] text-paper shrink-0"
+          className="avatar-ring w-[34px] h-[34px] rounded-[9px] bg-brown flex items-center justify-center font-display font-bold text-[14px] text-paper shrink-0"
           aria-hidden="true"
           title={collapsed ? displayName : undefined}
         >
