@@ -97,6 +97,10 @@ test-run-*/
 TODO.md
 .todo-log/
 
+# stray probe / lock artifacts dropped by tooling at repo root
+/.lock
+/__probe_*
+
 # env (ensure .env.example is allowed)
 .env.*
 !.env.example
