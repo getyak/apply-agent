@@ -9,6 +9,7 @@ import {
   resumes as resumesApi,
   ask as askApi,
 } from "@/lib/api";
+import { BrandLoader } from "@/components/ui";
 import { Sidebar } from "@/components/layout/sidebar";
 import { OnboardingBanner } from "@/components/onboarding-banner";
 import { OnboardingTour } from "@/components/onboarding-tour";
@@ -166,18 +167,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [router, resumeWorkspace]);
 
   if (!ready) {
-    return (
-      <div className="min-h-screen bg-[var(--paper)] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
-            VANTAGE
-          </div>
-          <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
-            Preparing your workspace…
-          </p>
-        </div>
-      </div>
-    );
+    return <BrandLoader label="Preparing your workspace…" />;
   }
 
   // Settings is account-level, not part of the résumé-first onboarding flow, so

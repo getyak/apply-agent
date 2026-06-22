@@ -1,3 +1,4 @@
+export { default as BrandLoader } from "./brand-loader";
 export { Button } from "./Button";
 export type { ButtonVariant, ButtonSize } from "./Button";
 export { Card, CardHeader } from "./Card";

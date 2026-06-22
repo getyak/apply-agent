@@ -367,15 +367,15 @@ export function TodayView() {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] animate-pulse"
+              className="bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px]"
             >
-              <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB]" />
+              <div className="skeleton w-[46px] h-[46px] rounded-[11px]" />
               <div className="flex-1 flex flex-col gap-[7px]">
-                <div className="h-[14px] w-[60%] rounded bg-[#F3F0EB]" />
-                <div className="h-[10px] w-[40%] rounded bg-[#F3F0EB]" />
-                <div className="h-[6px] w-[30%] rounded-full bg-border mt-[4px]" />
+                <div className="skeleton h-[14px] w-[60%] rounded" />
+                <div className="skeleton h-[10px] w-[40%] rounded" />
+                <div className="skeleton h-[6px] w-[30%] rounded-full mt-[4px]" />
               </div>
-              <div className="w-[120px] h-[36px] rounded-[9px] bg-[#F3F0EB]" />
+              <div className="skeleton w-[120px] h-[36px] rounded-[9px]" />
             </div>
           ))}
         </div>

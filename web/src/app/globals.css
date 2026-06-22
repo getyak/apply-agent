@@ -608,6 +608,35 @@ body {
   will-change: translate;
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+   Loading layer — warm, living placeholders. The default `animate-pulse`
+   (flat opacity throb) reads dead against this paper palette; these two give
+   loading surfaces the same warm-metal sheen as the rest of the system.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Skeleton block — a warm sheen travels across the placeholder so a loading
+   card reads as "filling in", not "broken". Use on the grey inner blocks of a
+   skeleton row instead of a flat fill + `animate-pulse`. */
+@keyframes skeleton-sweep {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(100deg, #EFE9DF 32%, #F9F4EB 50%, #EFE9DF 68%);
+  background-size: 280% 100%;
+  animation: skeleton-sweep 1.5s var(--ease-in-out) infinite;
+}
+
+/* Brand loader dots — three gold dots that bob in sequence under the wordmark
+   on full-screen "verifying / preparing" shells. Calmer + more crafted than a
+   pulsing line of text. Drive the cascade with inline animation-delay. */
+.loader-dot {
+  width: 6px; height: 6px; border-radius: 9999px;
+  background: var(--grad-gold, #e8a317);
+  box-shadow: 0 1px 4px -1px rgba(232, 163, 23, 0.6);
+  animation: bob 1.1s var(--ease-in-out) infinite;
+}
+
 /* Honour the OS "reduce motion" setting — collapse all animation + transition
    to near-instant so the app stays usable for motion-sensitive users. */
 @media (prefers-reduced-motion: reduce) {

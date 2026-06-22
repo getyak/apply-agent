@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { auth as authApi, setToken, getToken, ApiError } from "@/lib/api";
-import { Button, Field, Input } from "@/components/ui";
+import { BrandLoader, Button, Field, Input } from "@/components/ui";
 
 // Next 16 requires components that read URL search params to be wrapped in a
 // Suspense boundary so the rest of the page can be prerendered. Without it,
@@ -13,18 +13,7 @@ import { Button, Field, Input } from "@/components/ui";
 // in a suspense boundary". The fallback mirrors the same brand frame the inner
 // component shows while verifying the session.
 function AuthFallback() {
-  return (
-    <div className="min-h-screen bg-paper flex items-center justify-center">
-      <div className="flex flex-col items-center gap-3">
-        <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
-          VANTAGE
-        </div>
-        <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
-          Loading…
-        </p>
-      </div>
-    </div>
-  );
+  return <BrandLoader label="Loading…" />;
 }
 
 export default function AuthPage() {
@@ -137,32 +126,31 @@ function AuthPageInner() {
   };
 
   if (checking) {
-    return (
-      <div className="min-h-screen bg-paper flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
-            VANTAGE
-          </div>
-          <p className="font-mono text-[12px] tracking-[0.5px] uppercase text-ink-muted animate-pulse">
-            Verifying your session…
-          </p>
-        </div>
-      </div>
-    );
+    return <BrandLoader label="Verifying your session…" />;
   }
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center px-4"
+      className="relative overflow-hidden min-h-screen flex items-center justify-center px-4"
       style={{
         background:
           "radial-gradient(120% 120% at 50% 0%, #FFFFFF 0%, var(--color-paper) 55%, var(--color-cream) 100%)",
       }}
     >
-      <div className="w-full max-w-md animate-fade-up">
+      {/* Warm aurora drift behind the card — the same depth the landing hero
+          carries, so the first authenticated surface doesn't read flat. */}
+      <div
+        aria-hidden
+        className="aurora-blob w-[420px] h-[420px] -top-[120px] -left-[80px] opacity-40"
+      />
+      <div
+        aria-hidden
+        className="aurora-blob w-[320px] h-[320px] -bottom-[120px] -right-[60px] opacity-30 [animation-delay:-7s]"
+      />
+      <div className="relative w-full max-w-md animate-fade-up">
         <div className="text-center mb-8">
-          <div className="font-display text-[18px] font-bold tracking-[3px] text-brown">
-            VANTAGE
+          <div className="font-display text-[18px] font-bold tracking-[3px]">
+            <span className="gradient-text">VANTAGE</span>
           </div>
           <h1 className="mt-4 font-display text-[32px] font-bold -tracking-[0.3px] text-ink leading-tight">
             {isLogin ? "Welcome back." : "Start your hunt."}
@@ -191,7 +179,16 @@ function AuthPageInner() {
 
         <form
           onSubmit={handleSubmit}
-          className="space-y-4 bg-white border border-border rounded-[14px] p-6 shadow-sm"
+          onPointerMove={(e) => {
+            // Feed the cursor position to the `.glow-track` spotlight so the
+            // warm highlight follows the pointer across the card. No state, no
+            // re-render — written straight to style for 60fps cheapness.
+            const el = e.currentTarget;
+            const r = el.getBoundingClientRect();
+            el.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`);
+            el.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`);
+          }}
+          className="glow-track spotlight animate-pop-blur stagger space-y-4 bg-white border border-border rounded-[14px] p-6 shadow-md"
         >
           {!isLogin && (
             <Field label="Display name">
