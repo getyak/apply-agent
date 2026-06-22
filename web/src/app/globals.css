@@ -555,6 +555,59 @@ body {
   box-shadow: 0 6px 22px -14px rgba(61, 42, 20, 0.5), inset 0 -1px 0 var(--color-border, #EDE8DF);
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+   Pointer-reactive depth — driven by the PointerFX client island. Every class
+   here is brand-new (no existing primitive is touched) and rests at a neutral
+   value, so a surface is pixel-identical to its no-JS state until the cursor
+   moves. The island only arms on a fine pointer + hover, and the whole layer
+   collapses under the reduced-motion guard below.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Magnetic pull — leans a few px toward the cursor (JS writes --mag-x/--mag-y)
+   and springs back on leave. The press state wins briefly for a crisp click.
+   Pair with `.shine` for the travelling gloss. Replaces `.magnetic` on the CTAs
+   that opt into JS tracking. */
+.magnet {
+  transition:
+    transform var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out);
+  transform: translate3d(var(--mag-x, 0px), var(--mag-y, 0px), 0);
+  will-change: transform;
+}
+@media (hover: hover) {
+  .magnet:hover { box-shadow: var(--shadow-lg); }
+}
+.magnet:active {
+  transform: scale(0.96);
+  transition-duration: var(--dur-fast);
+}
+
+/* Pointer tilt — the element tips toward the cursor in 3D (JS writes
+   --tlt-x/--tlt-y in degrees). Unlike `.tilt-3d` there is no fixed hover
+   transform, so the cursor stays in command of the angle. A short transition
+   gives the lean a silky, slightly trailing glide rather than a rigid snap. */
+.tilt-pointer {
+  transform-style: preserve-3d;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+  transform: perspective(1100px) rotateX(var(--tlt-x, 0deg))
+    rotateY(var(--tlt-y, 0deg));
+  will-change: transform;
+}
+@media (hover: hover) {
+  .tilt-pointer:hover { box-shadow: var(--shadow-xl); }
+}
+
+/* Parallax drift — uses the independent `translate` property (JS writes it
+   directly) so it layers on top of any `transform`-based animation without
+   conflict. The transition smooths the cursor follow into a gentle float. */
+.parallax {
+  transition: translate var(--dur-slow) var(--ease-out);
+  will-change: translate;
+}
+
 /* Honour the OS "reduce motion" setting — collapse all animation + transition
    to near-instant so the app stays usable for motion-sensitive users. */
 @media (prefers-reduced-motion: reduce) {

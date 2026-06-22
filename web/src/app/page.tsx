@@ -17,6 +17,7 @@ import type { CSSProperties } from "react";
 import HeroConsole from "@/components/hero-console";
 import PricingSection from "@/components/pricing-section";
 import LandingMotion from "@/components/landing-motion";
+import PointerFX from "@/components/pointer-fx";
 
 const ASKS = [
   '"Find me product design roles under $200k, remote."',
@@ -123,6 +124,7 @@ export default async function HomePage({
   return (
     <div className="min-h-screen">
       <LandingMotion />
+      <PointerFX />
       {showRedirectNotice && (
         <div
           role="status"
@@ -158,7 +160,7 @@ export default async function HomePage({
           </nav>
           <div className="ml-auto flex items-center gap-4">
             <a href="/auth?mode=login" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
-            <a href="/auth" className="magnetic shine no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
+            <a href="/auth" data-magnetic="0.35" className="magnet shine no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
           </div>
         </div>
       </header>
@@ -167,8 +169,8 @@ export default async function HomePage({
       <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
         {/* Warm aurora drift behind the hero — low-opacity light that keeps the
             paper fill from reading dead. Purely decorative. */}
-        <div aria-hidden className="aurora-blob -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
-        <div aria-hidden className="aurora-blob -z-10 w-[360px] h-[360px] top-[40px] -right-[80px] [animation-delay:-6s] opacity-30" />
+        <div aria-hidden data-parallax="34" className="aurora-blob parallax -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
+        <div aria-hidden data-parallax="-22" className="aurora-blob parallax -z-10 w-[360px] h-[360px] top-[40px] -right-[80px] [animation-delay:-6s] opacity-30" />
         <div className="relative animate-fade-up">
           <div className="inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
             <span className="w-[7px] h-[7px] rounded-full bg-green animate-pulse-dot" />
@@ -189,7 +191,7 @@ export default async function HomePage({
             interviews — you review and hit submit.
           </p>
           <div className="flex items-center gap-3.5 mb-[22px]">
-            <a href="/auth" className="group magnetic shine sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
+            <a href="/auth" data-magnetic="0.3" className="group magnet shine sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
               <span className="sheen" aria-hidden />
               Start free
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
@@ -203,7 +205,9 @@ export default async function HomePage({
           </div>
         </div>
         <div className="animate-fade-up-delay">
-          <HeroConsole />
+          <div data-tilt="6" className="tilt-pointer">
+            <HeroConsole />
+          </div>
         </div>
       </section>
 
@@ -290,7 +294,8 @@ export default async function HomePage({
         </div>
 
         {/* Mini chat mock */}
-        <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="group grad-border lift bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
+        <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties}>
+          <div data-tilt="5" className="group grad-border tilt-pointer bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
           <div className="h-12 border-b border-border flex items-center gap-2.5 px-[18px] bg-white">
             <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
@@ -351,6 +356,7 @@ export default async function HomePage({
                 <Send size={15} className="text-[#FAF8F6]" strokeWidth={2} />
               </div>
             </div>
+          </div>
           </div>
         </div>
       </section>
@@ -422,7 +428,7 @@ export default async function HomePage({
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
         <div data-reveal className="group grad-border relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
           {/* Warm light pooling under the headline. */}
-          <div aria-hidden className="aurora-blob -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
+          <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
           <div className="relative z-10">
             <h2 className="font-display font-bold text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
               Hand the busywork to the <span className="gradient-text">agents</span>.
@@ -431,7 +437,7 @@ export default async function HomePage({
               Upload a résumé, or just start talking. You&apos;ll have applications
               ready to review in minutes.
             </p>
-            <a href="/auth" className="group/cta magnetic shine no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
+            <a href="/auth" data-magnetic="0.3" className="group/cta magnet shine no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
               Start free
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover/cta:translate-x-1" />
             </a>
