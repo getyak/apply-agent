@@ -1851,3 +1851,79 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   .card-glow::after { transition: none !important; }
   .reveal-ready [data-reveal].proof-row .proof-check { transform: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v20 — Momentum
+   v4–v19 lit the surfaces, moved the light, choreographed the arrival, connected
+   the page into one system, and handed the reader the lamp. Every one of those
+   layers reacted to *position* — where the cursor rests, how far the page has
+   scrolled. v20 adds the one dimension none of them touched: *velocity*. The
+   page now feels how fast it is being read. LandingMotion differentiates the
+   scroll position into a smoothed `--scroll-energy` (0 at rest → 1 at a hard
+   fling) that decays on its own park-when-settled loop. The progress thread
+   charges — thickening and brightening — as the reader flings down the page,
+   and the comet riding its leading edge blooms into a hot-cored streak that
+   trails *behind* the direction of travel, so a fast scroll reads as real
+   motion blur rather than a dot teleporting. At rest everything eases back to
+   the calm v7 rail. Additive + opt-in: `--scroll-energy` defaults to 0, so with
+   no JS (or under the reduced-motion guard below, which never starts the engine)
+   the rail + comet are pixel-identical to their prior v7 state.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Charged rail — the warm progress thread gains weight with reading speed. It
+   thickens a hair and its glow swells, so flinging down the page feels like
+   pouring current through the wire; it relaxes back to the calm 2.5px hairline
+   the instant the scroll settles. `--scroll-energy` rests at 0 → identical to v7. */
+.scroll-progress {
+  height: calc(2.5px + var(--scroll-energy, 0) * 1.6px);
+  transition: height var(--dur-fast) var(--ease-out);
+}
+.scroll-progress::after {
+  content: ""; position: absolute; inset: -2px 0;
+  pointer-events: none; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(243, 200, 105, 0.9) 60%, #fff4d8);
+  filter: blur(6px);
+  opacity: calc(var(--scroll-energy, 0) * 0.85);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+/* Comet bloom — the head riding the rail's leading edge stretches into a
+   streak and grows a white-hot core as energy rises. The body scales from its
+   *right* edge so the tail rakes backward (up-page) against the downward fling,
+   the way motion blur trails the thing that's moving. A soft `::before` tail
+   extends the smear further; a `::after` core whitens the centre. Both rest at
+   opacity 0 / scale 1, so a still page shows the unchanged v7 dot. */
+.scroll-comet {
+  transform-origin: right center;
+  transform: scaleX(calc(1 + var(--scroll-energy, 0) * 3.4))
+    scaleY(calc(1 + var(--scroll-energy, 0) * 0.7));
+  transition: transform var(--dur-fast) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.scroll-comet::before {
+  content: ""; position: absolute; top: 50%; right: 4px;
+  width: calc(28px + var(--scroll-energy, 0) * 120px); height: 2px;
+  margin-top: -1px; border-radius: 9999px; pointer-events: none;
+  transform-origin: right center;
+  background: linear-gradient(270deg, rgba(243, 200, 105, 0.85), transparent);
+  opacity: calc(var(--scroll-energy, 0) * 0.9);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.scroll-comet::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(circle, #ffffff 0%, #fff4d8 45%, transparent 72%);
+  opacity: calc(var(--scroll-energy, 0) * 0.95);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The engine never starts under reduced motion, but pin the resting values
+     hard so a stale custom property can never thicken the rail or smear the
+     comet for a motion-sensitive reader. */
+  .scroll-progress { height: 2.5px !important; }
+  .scroll-progress::after,
+  .scroll-comet::before,
+  .scroll-comet::after { display: none !important; }
+  .scroll-comet { transform: none !important; }
+}
