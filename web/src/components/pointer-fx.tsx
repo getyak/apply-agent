@@ -17,6 +17,9 @@ import { useEffect } from "react";
  *      host section, lighting the surface like a lamp the reader is holding.
  *   4. Aurora parallax — the decorative warm blobs (`data-parallax`) drift
  *      against the cursor for a sense of depth behind the hero.
+ *   5. Pointer-lit cards (v19) — a warm pool tracks the cursor across the
+ *      pricing + differentiator cards (`data-glow`), so a whole grid lights up
+ *      under the hand rather than each card waking only on direct hover.
  *
  * v13 — weighted light. Effects 2–4 used to write the raw cursor target every
  * frame, so the lean and the light *snapped* to the pointer. They now ride a
@@ -197,6 +200,29 @@ export default function PointerFX() {
       };
       el.addEventListener("pointerdown", onDown);
       cleanups.push(() => el.removeEventListener("pointerdown", onDown));
+    });
+
+    // ── Pointer-lit cards (v19) ──────────────────────────────────────────────
+    // A warm pool tracks the cursor across each `[data-glow]` card. Kept on the
+    // direct path (no spring): a spotlight should sit *under* the cursor, not
+    // trail it, so it reads as a held lamp rather than a lagging ghost. Writes
+    // --gx/--gy (% within the card) and toggles data-glowing for the CSS fade.
+    document.querySelectorAll<HTMLElement>("[data-glow]").forEach((el) => {
+      const onMove = (e: PointerEvent) => {
+        const r = el.getBoundingClientRect();
+        el.style.setProperty("--gx", `${((e.clientX - r.left) / r.width) * 100}%`);
+        el.style.setProperty("--gy", `${((e.clientY - r.top) / r.height) * 100}%`);
+        el.dataset.glowing = "true";
+      };
+      const onLeave = () => {
+        el.dataset.glowing = "false";
+      };
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerleave", onLeave);
+      cleanups.push(() => {
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerleave", onLeave);
+      });
     });
 
     // ── Aurora parallax (weighted) ───────────────────────────────────────────

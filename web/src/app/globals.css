@@ -1778,3 +1778,76 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   /* Never leave the thread collapsed when motion is suppressed. */
   .reveal-ready .flow-rail::before { transform: scaleX(1) !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v19 — Pointer-lit surfaces & cascading proof
+   v4–v18 lit the surfaces, moved the light, choreographed the arrival, and
+   connected the page into one system. v19 hands the lamp to the reader on the
+   two grids that still only *responded* to a direct hover: the pricing wall and
+   the dark differentiators. A warm pool now tracks the cursor precisely as it
+   sweeps across those cards — bright where the pointer rests, fading at the
+   edges — so a whole grid reads as lit by a light the reader is holding rather
+   than each card waking only when entered. And the hero's proof list (the green
+   "it can…" rows) now cascades up on first sight instead of snapping in as a
+   block, so the promises land one weighted beat at a time. Every class is
+   additive + opt-in: the glow rests fully transparent and only the PointerFX
+   island (fine-pointer + hover only, off under reduced motion) writes
+   --gx/--gy + data-glowing, so a no-JS / touch / keyboard surface is
+   pixel-identical to its prior state. The cascade reuses LandingMotion's
+   existing [data-reveal].revealed switch, inheriting its observer and no-JS /
+   reduced-motion fallbacks.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Card glow — a warm spotlight that follows the cursor across a card. Larger,
+   brighter, and (unlike the hover-only `.spotlight`) cursor-tracked, so a grid
+   of them lights up like a swept lamp. Painted on the free `::after` slot at
+   z-index -1: per CSS painting order a negative-z child sits *above* the card's
+   own opaque fill but *below* its in-flow text, so the pool glows through a
+   white card without ever washing the copy. Rests at opacity 0 with a calm
+   top-centre fallback position, so with no JS the card is untouched. Put
+   `.card-glow` + `data-glow` on a relative, rounded surface that still has a
+   free `::after` (it composes with `.spotlight`/`.rim`/`.halo-card`, which use
+   `::before`). */
+.card-glow { position: relative; isolation: isolate; }
+.card-glow::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  pointer-events: none; opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  background: radial-gradient(260px circle at var(--gx, 50%) var(--gy, 0%),
+    rgba(232, 163, 23, 0.20), rgba(232, 163, 23, 0.05) 42%, transparent 66%);
+  will-change: opacity, background;
+}
+.card-glow[data-glowing="true"]::after { opacity: 1; }
+/* On the near-black panels the pool reads as a travelling ember: a warmer,
+   wider gold lit with `screen` so it adds light to the dark fill. */
+.card-glow.on-dark::after {
+  mix-blend-mode: screen;
+  background: radial-gradient(300px circle at var(--gx, 50%) var(--gy, 0%),
+    rgba(243, 200, 105, 0.26), rgba(217, 164, 95, 0.07) 44%, transparent 66%);
+}
+
+/* Proof cascade — the hero "it can…" rows rise + un-blur on their own beat so
+   the promise list reads as assembled one line at a time. Reuses the reveal
+   switch (so it shares the observer + no-JS / reduced-motion fallbacks); the
+   per-row delay comes from inline `--reveal-delay`. The check tile springs a
+   hair as its row lands, and warms on row hover so the list stays interactive. */
+.proof-row .proof-check {
+  transition: transform var(--dur-base) var(--ease-spring),
+    background-color var(--dur-base) var(--ease-out);
+}
+.reveal-ready [data-reveal].proof-row:not(.revealed) .proof-check { transform: scale(0.7); }
+.reveal-ready [data-reveal].proof-row.revealed .proof-check { transform: scale(1); }
+@media (hover: hover) {
+  .proof-row:hover .proof-check {
+    transform: scale(1.08);
+    background-color: var(--color-green-bg, #EBF3E5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The glow is a static following-pool, not a loop — but kill its fade so a
+     motion-sensitive reader never sees it ease, and never leave a proof check
+     shrunk if the reveal layer is armed without motion. */
+  .card-glow::after { transition: none !important; }
+  .reveal-ready [data-reveal].proof-row .proof-check { transform: none !important; }
+}
