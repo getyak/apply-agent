@@ -14,10 +14,20 @@ import {
   Send,
 } from "lucide-react";
 import type { CSSProperties } from "react";
+import { cookies } from "next/headers";
 import HeroConsole from "@/components/hero-console";
 import PricingSection from "@/components/pricing-section";
 import LandingMotion from "@/components/landing-motion";
 import PointerFX from "@/components/pointer-fx";
+import { LandingAccountChip } from "@/components/landing-account-chip";
+
+// Shared with web/src/lib/api.ts (TOKEN_COOKIE) and web/src/proxy.ts.
+// The cookie is non-httpOnly and mirrored from localStorage on login, which
+// lets this server component presence-check auth at render time — the same
+// signal the edge proxy uses to gate /app/*. Presence-only: an expired token
+// still shows the signed-in nav, then the /app layout's me() guard bounces to
+// /auth — behaviour identical to a direct /app visit.
+const TOKEN_COOKIE = "vantage_token";
 
 const ASKS = [
   '"Find me product design roles under $200k, remote."',
@@ -120,7 +130,15 @@ export default async function HomePage({
   // The middleware bounces unauthenticated visits to /app/* back here with
   // ?source=app_redirect so we can explain the redirect instead of leaving
   // the user wondering why they landed on marketing.
-  const showRedirectNotice = params.source === "app_redirect";
+  // Signed-in visitors get a "back to your workspace" nav instead of the
+  // sign-in / start-free CTAs, so the landing page reflects their session.
+  const isSignedIn = Boolean((await cookies()).get(TOKEN_COOKIE)?.value);
+  // When signed in, every "Start free" CTA becomes "Open workspace" → /app.
+  const primaryCtaHref = isSignedIn ? "/app" : "/auth";
+  const primaryCtaLabel = isSignedIn ? "Open workspace" : "Start free";
+  // Only guests can have been bounced here from /app/* by the edge proxy, so
+  // the "please sign in" banner is mutually exclusive with the signed-in nav.
+  const showRedirectNotice = !isSignedIn && params.source === "app_redirect";
   return (
     <div className="min-h-screen">
       <LandingMotion />
@@ -159,14 +177,26 @@ export default async function HomePage({
             <a href="#pricing" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Pricing</a>
           </nav>
           <div className="ml-auto flex items-center gap-4">
-            <a href="/auth?mode=login" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
-            <a href="/auth" data-magnetic="0.35" data-ripple className="magnet shine cta-aura no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
+            {isSignedIn ? (
+              // Avatar chip (name + initials) so the signed-in state is
+              // visible at a glance; resolves the name client-side via me().
+              <LandingAccountChip />
+            ) : (
+              <>
+                <a href="/auth?mode=login" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">Sign in</a>
+                <a href="/auth" data-magnetic="0.35" data-ripple className="magnet shine cta-aura no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">Start free</a>
+              </>
+            )}
           </div>
         </div>
       </header>
 
       {/* HERO */}
       <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
+        {/* Film grain (v10) — a sub-perceptual tactile veil so the warm paper
+            field under the hero reads as material, not flat fill. Behind all
+            content; pointer-transparent; hidden under reduced-motion. */}
+        <div aria-hidden className="grain-overlay" />
         {/* Ambient cursor light — a warm pool that tracks the reader's pointer
             across the hero, so the surface feels lit by a lamp they're holding.
             Driven by PointerFX; rests dark + invisible with no JS. */}
@@ -195,12 +225,12 @@ export default async function HomePage({
             interviews — you review and hit submit.
           </p>
           <div className="flex flex-wrap items-center gap-3.5 mb-[22px]">
-            <a href="/auth" data-magnetic="0.3" data-ripple className="group magnet shine cta-aura sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
+            <a href={primaryCtaHref} data-magnetic="0.3" data-ripple className="group magnet shine cta-aura cta-breathe sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
               <span className="sheen" aria-hidden />
-              Start free
+              {primaryCtaLabel}
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
             </a>
-            <a href="#how" className="pressure no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] transition-[border-color,box-shadow,transform] duration-200 ease-out hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.3)]">
+            <a href="#how" className="lift-pop pressure no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] hover:border-brown">
               See how it works
             </a>
           </div>
@@ -477,8 +507,8 @@ export default async function HomePage({
               Upload a résumé, or just start talking. You&apos;ll have applications
               ready to review in minutes.
             </p>
-            <a href="/auth" data-magnetic="0.3" data-ripple className="group/cta magnet shine cta-aura no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
-              Start free
+            <a href={primaryCtaHref} data-magnetic="0.3" data-ripple className="group/cta magnet shine cta-aura no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
+              {primaryCtaLabel}
               <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover/cta:translate-x-1" />
             </a>
           </div>

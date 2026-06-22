@@ -1184,3 +1184,141 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   100% { opacity: 1; transform: none; filter: blur(0); }
 }
 .animate-lift-warm { animation: lift-warm 0.7s var(--ease-out) both; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v10 — Settled light & tactile finish
+   Where v4–v9 lit the surfaces, moved the light, and made controls feel
+   physical, v10 tightens the highest-touch moments and adds a quiet material
+   finish: a fine film grain over warm hero light, a confident gold seam under
+   the lifted nav, an idle "press me" breath on the lead CTA, and a richer
+   spring + cascade on menus. Every class is additive and opt-in; no existing
+   primitive is mutated, and the whole layer collapses under the
+   prefers-reduced-motion guard (it matches `*` with !important).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Film grain — a barely-there tactile veil that keeps large warm-paper fields
+   from reading as flat digital fill. Fixed + pointer-transparent so it costs
+   nothing and never intercepts input. Animated drift keeps it from looking like
+   a static dust layer; the motion is sub-perceptual, just enough to live. */
+@keyframes grain-shift {
+  0%   { transform: translate3d(0, 0, 0); }
+  25%  { transform: translate3d(-3%, 2%, 0); }
+  50%  { transform: translate3d(2%, -3%, 0); }
+  75%  { transform: translate3d(-2%, -2%, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.grain-overlay {
+  position: absolute; inset: -50%; z-index: 0; pointer-events: none;
+  opacity: 0.5; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+  animation: grain-shift 7s steps(4) infinite;
+  will-change: transform;
+}
+
+/* Nav seam — once the page lifts off (data-scrolled), a thin warm-gold light
+   wipes across the bottom of the sticky header, reinforcing the "raised chrome"
+   read with the brand's signature metal. Layers under the existing condense
+   shadow; rests invisible so the top-of-page nav stays clean. */
+.site-nav::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%, rgba(232, 163, 23, 0.0) 12%,
+    rgba(232, 163, 23, 0.55) 50%,
+    rgba(232, 163, 23, 0.0) 88%, transparent 100%);
+  opacity: 0; transform: scaleX(0.6);
+  transition: opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+  pointer-events: none;
+}
+[data-scrolled="true"] .site-nav::after { opacity: 1; transform: scaleX(1); }
+
+/* CTA breath — a slow, low-amplitude attention pulse for the single lead CTA.
+   Calmer than the hover `.cta-aura` (which still fires over the top); this just
+   keeps a faint warm halo alive so the primary action never reads as inert. The
+   ring sits behind the button and never shifts layout. */
+@keyframes cta-breathe {
+  0%, 100% { opacity: 0.0; transform: scale(0.96); }
+  50%      { opacity: 0.5; transform: scale(1.04); }
+}
+.cta-breathe { position: relative; isolation: isolate; }
+.cta-breathe::after {
+  content: ""; position: absolute; inset: -3px; z-index: -1; border-radius: inherit;
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.5), transparent 78%);
+  filter: blur(10px); opacity: 0; pointer-events: none;
+  animation: cta-breathe 3.6s var(--ease-in-out) infinite;
+}
+
+/* Menu pop — a confident spring entrance for popovers/dropdowns: a touch of
+   overshoot + rise + un-blur, anchored to the trigger's top-right origin. More
+   alive than `.animate-fade-up` for transient surfaces the user just summoned. */
+@keyframes menu-pop {
+  0%   { opacity: 0; transform: translateY(-6px) scale(0.94); filter: blur(3px); }
+  60%  { opacity: 1; transform: translateY(0) scale(1.012); filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+.menu-pop { animation: menu-pop 0.34s var(--ease-spring) both; transform-origin: top right; }
+
+/* Menu stagger — children of a freshly-popped menu cascade in, so the surface
+   reads as "unfolding" rather than appearing whole. Index drives the delay via
+   inline `--i`. Pairs with `.menu-pop` on the container. */
+.menu-stagger > * {
+  animation: fade-up 0.34s var(--ease-out) both;
+  animation-delay: calc(60ms + var(--i, 0) * 46ms);
+}
+
+/* Avatar gleam — a single diagonal glint travels across the account avatar once
+   on mount, a small "lit metal" greeting. One-shot, decorative, masked to the
+   tile so the fill is untouched. */
+@keyframes avatar-gleam {
+  0%   { transform: translateX(-130%) rotate(8deg); opacity: 0; }
+  18%  { opacity: 0.85; }
+  100% { transform: translateX(130%) rotate(8deg); opacity: 0; }
+}
+.avatar-gleam { position: relative; overflow: hidden; }
+.avatar-gleam::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 42%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  animation: avatar-gleam 2.4s var(--ease-out) 0.45s 1 both;
+  pointer-events: none;
+}
+
+/* Reveal wipe — an opt-in headline variant that un-masks from the bottom as it
+   rises, a sharper, more editorial entrance than the standard blur-rise. Drive
+   it the same way as `[data-reveal]`: it shares the `.revealed` switch. */
+.reveal-ready [data-reveal].reveal-wipe {
+  clip-path: inset(0 0 100% 0);
+  transition:
+    opacity 0.8s var(--ease-out) var(--reveal-delay, 0ms),
+    transform 0.8s var(--ease-out) var(--reveal-delay, 0ms),
+    clip-path 0.8s var(--ease-out) var(--reveal-delay, 0ms),
+    filter 0.8s var(--ease-out) var(--reveal-delay, 0ms);
+}
+.reveal-ready [data-reveal].reveal-wipe.revealed { clip-path: inset(0 0 0% 0); }
+
+/* Lift-pop — a tactile combined hover for secondary/ghost controls that want
+   more than `.press`: a small rise + warm rim on hover, a crisp sink on click.
+   Complements `.magnet` (which owns cursor-tracked CTAs) for non-tracked
+   buttons that should still feel physical. */
+.lift-pop {
+  transition: transform var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .lift-pop:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 22px -12px rgba(61, 42, 20, 0.42);
+  }
+}
+.lift-pop:active { transform: translateY(0) scale(0.97); transition-duration: var(--dur-fast); }
+
+/* Reduced-motion: drop the always-on idle loops so motion-sensitive users get
+   the calm static finish. The global guard already neutralises durations, but
+   we also hard-hide the purely-decorative grain + breath so nothing lingers
+   mid-keyframe. */
+@media (prefers-reduced-motion: reduce) {
+  .grain-overlay,
+  .cta-breathe::after,
+  .avatar-gleam::after { display: none !important; }
+  .reveal-ready [data-reveal].reveal-wipe { clip-path: none !important; }
+}
