@@ -15,11 +15,12 @@ endpoints the router invokes:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -27,6 +28,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from agents.events.bus import publish
 from agents.harness.audit import audit
 from agents.harness.llm import pick_model
+from agents.nodes import resume_store
 from agents.tools.auto import redis_get, redis_setex
 from agents.tools.notify import save_resume_version
 
@@ -407,6 +409,397 @@ async def build_from_scratch(
             is_base=True,
         )
         return {"draft": draft, "resume_id": str(new_id), "version": assigned_v}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# bullet stable IDs — the physical basis of vibe (design §4.3)
+# ───────────────────────────────────────────────────────────────────────
+
+
+def assign_bullet_ids(parsed_resume: dict[str, Any]) -> dict[str, Any]:
+    """Pin a stable id to every work[].highlights[] entry.
+
+    Returns the bullet_index map { "<stable_id>": {path, text_hash,
+    anchor_text} }. IDs are assigned once (on the original) and carried
+    forward by optimized / tailored versions so a bullet can be tracked across
+    rewrites even when the LLM reshuffles the array order.
+    """
+    index: dict[str, Any] = {}
+    for i, work in enumerate(parsed_resume.get("work", []) or []):
+        highlights = work.get("highlights", []) or []
+        for j, highlight in enumerate(highlights):
+            text = highlight if isinstance(highlight, str) else str(highlight)
+            stable_id = f"b_{uuid4().hex[:8]}"
+            index[stable_id] = {
+                "path": f"work.{i}.highlights.{j}",
+                "text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+                "anchor_text": text[:64],
+            }
+    return index
+
+
+def _find_bullet(parsed: dict[str, Any], bullet_index: dict[str, Any], stable_id: str) -> str | None:
+    """Resolve a stable_id back to current bullet text.
+
+    Tries the recorded path first; falls back to anchor_text fuzzy match if the
+    LLM reshuffled the array (design §10 Q3). Returns None if unresolvable.
+    """
+    entry = (bullet_index or {}).get(stable_id)
+    if not entry:
+        return None
+    expected_hash = entry.get("text_hash")
+    path = entry.get("path", "")
+    m = re.match(r"work\.(\d+)\.highlights\.(\d+)", path)
+    if m:
+        wi, hi = int(m.group(1)), int(m.group(2))
+        try:
+            cur = parsed["work"][wi]["highlights"][hi]
+            cur = cur if isinstance(cur, str) else str(cur)
+            # The path is only trustworthy if the text there still hashes to
+            # what we recorded. If the LLM reshuffled highlights, the slot now
+            # holds a DIFFERENT bullet — fall through to the fuzzy anchor match
+            # rather than silently returning the wrong line (design §10 Q3).
+            if not expected_hash or _hash16(cur) == expected_hash:
+                return cur
+        except (KeyError, IndexError, TypeError):
+            pass
+    # fuzzy fallback on anchor_text
+    anchor = (entry.get("anchor_text") or "").strip().lower()
+    if anchor:
+        for work in parsed.get("work", []) or []:
+            for h in work.get("highlights", []) or []:
+                ht = h if isinstance(h, str) else str(h)
+                if ht.strip().lower().startswith(anchor[:32]):
+                    return ht
+    return None
+
+
+def _hash16(text: str) -> str:
+    """16-char sha256 prefix — mirrors assign_bullet_ids's text_hash."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+# ───────────────────────────────────────────────────────────────────────
+# propose_similar_bullets — context-flywheel reproposal (design §6.4 / §9 P2-9)
+# ───────────────────────────────────────────────────────────────────────
+
+
+async def propose_similar_bullets(
+    source_resume_id: UUID, user_id: UUID, change_type: str | None = None
+) -> dict[str, Any]:
+    """After a user accepts a suggestion, look for OTHER bullets that could take
+    the same kind of improvement and propose them (status='proposed', never
+    auto-applied — the user opted into one change, not a sweep).
+
+    Skips bullets that already have a proposed/accepted suggestion so we never
+    re-nag about the same line. Returns {ok, proposed: [...]}.
+    """
+    async with audit(user_id, "resume_agent", "propose_similar_bullets"):
+        row = await resume_store.get_resume(source_resume_id, user_id)
+        if not row:
+            return {"ok": False, "reason": "resume_not_found"}
+        parsed = resume_store.unwrap_parsed(row["content"])
+        if not parsed.get("work"):
+            return {"ok": True, "proposed": []}
+        bullet_index = row.get("bullet_index") or assign_bullet_ids(parsed)
+
+        # Bullets we've already touched — don't re-propose against them.
+        existing = await resume_store.list_suggestions(user_id, source_resume_id)
+        seen_before = {
+            (s.get("before_text") or "").strip()
+            for s in existing
+            if s.get("status") in ("proposed", "accepted")
+        }
+
+        raw = await _run_optimize_general(parsed, bullet_index)
+        candidates = _validate_suggestions(parsed, raw)
+        fresh = [
+            s
+            for s in candidates
+            if s["before_text"].strip() not in seen_before
+            and (change_type is None or s["change_type"] == change_type)
+        ]
+        if not fresh:
+            return {"ok": True, "proposed": []}
+        stored = await resume_store.insert_suggestions(
+            user_id, source_resume_id, fresh, proposed_by="flywheel"
+        )
+        return {"ok": True, "proposed": stored}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# optimize_general — no-JD best-practice pass → suggestion stack (design §6.1)
+# ───────────────────────────────────────────────────────────────────────
+
+
+async def optimize_general(base_resume_id: UUID, user_id: UUID) -> dict[str, Any]:
+    """Generic optimization (no JD). Produces bullet-level *suggestions*, not a
+    full replacement document. Auto-applies the 'safe' ones into an optimized
+    sibling; leaves 'needs_review' / 'unsupported' as proposed for HITL.
+
+    Returns {ok, suggestions, optimized_resume_id?, optimized_version?}.
+    """
+    async with audit(user_id, "resume_agent", "optimize_general"):
+        row = await resume_store.get_resume(base_resume_id, user_id)
+        if not row:
+            return {"ok": False, "reason": "resume_not_found"}
+        parsed = resume_store.unwrap_parsed(row["content"])
+        if not parsed.get("work"):
+            return {"ok": True, "suggestions": [], "reason": "nothing_to_optimize"}
+
+        # Ensure the source has a bullet_index (originals predating 017 won't).
+        bullet_index = row.get("bullet_index") or assign_bullet_ids(parsed)
+        if not row.get("bullet_index"):
+            await resume_store.set_bullet_index(base_resume_id, user_id, bullet_index)
+
+        raw = await _run_optimize_general(parsed, bullet_index)
+        suggestions = _validate_suggestions(parsed, raw)
+        if not suggestions:
+            return {"ok": True, "suggestions": []}
+
+        stored = await resume_store.insert_suggestions(
+            user_id, base_resume_id, suggestions, proposed_by="optimize_general"
+        )
+
+        # Auto-apply 'safe' suggestions into an optimized sibling (design §6.2).
+        safe = [s for s in stored if s["risk_level"] == "safe"]
+        optimized_id = optimized_version = None
+        if safe:
+            applied = _apply_suggestions_to_parsed(parsed, safe)
+            fab = fabrication_guard(parsed, applied)
+            if not fab:  # never auto-write a fabrication
+                optimized_id, optimized_version = await save_resume_version(
+                    user_id=user_id,
+                    content_json=applied,
+                    parent_version_id=base_resume_id,
+                    tailored_for_job=None,
+                    is_base=False,
+                    track="optimized",
+                    bullet_index=bullet_index,
+                )
+                for s in safe:
+                    await resume_store.set_suggestion_status(
+                        UUID(s["id"]), user_id, "accepted", decided_via="auto"
+                    )
+                await publish(
+                    "resume:updated",
+                    {"user_id": str(user_id), "version": optimized_version,
+                     "resume_id": str(optimized_id)},
+                )
+
+        return {
+            "ok": True,
+            "suggestions": stored,
+            "optimized_resume_id": str(optimized_id) if optimized_id else None,
+            "optimized_version": optimized_version,
+        }
+
+
+async def _run_optimize_general(
+    parsed: dict[str, Any], bullet_index: dict[str, Any]
+) -> dict[str, Any]:
+    model = pick_model("general", temperature=0.3, max_tokens=4096)
+    prompt = _load_prompt("optimize_general.v1.md")
+    payload = {"resume": parsed, "bullet_index": bullet_index}
+    resp = await model.ainvoke(
+        [SystemMessage(content=prompt),
+         HumanMessage(content=json.dumps(payload, ensure_ascii=False)[:24_000])]
+    )
+    return _safe_json(resp.content)
+
+
+def _validate_suggestions(
+    parsed: dict[str, Any], raw: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Coerce + risk-annotate model output into clean suggestion records.
+
+    Reuses change_log_guard's vocabulary: a 'safe' change_type whose after_text
+    introduces no new quantitative token (vs the whole base résumé) stays safe;
+    anything else is pushed to needs_review / unsupported. This is the
+    fabrication red line applied per-bullet (design §7.1).
+    """
+    base_text = _flatten_text(parsed).lower()
+    items = raw.get("suggestions") if isinstance(raw, dict) else None
+    if not isinstance(items, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+        change_type = (entry.get("change_type") or "").strip()
+        before = (entry.get("before_text") or "").strip()
+        after = (entry.get("after_text") or "").strip()
+        if not change_type or not after or not before:
+            continue
+        if change_type in _REVIEW_CHANGE_TYPES:
+            risk = "needs_review"
+        elif change_type in _SAFE_CHANGE_TYPES:
+            risk = "needs_review" if _has_new_quantitative_token(after, base_text) else "safe"
+        else:
+            risk = "unsupported"
+        out.append({
+            "bullet_stable_id": entry.get("bullet_stable_id"),
+            "section": entry.get("section") or "work",
+            "change_type": change_type,
+            "before_text": before,
+            "after_text": after,
+            "rationale": entry.get("rationale"),
+            "risk_level": risk,
+        })
+    return out
+
+
+def _apply_suggestions_to_parsed(
+    parsed: dict[str, Any], suggestions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Return a new parsed résumé with each suggestion's after_text swapped in.
+
+    Immutability-friendly: deep-copies, never mutates the input. Matches a
+    bullet by exact before_text within work[].highlights[]; unmatched
+    suggestions are skipped (the safe set should always match).
+    """
+    new = json.loads(json.dumps(parsed))  # cheap deep copy
+    by_before = {s["before_text"].strip(): s["after_text"] for s in suggestions}
+    for work in new.get("work", []) or []:
+        highlights = work.get("highlights", []) or []
+        for idx, h in enumerate(highlights):
+            ht = h if isinstance(h, str) else str(h)
+            repl = by_before.get(ht.strip())
+            if repl is not None:
+                highlights[idx] = repl
+    # summary-level suggestions (no bullet match) — apply to basics.summary
+    for s in suggestions:
+        if (s.get("section") == "summary"
+                and new.get("basics", {}).get("summary", "").strip() == s["before_text"].strip()):
+            new["basics"]["summary"] = s["after_text"]
+    return new
+
+
+# ───────────────────────────────────────────────────────────────────────
+# apply_suggestions — materialize accepted suggestions into a version (§6.1)
+# ───────────────────────────────────────────────────────────────────────
+
+
+async def apply_suggestions(
+    suggestion_ids: list[UUID], user_id: UUID, target_track: str = "optimized"
+) -> dict[str, Any]:
+    """Materialize a set of suggestions into a new optimized version and mark
+    them accepted. Idempotent-ish: re-applying already-accepted suggestions
+    just produces another version (the UI guards against double-clicks)."""
+    async with audit(user_id, "resume_agent", "apply_suggestions"):
+        recs = []
+        source_id: UUID | None = None
+        for sid in suggestion_ids:
+            rec = await resume_store.get_suggestion(sid, user_id)
+            if rec:
+                recs.append(rec)
+                source_id = UUID(rec["source_resume_id"])
+        if not recs or source_id is None:
+            return {"ok": False, "reason": "no_valid_suggestions"}
+
+        base = await resume_store.get_resume(source_id, user_id)
+        if not base:
+            return {"ok": False, "reason": "source_resume_not_found"}
+        parsed = resume_store.unwrap_parsed(base["content"])
+        applied = _apply_suggestions_to_parsed(parsed, recs)
+
+        fab = fabrication_guard(parsed, applied)
+        if fab:
+            return {"ok": False, "reason": "fabrication_guard_failed", "fabricated": fab}
+
+        new_id, new_version = await save_resume_version(
+            user_id=user_id,
+            content_json=applied,
+            parent_version_id=source_id,
+            tailored_for_job=None,
+            is_base=False,
+            track=target_track,
+            bullet_index=base.get("bullet_index"),
+        )
+        for rec in recs:
+            await resume_store.set_suggestion_status(
+                UUID(rec["id"]), user_id, "accepted", decided_via="studio_panel"
+            )
+        await publish(
+            "resume:updated",
+            {"user_id": str(user_id), "version": new_version, "resume_id": str(new_id)},
+        )
+        # Context-flywheel trigger (design §6.4 / §9 P2-9): each acceptance is a
+        # signal. Emit one event per accepted suggestion so the trend consumer
+        # can re-propose similar bullets ("you just made this active-voice — want
+        # the other 5 like it?"). Fire-and-forget; never block the write.
+        for rec in recs:
+            await publish(
+                "resume:suggestion_accepted",
+                {
+                    "user_id": str(user_id),
+                    "source_resume_id": str(source_id),
+                    "change_type": rec.get("change_type"),
+                    "bullet_stable_id": rec.get("bullet_stable_id"),
+                },
+            )
+        return {"ok": True, "resume_id": str(new_id), "version": new_version}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# propose_bullet_edit — vibe chat on ONE bullet (design §6.1, §6.3)
+# ───────────────────────────────────────────────────────────────────────
+
+
+async def propose_bullet_edit(
+    resume_id: UUID, bullet_stable_id: str, instruction: str, user_id: UUID
+) -> dict[str, Any]:
+    """Revise one bullet from a natural-language instruction. Returns ONE
+    proposed suggestion (or ok=False if the bullet can't be resolved / the
+    edit would fabricate)."""
+    async with audit(user_id, "resume_agent", "propose_bullet_edit"):
+        row = await resume_store.get_resume(resume_id, user_id)
+        if not row:
+            return {"ok": False, "reason": "resume_not_found"}
+        parsed = resume_store.unwrap_parsed(row["content"])
+        bullet_index = row.get("bullet_index") or {}
+        bullet_text = _find_bullet(parsed, bullet_index, bullet_stable_id)
+        if bullet_text is None:
+            return {"ok": False, "reason": "bullet_not_found"}
+
+        model = pick_model("fast", temperature=0.3, max_tokens=1024)
+        prompt = _load_prompt("propose_bullet_edit.v1.md")
+        payload = {
+            "bullet_text": bullet_text,
+            "instruction": instruction,
+            "resume_context": _flatten_text(parsed)[:4000],
+        }
+        resp = await model.ainvoke(
+            [SystemMessage(content=prompt),
+             HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
+        )
+        edit = _safe_json(resp.content)
+        after = (edit.get("after_text") or "").strip()
+        if not after:
+            return {"ok": False, "reason": "no_edit", "note": edit.get("note")}
+
+        # Per-bullet fabrication check: no new quantitative token vs base.
+        base_text = _flatten_text(parsed).lower()
+        if _has_new_quantitative_token(after, base_text):
+            risk = "needs_review"
+        else:
+            change_type = (edit.get("change_type") or "tighten").strip()
+            risk = "safe" if change_type in _SAFE_CHANGE_TYPES else "needs_review"
+
+        suggestion = {
+            "bullet_stable_id": bullet_stable_id,
+            "section": "work",
+            "change_type": (edit.get("change_type") or "tighten").strip(),
+            "before_text": bullet_text,
+            "after_text": after,
+            "rationale": edit.get("rationale"),
+            "risk_level": risk,
+        }
+        stored = await resume_store.insert_suggestions(
+            user_id, resume_id, [suggestion], proposed_by="vibe_chat"
+        )
+        return {"ok": True, "suggestion": stored[0] if stored else suggestion,
+                "note": edit.get("note")}
 
 
 # ───────────────────────────────────────────────────────────────────────

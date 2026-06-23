@@ -43,6 +43,8 @@ async def save_resume_version(
     tailored_for_job: UUID | None,
     is_base: bool = False,
     version: int = 0,
+    track: str | None = None,
+    bullet_index: dict[str, Any] | None = None,
 ) -> tuple[UUID, int]:
     """INSERT into resumes; returns (new_row_id, assigned_version).
 
@@ -52,17 +54,33 @@ async def save_resume_version(
     for the rare case where a specific version must be forced (e.g. a
     backfill script). The trigger keeps the UNIQUE(user_id, version)
     constraint safe under concurrent writers — no more 23505 races.
+
+    Migration 017 (dual-track model) adds ``track`` and ``bullet_index``:
+    - ``track`` ∈ {original, optimized, tailored}. When None it's derived:
+      tailored if a job id is present, else optimized. ``original`` is only
+      written by the upload path (api/src/routes/resumes.ts), never here —
+      originals are immutable, so this Python writer never produces one.
+    - ``bullet_index`` pins stable IDs to each highlight (see
+      resume_agent.assign_bullet_ids). It carries forward across optimized /
+      tailored versions so vibe edits can target the same bullet over time.
+    ``derived_from`` is written from ``parent_version_id`` (the 017 column is
+    the clearer name for the same relationship; we set both for compatibility).
     """
     import uuid as _uuid
+
+    if track is None:
+        track = "tailored" if tailored_for_job else "optimized"
 
     dsn = os.environ["RELAY_PG_DSN"]  # required for writes
     new_id = _uuid.uuid4()
     sql = """
         INSERT INTO resumes (
-            id, user_id, version, content, is_base, tailored_for_job, parent_version
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            id, user_id, version, content, is_base, tailored_for_job,
+            parent_version, derived_from, track, bullet_index
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING version
     """
+    parent = str(parent_version_id) if parent_version_id else None
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -74,7 +92,10 @@ async def save_resume_version(
                     json.dumps(content_json),
                     is_base,
                     str(tailored_for_job) if tailored_for_job else None,
-                    str(parent_version_id) if parent_version_id else None,
+                    parent,
+                    parent,  # derived_from mirrors parent_version
+                    track,
+                    json.dumps(bullet_index) if bullet_index is not None else None,
                 ),
             )
             row = await cur.fetchone()

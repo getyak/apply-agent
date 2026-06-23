@@ -56,6 +56,15 @@ VALID_INTENTS = {
     "list_applications",
     "move_application",
     "set_application_outcome",
+    # Dual-track résumé intents (design §6, the "This résumé" dock chips).
+    # analyze_resume → weakest-spots critique (inline reply).
+    # optimize_resume → no-JD best-practice pass (suggestion stack artifact).
+    # map_career_moves → trajectory + skill-gap (inline reply).
+    # surface_roles → roles matching the current résumé (routes to job search).
+    "analyze_resume",
+    "optimize_resume",
+    "map_career_moves",
+    "surface_roles",
     "other",
 }
 
@@ -128,6 +137,16 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     (re.compile(r"\b(show|list|view|see)\s+(me\s+)?(my\s+|all\s+)?r[eé]sum[eé]s?(\s*versions?)?\b", re.I), "list_resume_versions", 0.92),
     (re.compile(r"\b(what|which)\s+r[eé]sum[eé]\s+versions?\s+do\s+i\s+have\b", re.I), "list_resume_versions", 0.94),
     (re.compile(r"\b(r[eé]sum[eé])\s+(version|history|timeline)s?\b", re.I), "list_resume_versions", 0.87),
+    # Dual-track "This résumé" chips (design §6 / §1.4). These must precede the
+    # update_resume rule so "analyze / weakest / optimize this résumé" never
+    # lands on the write path.
+    (re.compile(r"\b(analy[sz]e|critique|review)\s+(this\s+|my\s+)?r[eé]sum[eé]\b", re.I), "analyze_resume", 0.90),
+    (re.compile(r"\b(weakest|weak)\s+(spots?|points?|parts?)\b", re.I), "analyze_resume", 0.90),
+    (re.compile(r"\b(optimi[sz]e|improve|sharpen|strengthen)\s+(this\s+|my\s+)?r[eé]sum[eé]\b(?!\s+for)", re.I), "optimize_resume", 0.88),
+    (re.compile(r"\b(quick\s+wins?|best[- ]practice)\b", re.I), "optimize_resume", 0.80),
+    (re.compile(r"\b(next|career)\s+(move|moves|step|steps)\b", re.I), "map_career_moves", 0.88),
+    (re.compile(r"\b(surface|suggest|recommend)\s+(\w+\s+)?roles?\b", re.I), "surface_roles", 0.86),
+    (re.compile(r"\broles?\s+that\s+match\b", re.I), "surface_roles", 0.88),
     (re.compile(r"\b(update|edit|change|fix)\s+(my\s+)?r[eé]sum[eé]\b", re.I), "update_resume", 0.85),
     (re.compile(r"\breview\s+(my\s+)?application\b", re.I), "review_application", 0.85),
     # Applications kanban.
@@ -299,6 +318,7 @@ async def dispatch(
     message: str,
     thread_id: str | None = None,
     surface: str | None = None,
+    locale: str | None = None,
 ) -> dict[str, Any]:
     """Route to the relevant agent. Returns a result dict the API streams back.
 
@@ -390,6 +410,43 @@ async def dispatch(
             "count": len(rows),
         }
 
+    if intent.intent == "analyze_resume":
+        # Weakest-spots critique — inline text reply (no studio jump). Reads the
+        # current original and runs resume_agent.analyze + a short LLM critique.
+        return await _analyze_resume_reply(user_id, message)
+
+    if intent.intent == "optimize_resume":
+        # No-JD best-practice pass (design §6.1/§6.3). Resolve the current
+        # original, run optimize_general, and return the suggestion stack so the
+        # API can stream it back as a suggestion-list artifact card.
+        from agents.nodes import resume_agent, resume_store
+
+        original = await resume_store.get_current_original(user_id)
+        if not original:
+            return _no_resume_reply(bool(re.search(r"[぀-ヿ㐀-鿿]", message)))
+        result = await resume_agent.optimize_general(UUID(original["id"]), user_id=user_id)
+        return {
+            "agent": "resume_agent",
+            "action": "optimize_general",
+            "suggestions": result.get("suggestions", []),
+            "optimized_resume_id": result.get("optimized_resume_id"),
+            "source_resume_id": original["id"],
+        }
+
+    if intent.intent == "map_career_moves":
+        return await _career_moves_reply(user_id, message)
+
+    if intent.intent == "surface_roles":
+        # Roles matching the current résumé. Routes into job search with a
+        # "from current résumé" hint; the API maps this onto jobmatch and the
+        # dock offers a jump to /app/jobs.
+        return {
+            "agent": "jobmatch_agent",
+            "action": "find_matches",
+            "from_resume": True,
+            "args": intent.args,
+        }
+
     if intent.intent == "update_resume":
         return {"agent": "resume_agent", "action": "update_field", "status": "needs_clarification"}
 
@@ -447,7 +504,7 @@ async def dispatch(
 
     # 'other' → small-talk fallback (free, V4 Flash).
     return await _smalltalk_reply(
-        message, thread_id=thread_id, user_id=user_id, surface=surface
+        message, thread_id=thread_id, user_id=user_id, surface=surface, locale=locale
     )
 
 
@@ -456,6 +513,7 @@ async def _smalltalk_reply(
     thread_id: str | None = None,
     user_id: UUID | None = None,
     surface: str | None = None,
+    locale: str | None = None,
 ) -> dict[str, Any]:
     # Load the last few turns of this lifetime thread so the reply has memory
     # (vantage-ui-mapping.md § 1.2). Best-effort: no history if PG is down.
@@ -486,23 +544,11 @@ async def _smalltalk_reply(
 
     # Language fidelity: the chat history shipped Chinese user turns next to
     # English agent turns — see the QA pass UX notes. The fix is small but
-    # uncompromising: detect once from the *latest* user turn and pin the
-    # reply language for the whole response. We hand the model a simple
-    # heuristic so it doesn't have to think about it.
-    has_cjk = bool(re.search(r"[぀-ヿ㐀-鿿]", message))
-    language_directive = (
-        "Reply in the same language the user just wrote in. The user's "
-        "latest message is "
-        + (
-            "written with CJK characters — reply in Chinese unless the user "
-            "explicitly asks for English. "
-            if has_cjk
-            else "written in a Latin script — reply in English unless the user "
-            "explicitly asks for another language. "
-        )
-        + "Never mix two languages in a single reply, and do not translate "
-        "technical terms / brand names that should stay in their original form."
-    )
+    # uncompromising: pin the reply language for the whole response from the
+    # user's explicit UI locale (X-Relay-Locale, forwarded by the gateway).
+    # When locale is absent (older clients / raw curl) build_language_directive
+    # falls back to detecting the message's script — same behaviour as before.
+    language_directive = build_language_directive(locale, message)
 
     system_parts = [
         "You are Vantage, an AI job-search copilot. Reply briefly and "
@@ -633,6 +679,83 @@ def format_resume_versions_reply(rows: list[dict[str, Any]], has_cjk: bool) -> s
             jd_hint = f"for job {str(job)[:8]}…" if job else "no job link"
             lines.append(f"• v{r['version']} · {jd_hint} · {r['created_at']:%Y-%m-%d}")
     return "\n".join(lines)
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Dual-track inline replies (design §6 / §1.4 "This résumé" chips)
+# ───────────────────────────────────────────────────────────────────────
+
+
+def _no_resume_reply(has_cjk: bool) -> dict[str, Any]:
+    text = (
+        "你还没有简历。先上传一份 PDF/DOCX,我就能分析了。"
+        if has_cjk
+        else "You don't have a résumé yet. Upload a PDF/DOCX and I'll take a look."
+    )
+    return {"agent": "coordinator", "action": "reply", "text": text}
+
+
+async def _analyze_resume_reply(user_id: UUID, message: str) -> dict[str, Any]:
+    """Weakest-spots critique as an inline dock reply. Grounded on the current
+    original; the prompt forbids inventing anything not in the résumé."""
+    has_cjk = bool(re.search(r"[぀-ヿ㐀-鿿]", message))
+    brief = await load_active_resume_brief(user_id)
+    if not brief:
+        return _no_resume_reply(has_cjk)
+    sys = (
+        "You are a blunt but constructive résumé reviewer. Given the résumé JSON, "
+        "name the 3 weakest spots — cite the exact bullet or section and say what to "
+        "change. Critique ONLY what is written; never invent skills, employers, dates, "
+        "or metrics. Answer in the user's language. Keep it tight: 3 short numbered points."
+    )
+    model = pick_model("general", temperature=0.3, max_tokens=700)
+    try:
+        import asyncio as _asyncio
+
+        resp = await _asyncio.wait_for(
+            model.ainvoke([SystemMessage(content=sys), HumanMessage(content=brief)]),
+            timeout=_ROUTER_LLM_TIMEOUT_S,
+        )
+        text = str(resp.content).strip()
+    except Exception as exc:  # noqa: BLE001 boundary
+        log.error("analyze_resume_reply.failed", error=redact_exception_text(str(exc)))
+        text = (
+            "我现在分析不了,稍后再试。"
+            if has_cjk
+            else "I couldn't analyze that right now — try again in a moment."
+        )
+    return {"agent": "resume_agent", "action": "reply", "text": text, "source_action": "analyze_resume"}
+
+
+async def _career_moves_reply(user_id: UUID, message: str) -> dict[str, Any]:
+    """Next 1–2 career moves + the skills to close, as an inline reply."""
+    has_cjk = bool(re.search(r"[぀-ヿ㐀-鿿]", message))
+    brief = await load_active_resume_brief(user_id)
+    if not brief:
+        return _no_resume_reply(has_cjk)
+    sys = (
+        "You are a career coach. From the résumé's trajectory, suggest the next 1–2 "
+        "realistic moves and, for each, the 1–2 skills the candidate would need to close "
+        "to get there. Base everything on what's actually in the résumé — no fabrication. "
+        "Answer in the user's language, concise."
+    )
+    model = pick_model("general", temperature=0.4, max_tokens=700)
+    try:
+        import asyncio as _asyncio
+
+        resp = await _asyncio.wait_for(
+            model.ainvoke([SystemMessage(content=sys), HumanMessage(content=brief)]),
+            timeout=_ROUTER_LLM_TIMEOUT_S,
+        )
+        text = str(resp.content).strip()
+    except Exception as exc:  # noqa: BLE001 boundary
+        log.error("career_moves_reply.failed", error=redact_exception_text(str(exc)))
+        text = (
+            "我现在给不了建议,稍后再试。"
+            if has_cjk
+            else "I couldn't map that out right now — try again in a moment."
+        )
+    return {"agent": "trend_agent", "action": "reply", "text": text, "source_action": "map_career_moves"}
 
 
 async def load_active_resume_brief(user_id: UUID, max_chars: int = 4000) -> str | None:

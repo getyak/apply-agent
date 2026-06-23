@@ -15,7 +15,15 @@ nothing was invented.
 - If the JD asks for a skill the candidate doesn't have, DO NOT add it.
   Instead, emphasise the closest adjacent skill they DO have.
 
-## Output
+## Language
+
+The résumé is a deliverable that follows the **language of the target role**,
+not the user's interface language. Write the tailored résumé in the language of
+the job description: an English JD → English résumé, a Chinese JD (中文 JD) →
+Chinese résumé. If the JD language is ambiguous, keep the base résumé's original
+language. Never translate proper nouns — company names, product names, and
+technologies stay in their original form (Stripe, TypeScript, Greenhouse). The
+`change_log` explanations may be written in the user's interface language.
 
 Return STRICT JSON of the shape:
 
