@@ -2152,3 +2152,107 @@ html[data-idle="true"] .crown::before {
      calm, fully-drawn rest with no draw, no breath. */
   .crown::before { transform: scaleX(1) !important; animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v24 — Tempered metal: gilt under the hand.
+   v23 gave the gold a *drawn* edge; v24 makes the warm-metal language respond
+   to touch and stillness everywhere the reader's hand travels. Four additive
+   rules, each hung on a primitive that already lives in the committed markup —
+   no markup moves:
+     • the big index numerals (.ghost-num) stop merely warming their outline and
+       instead *strike to solid gilt*, lifting with a forge-heat bloom, the
+       moment their step is hovered;
+     • the hero proof checks (.proof-check) kindle a soft gold halo as the row is
+       taken in, so the promise list reads as lit from within;
+     • the primary CTAs (.cta-aura) gain a thin struck-gilt inner rim on hover, so
+       the button edge looks pressed from warm metal rather than filled flat;
+     • the section eyebrow markers (.eyebrow-dot) join the v21 idle-life system —
+       once the page settles they breathe a slow ember.
+   Every rule rides existing custom properties and the shared idle signal, and
+   the whole layer pins to its calm rest under reduced motion (the `*` guard does
+   not reach generated pseudo content, so the pseudos are pinned explicitly).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Struck-to-gilt index numerals — the quiet "01…05" watermark numerals used to
+   only warm their hollow outline on hover. Now the hovered numeral fills with
+   the brand's warm-gold gradient (clipped to the glyphs, the darker gold stroke
+   still tracing the edge so it reads as forged, not painted), lifts a hair, and
+   throws a soft heat-bloom beneath it. The later same-specificity rule wins over
+   the v5 hover, so this is a clean in-place upgrade. */
+.ghost-num {
+  transition:
+    color var(--dur-base) var(--ease-out),
+    -webkit-text-stroke-color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring),
+    filter var(--dur-slow) var(--ease-out);
+}
+.group:hover .ghost-num {
+  color: transparent;
+  background-image: var(--grad-gold,
+    linear-gradient(135deg, #f0b53a 0%, #e8a317 45%, #A66A00 100%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke-color: rgba(166, 106, 0, 0.5);
+  transform: translateY(-3px) scale(1.02);
+  filter: drop-shadow(0 6px 16px rgba(232, 163, 23, 0.42));
+}
+
+/* Kindled proof checks — the hero "it can…" rows already spring their green
+   check tile as they land. v24 hangs a warm-gold halo on a fresh ::after that
+   blooms outward when the row is taken under the hand, so the promise list reads
+   as lit from within rather than ticked in flat ink. Pure overlay: pointer-
+   transparent, sits behind nothing it can obscure, scales from a hair small. */
+.proof-row .proof-check { position: relative; }
+.proof-row .proof-check::after {
+  content: ""; position: absolute; inset: -3px; border-radius: inherit;
+  pointer-events: none; opacity: 0; transform: scale(0.86);
+  box-shadow:
+    0 0 0 1px rgba(232, 163, 23, 0.45),
+    0 6px 16px -3px rgba(232, 163, 23, 0.5);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+@media (hover: hover) {
+  .proof-row:hover .proof-check::after { opacity: 1; transform: scale(1); }
+}
+
+/* Struck-gilt CTA rim — the primary brown CTAs carry the aura bloom (.cta-aura
+   ::before) on hover; v24 adds the companion ::after: a thin warm-gold inner
+   rule plus a faint inner glow that lights as the hand arrives, so the button's
+   own edge looks pressed from the same warm metal as the rest of the page. Hugs
+   the host's radius, pointer-transparent, paints only on hover. */
+.cta-aura::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; opacity: 0;
+  box-shadow:
+    inset 0 0 0 1px rgba(243, 200, 105, 0.85),
+    inset 0 0 16px -5px rgba(243, 200, 105, 0.6);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .cta-aura:hover::after { opacity: 1; }
+}
+
+/* Idle ember on section markers — the eyebrow dot already emits a constant live
+   ring; once the reader holds still (root gains data-idle from PointerFX, the
+   same signal the v21 atmosphere and v23 struck stroke ride) its core warms in a
+   slow breath, so even the quiet section labels keep a faint pulse of life while
+   the page rests. data-idle is only ever set on a fine pointer with motion
+   allowed, so this never arms under reduced motion. */
+@keyframes eyebrow-idle-ember {
+  0%, 100% { box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7); }
+  50%      { box-shadow: 0 0 17px 1px rgba(243, 200, 105, 0.95); }
+}
+html[data-idle="true"] .eyebrow-dot {
+  animation: eyebrow-idle-ember 4.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `*` !important reaches real elements but not generated pseudo content, so
+     pin the new pseudos to their calm rest and silence the idle ember. */
+  .ghost-num { transition: none !important; }
+  .proof-row .proof-check::after { transition: none !important; }
+  .cta-aura::after { transition: none !important; }
+  html[data-idle="true"] .eyebrow-dot { animation: none !important; }
+}
