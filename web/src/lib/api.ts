@@ -254,6 +254,10 @@ export interface UserPreferences {
    *  §3.5). false / undefined means we never write to
    *  interview_question_pool from this user. */
   crowdsourceOptIn?: boolean;
+  /** Preferred UI language (en/zh). Persisted server-side so the choice
+   *  follows the user across devices; the local NEXT_LOCALE cookie is the
+   *  fast path, this is the durable source. */
+  language?: "en" | "zh";
 }
 
 export interface UserRecord {
@@ -375,14 +379,72 @@ export const resumes = {
     api<{ job: ParseJob }>(`/api/resumes/parse/${jobId}`),
 
   list: () =>
-    api<PaginatedEnvelope<{ id: string; version: number; is_base: boolean; created_at: string }>>(
-      "/api/resumes",
-    ),
+    api<
+      PaginatedEnvelope<{
+        id: string;
+        version: number;
+        is_base: boolean;
+        // Dual-track model (migration 017): track splits the timeline into
+        // Original / Optimized / Tailored rails; derived_from draws the chain.
+        track: "original" | "optimized" | "tailored";
+        derived_from: string | null;
+        tailored_for_job: string | null;
+        source_file_id: string | null;
+        created_at: string;
+      }>
+    >("/api/resumes"),
 
   get: (id: string) =>
     api<{ resume: { id: string; content: object; version: number } }>(
       `/api/resumes/${id}`,
     ),
+
+  // The AI suggestion stack for a résumé (proposed by default). Read-only —
+  // accept/reject goes through decideSuggestion.
+  suggestions: (id: string, status = "proposed") =>
+    api<{
+      suggestions: Array<{
+        id: string;
+        bullet_stable_id: string | null;
+        section: string | null;
+        change_type: string;
+        before_text: string;
+        after_text: string;
+        rationale: string | null;
+        risk_level: "safe" | "needs_review" | "unsupported";
+        status: string;
+        proposed_by: string;
+      }>;
+    }>(`/api/resumes/${id}/suggestions?status=${encodeURIComponent(status)}`),
+
+  // Accept or reject one suggestion. On accept the agent materializes it into
+  // a new optimized version under the fabrication guard.
+  decideSuggestion: (suggestionId: string, decision: "accept" | "reject", decidedVia = "studio_panel") =>
+    api<{ ok: boolean; status: string; resume_id?: string; version?: number }>(
+      `/api/resumes/suggestions/${suggestionId}/decision`,
+      { method: "POST", body: JSON.stringify({ decision, decidedVia }) },
+    ),
+
+  // Vibe chat on ONE bullet (design §6.3 [Discuss]). Returns a single proposed
+  // suggestion (or ok:false with a note when the edit can't be honored).
+  bulletEdit: (resumeId: string, bulletStableId: string, instruction: string) =>
+    api<{
+      ok: boolean;
+      note?: string | null;
+      suggestion?: {
+        id: string;
+        bullet_stable_id: string | null;
+        section: string | null;
+        change_type: string;
+        before_text: string;
+        after_text: string;
+        rationale: string | null;
+        risk_level: "safe" | "needs_review" | "unsupported";
+      };
+    }>(`/api/resumes/${resumeId}/bullet-edit`, {
+      method: "POST",
+      body: JSON.stringify({ bulletStableId, instruction }),
+    }),
 };
 
 export interface UploadResult {
@@ -393,6 +455,12 @@ export interface UploadResult {
   /** Extracted plain text, ready to hand to resumes.parse() (mirrors markdown). */
   text: string;
   kind: "pdf" | "docx" | "text";
+}
+
+export interface UploadAttachmentResult {
+  file: { id: string; filename: string; sizeBytes: number; kind: string };
+  stored: boolean;
+  kind: "pdf" | "docx" | "text" | "image";
 }
 
 export const files = {
@@ -419,10 +487,43 @@ export const files = {
     return res.json();
   },
 
+  // Generic chat attachment upload. Separate from upload() because the backend
+  // route is different (/api/files/attachment): it accepts images in addition
+  // to docs and does NOT run résumé extraction, so there's no markdown/text in
+  // the response — just a stored reference for the chat composer to chip.
+  uploadAttachment: async (file: File): Promise<UploadAttachmentResult> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/files/attachment`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(
+        res.status,
+        body.error?.message || body.error || "Upload failed",
+        extractErrorMeta(body),
+      );
+    }
+    return res.json();
+  },
+
   // Presigned URL for the stored original. Surface area is small on purpose —
   // the URL is short-lived and the link is consumed by an iframe preview /
   // direct download in the Source drawer.
   download: (id: string) => api<{ url: string }>(`/api/files/${id}/download`),
+
+  // INLINE-renderable preview URL for the Resume Studio Original Pane. PDFs
+  // return an inline URL directly; DOCX is converted to PDF (cached) when a
+  // converter is available, else `available:false` so the caller degrades to
+  // a download link.
+  preview: (id: string) =>
+    api<{ available: boolean; kind: string; url?: string }>(
+      `/api/files/${id}/preview`,
+    ),
 };
 
 export const jobs = {

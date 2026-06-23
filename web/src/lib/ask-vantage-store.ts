@@ -106,7 +106,9 @@ export type ArtifactType =
   | "application_package"
   | "interview_session"
   | "cover_letter"
-  | "market_snapshot";
+  | "market_snapshot"
+  // Dual-track suggestion stack (design §6.3).
+  | "suggestion_list";
 
 export interface ArtifactSourceEvidence {
   label: string;
@@ -119,6 +121,21 @@ export interface ArtifactAction {
   route?: string;
 }
 
+// One accept/reject suggestion card in a suggestion_list artifact.
+export interface ArtifactSuggestion {
+  id: string;
+  bulletStableId: string | null;
+  section: string | null;
+  changeType: string;
+  beforeText: string;
+  afterText: string;
+  rationale: string | null;
+  riskLevel: "safe" | "needs_review" | "unsupported";
+  // Local decision state so the card can grey out after a click without a
+  // full re-fetch. Undefined = still actionable.
+  decided?: "accepted" | "rejected";
+}
+
 export interface ArtifactPayload {
   artifactType: ArtifactType;
   artifactId: string;
@@ -128,6 +145,10 @@ export interface ArtifactPayload {
   needsUserReview?: boolean;
   sourceEvidence?: ArtifactSourceEvidence[];
   nextActions?: ArtifactAction[];
+  suggestions?: ArtifactSuggestion[];
+  // The original a suggestion_list was generated against — used by [Discuss]
+  // to scope a bullet-edit call.
+  sourceResumeId?: string;
 }
 
 // Per-step run state inside a task_graph message. The dock animates rows

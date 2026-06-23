@@ -16,6 +16,7 @@ import {
   useElapsedMs,
 } from "@/lib/use-elapsed";
 import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useShallow } from "zustand/react/shallow";
 import {
   useDock,
@@ -23,10 +24,11 @@ import {
   type DockAttachment,
   type DockMessage,
   type ArtifactAction,
+  type ArtifactSuggestion,
 } from "@/lib/ask-vantage-store";
 import { sendAsk } from "@/lib/ask-stream";
 import { useVantage } from "@/lib/store";
-import { files as filesApi } from "@/lib/api";
+import { files as filesApi, resumes as resumesApi } from "@/lib/api";
 import { greetingFor } from "@/lib/dates";
 import { MarkdownMessage } from "@/components/chat/markdown-message";
 import { ReasoningSummary } from "@/components/chat/reasoning-summary";
@@ -41,7 +43,11 @@ import { HitlCard } from "@/components/ask-vantage/dock-hitl-card";
 // about which bullet or section, and what to change.") survive verbatim
 // into the dock conversation.
 interface SuggestionChip {
-  display: string;
+  // i18n key (under the "dock" namespace) for the short card label the user
+  // reads. The verbose `prompt` below stays English on purpose — it's the
+  // instruction sent to the coordinator/LLM and is grepped by prompt-eval
+  // for the no-fabrication red line, so it must not vary by locale.
+  displayKey: string;
   prompt: string;
 }
 
@@ -49,11 +55,12 @@ interface SuggestionGroup {
   // `id` is stable so React can key without using the (possibly duplicate)
   // label as the key.
   id: "this_resume" | "explore";
-  label: string;
-  // One-liner shown next to the group label. For scoped groups this is
-  // where we keep the old Vibe Chat's "scoped to this résumé" contract so
-  // users still know what the group acts on after the merger.
-  scopeHint?: string;
+  // i18n key for the group heading.
+  labelKey: string;
+  // i18n key for the one-liner shown next to the group label. For scoped
+  // groups this is where we keep the old Vibe Chat's "scoped to this
+  // résumé" contract so users still know what the group acts on.
+  scopeHintKey?: string;
 }
 
 // Explore group — global tracks you'd ask Vantage from any page. Same set
@@ -61,18 +68,18 @@ interface SuggestionGroup {
 // for Stripe" since that now belongs inside the This-résumé group on the
 // Resume Studio route.
 const CHIPS_EXPLORE_DEFAULT: SuggestionChip[] = [
-  { display: "Find roles I should look at today", prompt: "Find roles I should look at today" },
-  { display: "Sharpen my résumé for Stripe", prompt: "Sharpen my résumé for Stripe" },
-  { display: "Practise the Stripe recruiter screen", prompt: "Practise the Stripe recruiter screen" },
-  { display: "What changed in the market this week?", prompt: "What changed in the market this week?" },
-  { display: "Build me a cover letter for Linear", prompt: "Build me a cover letter for Linear" },
+  { displayKey: "chips.explore.findRolesToday", prompt: "Find roles I should look at today" },
+  { displayKey: "chips.explore.sharpenForStripe", prompt: "Sharpen my résumé for Stripe" },
+  { displayKey: "chips.explore.practiseStripeScreen", prompt: "Practise the Stripe recruiter screen" },
+  { displayKey: "chips.explore.marketThisWeek", prompt: "What changed in the market this week?" },
+  { displayKey: "chips.explore.coverLetterLinear", prompt: "Build me a cover letter for Linear" },
 ];
 
 const CHIPS_EXPLORE_RESUME_STUDIO: SuggestionChip[] = [
-  { display: "Find roles I should look at today", prompt: "Find roles I should look at today" },
-  { display: "Practise the Stripe recruiter screen", prompt: "Practise the Stripe recruiter screen" },
-  { display: "What changed in the market this week?", prompt: "What changed in the market this week?" },
-  { display: "Build me a cover letter for Linear", prompt: "Build me a cover letter for Linear" },
+  { displayKey: "chips.explore.findRolesToday", prompt: "Find roles I should look at today" },
+  { displayKey: "chips.explore.practiseStripeScreen", prompt: "Practise the Stripe recruiter screen" },
+  { displayKey: "chips.explore.marketThisWeek", prompt: "What changed in the market this week?" },
+  { displayKey: "chips.explore.coverLetterLinear", prompt: "Build me a cover letter for Linear" },
 ];
 
 // "This résumé" group — migrated from the old VibeChatPanel. Each chip's
@@ -88,22 +95,22 @@ const CHIPS_EXPLORE_RESUME_STUDIO: SuggestionChip[] = [
 // whole group instead of three different rewordings.
 const CHIPS_THIS_RESUME: SuggestionChip[] = [
   {
-    display: "Find my résumé's 3 weakest spots",
+    displayKey: "chips.thisResume.weakestSpots",
     prompt:
       "Analyze this résumé and tell me the three weakest spots — be specific about which bullet or section, and what to change. Critique only what is actually written; do not invent skills, employers, dates, or metrics that aren't in the résumé.",
   },
   {
-    display: "Tailor this résumé to a JD",
+    displayKey: "chips.thisResume.tailorToJd",
     prompt:
       "I want to tailor this résumé for a specific role. Ask me to paste the JD, then customize the bullets to match — without inventing experience I don't have.",
   },
   {
-    display: "Map my next 1–2 career moves",
+    displayKey: "chips.thisResume.careerMoves",
     prompt:
       "Read my résumé's trajectory and tell me what the next one or two career moves should look like, plus which skills I'd need to close to get there. Base every suggestion on roles and skills that are actually in the résumé — do not invent companies I haven't worked at or skills I haven't demonstrated.",
   },
   {
-    display: "Surface roles that match this résumé",
+    displayKey: "chips.thisResume.surfaceRoles",
     prompt:
       "Based on this résumé, suggest five roles that would be a strong match right now — and explain in one line why each fits. Only cite skills, titles, and experiences that appear in the résumé; do not invent qualifications to make a role look like a better fit.",
   },
@@ -121,20 +128,20 @@ function chipGroupsForPath(
       {
         meta: {
           id: "this_resume",
-          label: "This résumé",
-          scopeHint: "Scoped to your current version",
+          labelKey: "groups.thisResume",
+          scopeHintKey: "groups.thisResumeScope",
         },
         chips: CHIPS_THIS_RESUME,
       },
       {
-        meta: { id: "explore", label: "Explore" },
+        meta: { id: "explore", labelKey: "groups.explore" },
         chips: CHIPS_EXPLORE_RESUME_STUDIO,
       },
     ];
   }
   return [
     {
-      meta: { id: "explore", label: "Explore" },
+      meta: { id: "explore", labelKey: "groups.explore" },
       chips: CHIPS_EXPLORE_DEFAULT,
     },
   ];
@@ -142,12 +149,14 @@ function chipGroupsForPath(
 
 // Agent teams surfaced via "@" mentions — each is a LangGraph node name on
 // the coordinator side (see docs/architecture/agent-architecture.md §2).
-const AGENT_TEAMS: { slug: string; label: string; hint: string }[] = [
-  { slug: "@scout", label: "Scout", hint: "Find / match roles" },
-  { slug: "@resume", label: "Résumé", hint: "Parse · optimise · tailor" },
-  { slug: "@interview", label: "Interview", hint: "Mock · feedback" },
-  { slug: "@apply", label: "Application", hint: "Cover letters · form prep" },
-  { slug: "@trend", label: "Trend", hint: "Market · skills movement" },
+// `label` keeps the agent's English proper name (Scout / Résumé / …) per the
+// i18n brief; `hintKey` points at a localised one-line description.
+const AGENT_TEAMS: { slug: string; label: string; hintKey: string }[] = [
+  { slug: "@scout", label: "Scout", hintKey: "agentTeams.scout" },
+  { slug: "@resume", label: "Résumé", hintKey: "agentTeams.resume" },
+  { slug: "@interview", label: "Interview", hintKey: "agentTeams.interview" },
+  { slug: "@apply", label: "Application", hintKey: "agentTeams.apply" },
+  { slug: "@trend", label: "Trend", hintKey: "agentTeams.trend" },
 ];
 
 // Web Speech API has prefixed / unprefixed builds and a non-standard event
@@ -236,6 +245,7 @@ function CheckBadge() {
 }
 
 function AgentCardRow({ id }: { id: string }) {
+  const t = useTranslations("dock");
   const ev = useDock((s) => s.agentEvents[id]);
   // Default collapsed in both states. The header alone (spinner + agent
   // label + status chip) already tells the user "this agent is working /
@@ -279,7 +289,7 @@ function AgentCardRow({ id }: { id: string }) {
   //   *why*, this row carries the *for how long*).
   // - done/failed → upstream statusText (preserved).
   const liveStatusText = running
-    ? `Thinking · ${formatElapsed(elapsedMs)}`
+    ? t("agentCard.thinkingElapsed", { elapsed: formatElapsed(elapsedMs) })
     : ev.statusText;
   return (
     <div
@@ -294,7 +304,7 @@ function AgentCardRow({ id }: { id: string }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-label={open ? "Collapse thinking" : "Expand thinking"}
+        aria-label={open ? t("agentCard.collapse") : t("agentCard.expand")}
         style={{
           all: "unset",
           cursor: "pointer",
@@ -342,13 +352,13 @@ function AgentCardRow({ id }: { id: string }) {
           }}
         >
           <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-            agent · <span style={{ color: "#5D3000" }}>{ev.agent}</span>
+            {t("meta.agent")} · <span style={{ color: "#5D3000" }}>{ev.agent}</span>
           </div>
           <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-            started · <span style={{ color: "#5D3000" }}>{startedAt}</span>
+            {t("meta.started")} · <span style={{ color: "#5D3000" }}>{startedAt}</span>
           </div>
           <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-            status · <span style={{ color: statusColor }}>{ev.state}</span>
+            {t("meta.status")} · <span style={{ color: statusColor }}>{ev.state}</span>
           </div>
         </div>
       ) : null}
@@ -362,12 +372,14 @@ function AgentCardRow({ id }: { id: string }) {
 // inline the full tool result here because that already arrives as either
 // an `artifact` card or a `result` card right after this row.
 function ToolTraceRow({ m }: { m: DockMessage }) {
+  const t = useTranslations("dock");
   const [open, setOpen] = useState<boolean>(false);
   const tool = m.toolName || "";
   const agent = m.toolAgent || "coordinator";
   const action = m.toolAction || "";
   const status = m.toolStatus || "ok";
-  const summary = m.toolSummary || (status === "error" ? "failed" : "ok");
+  const summary =
+    m.toolSummary || (status === "error" ? t("tool.failed") : t("tool.ok"));
   const startedAt = m.toolStartedAt || 0;
   // Pure display only — the tool has *already finished* by the time this
   // message exists in the store (dock_agent only emits tool_trace on
@@ -399,7 +411,7 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          aria-label={open ? "Collapse tool console" : "Expand tool console"}
+          aria-label={open ? t("tool.collapse") : t("tool.expand")}
           data-testid="dock-tool-trace-toggle"
           style={{
             all: "unset",
@@ -475,10 +487,10 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
             }}
           >
             <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-              tool · <span style={{ color: "#5D3000" }}>{tool}</span>
+              {t("meta.tool")} · <span style={{ color: "#5D3000" }}>{tool}</span>
             </div>
             <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-              agent · <span style={{ color: "#5D3000" }}>{agent}</span>
+              {t("meta.agent")} · <span style={{ color: "#5D3000" }}>{agent}</span>
               {action ? (
                 <>
                   {" → "}
@@ -487,7 +499,7 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
               ) : null}
             </div>
             <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-              status · <span style={{ color: dotColor }}>{status}</span>
+              {t("meta.status")} · <span style={{ color: dotColor }}>{status}</span>
             </div>
             {/* Inline-detail upgrade: surface the raw tool input + output
                 so a user (or developer) can see exactly what the agent
@@ -496,10 +508,10 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
                 When either is undefined the section silently disappears
                 (older backends won't ship the fields). */}
             {m.toolArgs !== undefined ? (
-              <JsonBlock label="Input" value={m.toolArgs} />
+              <JsonBlock label={t("tool.input")} value={m.toolArgs} />
             ) : null}
             {m.toolResult !== undefined ? (
-              <JsonBlock label="Output" value={m.toolResult} />
+              <JsonBlock label={t("tool.output")} value={m.toolResult} />
             ) : null}
           </div>
         ) : null}
@@ -516,6 +528,7 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
 // keyboard / copy.
 const JSONBLOCK_PREVIEW_LINES = 200;
 function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  const t = useTranslations("dock");
   const [expanded, setExpanded] = useState(false);
   const pretty = useMemo(() => {
     try {
@@ -556,7 +569,9 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
         }}
       >
         {visible}
-        {overflowing && !expanded ? `\n…${lines.length - JSONBLOCK_PREVIEW_LINES} more lines` : ""}
+        {overflowing && !expanded
+          ? `\n…${t("tool.moreLines", { count: lines.length - JSONBLOCK_PREVIEW_LINES })}`
+          : ""}
       </pre>
       {overflowing ? (
         <button
@@ -571,7 +586,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
             padding: "2px 0",
           }}
         >
-          {expanded ? "show less" : "show all"}
+          {expanded ? t("tool.showLess") : t("tool.showAll")}
         </button>
       ) : null}
     </div>
@@ -585,7 +600,8 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 // happens, the dock keeps both rows visible (the user mental model is
 // "preview → final"); we don't auto-remove the partial.
 function PartialArtifactRow({ m }: { m: DockMessage }) {
-  const title = m.partialTitle || "Drafting…";
+  const t = useTranslations("dock");
+  const title = m.partialTitle || t("partial.drafting");
   const sub = m.partialSub || "";
   const progress =
     typeof m.partialProgress === "number"
@@ -783,6 +799,7 @@ function MessageRow({
   isLastAssistant: boolean;
   streaming: boolean;
 }) {
+  const t = useTranslations("dock");
   if (m.kind === "tool_trace") {
     return <ToolTraceRow m={m} />;
   }
@@ -920,7 +937,7 @@ function MessageRow({
                 fontSize: 13,
               }}
             >
-              Thinking
+              {t("message.thinking")}
             </span>
           )}
           {isLastAssistant && streaming ? <StreamingCursor /> : null}
@@ -1027,14 +1044,15 @@ function MessageRow({
 // shape, so we don't need a separate renderer per artifact_type. The
 // "Approve" / "Tweak" / "Discard" copy comes from next_actions[].
 function ArtifactCard({ m }: { m: DockMessage }) {
+  const t = useTranslations("dock");
   const a = m.artifact;
   if (!a) return null;
   const confPct = typeof a.confidence === "number" ? Math.round(a.confidence * 100) : null;
   const confSpec = (() => {
     if (confPct === null) return null;
-    if (confPct >= 80) return { text: `${confPct}% CONFIDENT`, fg: "#2F5722", bg: "#E2EED9" };
-    if (confPct >= 60) return { text: `${confPct}% CONFIDENT`, fg: "#5D3000", bg: "#FBEFD8" };
-    return { text: `${confPct}% — REVIEW`, fg: "#8A6A12", bg: "#FBEFD0" };
+    if (confPct >= 80) return { text: t("artifact.confident", { pct: confPct }), fg: "#2F5722", bg: "#E2EED9" };
+    if (confPct >= 60) return { text: t("artifact.confident", { pct: confPct }), fg: "#5D3000", bg: "#FBEFD8" };
+    return { text: t("artifact.review", { pct: confPct }), fg: "#8A6A12", bg: "#FBEFD0" };
   })();
   return (
     <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }} className="animate-pop">
@@ -1115,7 +1133,7 @@ function ArtifactCard({ m }: { m: DockMessage }) {
                 color: "#A39F99",
               }}
             >
-              EVIDENCE
+              {t("artifact.evidence")}
             </div>
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 3 }}>
               {a.sourceEvidence.map((ev, i) => (
@@ -1142,6 +1160,18 @@ function ArtifactCard({ m }: { m: DockMessage }) {
             </ul>
           </div>
         ) : null}
+        {a.artifactType === "suggestion_list" && a.suggestions && a.suggestions.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            {a.suggestions.map((s) => (
+              <SuggestionCard
+                key={s.id}
+                messageId={m.id}
+                suggestion={s}
+                sourceResumeId={a.sourceResumeId}
+              />
+            ))}
+          </div>
+        ) : null}
         {a.nextActions && a.nextActions.length > 0 ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {a.nextActions.map((act, i) => (
@@ -1150,6 +1180,265 @@ function ArtifactCard({ m }: { m: DockMessage }) {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// One accept/reject card inside a suggestion_list artifact (design §6.3).
+// Deciding hits /api/resumes/suggestions/:id/decision and greys the card out
+// in place — no page jump, the whole point of "vibe in the dock".
+function SuggestionCard({
+  messageId,
+  suggestion,
+  sourceResumeId,
+}: {
+  messageId: string;
+  suggestion: ArtifactSuggestion;
+  sourceResumeId?: string;
+}) {
+  const t = useTranslations("dock");
+  const [busy, setBusy] = useState(false);
+  const [discussInstruction, setDiscussInstruction] = useState<string | null>(null);
+  const decided = suggestion.decided;
+
+  async function decide(decision: "accept" | "reject") {
+    if (busy || decided) return;
+    setBusy(true);
+    try {
+      await resumesApi.decideSuggestion(suggestion.id, decision, "dock_inline");
+    } catch {
+      setBusy(false);
+      return;
+    }
+    // Mark this suggestion decided in the stored artifact so the card greys
+    // out without refetching the whole turn.
+    const dock = useDock.getState();
+    const msg = dock.messages.find((x) => x.id === messageId);
+    const arr = msg?.artifact?.suggestions;
+    if (arr) {
+      dock.patchMessage(messageId, {
+        artifact: {
+          ...msg!.artifact!,
+          suggestions: arr.map((x) =>
+            x.id === suggestion.id
+              ? { ...x, decided: decision === "accept" ? "accepted" : "rejected" }
+              : x,
+          ),
+        },
+      });
+    }
+    setBusy(false);
+  }
+
+  // [Discuss] opens an inline bullet-scoped vibe input (design §6.3). Submitting
+  // calls propose_bullet_edit for THIS bullet and swaps the revised text into
+  // the card — a one-bullet conversation without leaving the dock. Falls back
+  // to a scoped dock prompt when we don't have the source résumé id or a stable
+  // bullet id (older artifacts).
+  function openDiscuss() {
+    if (!sourceResumeId || !suggestion.bulletStableId) {
+      const dock = useDock.getState();
+      dock.open();
+      dock.setInput(t("suggestion.discussSeed", { bullet: suggestion.beforeText }));
+      return;
+    }
+    setDiscussInstruction("");
+  }
+
+  async function submitDiscuss() {
+    const instruction = (discussInstruction ?? "").trim();
+    if (!instruction || !sourceResumeId || !suggestion.bulletStableId || busy) return;
+    setBusy(true);
+    try {
+      const res = await resumesApi.bulletEdit(
+        sourceResumeId,
+        suggestion.bulletStableId,
+        instruction,
+      );
+      if (res.ok && res.suggestion) {
+        const dock = useDock.getState();
+        const msg = dock.messages.find((x) => x.id === messageId);
+        const arr = msg?.artifact?.suggestions;
+        if (arr) {
+          // The revised suggestion supersedes this card in place — new id,
+          // new text, fresh (undecided) state.
+          dock.patchMessage(messageId, {
+            artifact: {
+              ...msg!.artifact!,
+              suggestions: arr.map((x) =>
+                x.id === suggestion.id
+                  ? {
+                      id: res.suggestion!.id,
+                      bulletStableId: res.suggestion!.bullet_stable_id,
+                      section: res.suggestion!.section,
+                      changeType: res.suggestion!.change_type,
+                      beforeText: res.suggestion!.before_text,
+                      afterText: res.suggestion!.after_text,
+                      rationale: res.suggestion!.rationale,
+                      riskLevel: res.suggestion!.risk_level,
+                    }
+                  : x,
+              ),
+            },
+          });
+        }
+        setDiscussInstruction(null);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid #EAE0D0",
+        borderRadius: 10,
+        padding: 11,
+        background: decided ? "#F4F1EA" : "#FFFFFF",
+        opacity: decided ? 0.6 : 1,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
+        <span
+          style={{
+            fontFamily: "JetBrains Mono, ui-monospace, monospace",
+            fontSize: 9,
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+            color: "#A39F99",
+          }}
+        >
+          {suggestion.changeType}
+        </span>
+        {suggestion.riskLevel === "needs_review" && !decided ? (
+          <span
+            style={{
+              fontFamily: "JetBrains Mono, ui-monospace, monospace",
+              fontSize: 8,
+              letterSpacing: 0.6,
+              textTransform: "uppercase",
+              color: "#A66A00",
+              background: "#FBEFD8",
+              padding: "2px 6px",
+              borderRadius: 4,
+            }}
+          >
+            {t("suggestion.needsReview")}
+          </span>
+        ) : null}
+        {decided ? (
+          <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, color: "#6B6560" }}>
+            {decided === "accepted" ? t("suggestion.accepted") : t("suggestion.rejected")}
+          </span>
+        ) : null}
+      </div>
+      <div style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, color: "#A39F99", textDecoration: "line-through", marginBottom: 3 }}>
+        {suggestion.beforeText}
+      </div>
+      <div style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 13, color: "#2B2822", marginBottom: suggestion.rationale ? 5 : 8 }}>
+        {suggestion.afterText}
+      </div>
+      {suggestion.rationale ? (
+        <div style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 11.5, color: "#6B6560", marginBottom: 8 }}>
+          {suggestion.rationale}
+        </div>
+      ) : null}
+      {!decided ? (
+        <div style={{ display: "flex", gap: 7 }}>
+          <button
+            onClick={() => decide("accept")}
+            disabled={busy}
+            style={{
+              cursor: busy ? "default" : "pointer",
+              border: "1px solid #4C7A3F",
+              background: "#4C7A3F",
+              color: "#FFFFFF",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+              fontSize: 12,
+              padding: "5px 12px",
+              borderRadius: 8,
+            }}
+          >
+            {t("suggestion.accept")}
+          </button>
+          <button
+            onClick={() => decide("reject")}
+            disabled={busy}
+            style={{
+              cursor: busy ? "default" : "pointer",
+              border: "1px solid #D6CEC0",
+              background: "#FFFFFF",
+              color: "#6B6560",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+              fontSize: 12,
+              padding: "5px 12px",
+              borderRadius: 8,
+            }}
+          >
+            {t("suggestion.reject")}
+          </button>
+          <button
+            onClick={openDiscuss}
+            style={{
+              cursor: "pointer",
+              border: "none",
+              background: "transparent",
+              color: "#5D3000",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+              fontSize: 12,
+              padding: "5px 8px",
+            }}
+          >
+            {t("suggestion.discuss")}
+          </button>
+        </div>
+      ) : null}
+      {discussInstruction !== null && !decided ? (
+        <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+          <input
+            autoFocus
+            value={discussInstruction}
+            onChange={(e) => setDiscussInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitDiscuss();
+              if (e.key === "Escape") setDiscussInstruction(null);
+            }}
+            placeholder={t("suggestion.discussPlaceholder")}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: "1px solid #D6CEC0",
+              borderRadius: 8,
+              padding: "6px 9px",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12,
+              color: "#2B2822",
+              background: "#FFFFFF",
+            }}
+          />
+          <button
+            onClick={submitDiscuss}
+            disabled={busy || !discussInstruction.trim()}
+            style={{
+              cursor: busy ? "default" : "pointer",
+              border: "1px solid #5D3000",
+              background: "#5D3000",
+              color: "#FFFFFF",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontWeight: 600,
+              fontSize: 12,
+              padding: "6px 11px",
+              borderRadius: 8,
+            }}
+          >
+            {t("suggestion.revise")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1211,6 +1500,7 @@ function ArtifactActionButton({ action }: { action: ArtifactAction }) {
 // quieter than the result card so a typical 3-step plan doesn't crowd
 // out the conversation thread above and below it.
 function TaskGraphCard({ m }: { m: DockMessage }) {
+  const t = useTranslations("dock");
   if (!m.steps || m.steps.length === 0) return null;
   return (
     <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }} className="animate-pop">
@@ -1235,7 +1525,7 @@ function TaskGraphCard({ m }: { m: DockMessage }) {
             marginBottom: 6,
           }}
         >
-          PLAN · {m.steps.length} STEP{m.steps.length === 1 ? "" : "S"}
+          {t("taskGraph.planHeader", { count: m.steps.length })}
         </div>
         {m.userGoal ? (
           <div
@@ -1292,12 +1582,13 @@ function TaskGraphStepPill({
   status: "pending" | "running" | "done" | "review" | "failed";
   requiresReview: boolean;
 }) {
+  const t = useTranslations("dock");
   const spec = (() => {
-    if (status === "running") return { text: "RUNNING", fg: "#5D3000", bg: "#FBEFD8", anim: true };
-    if (status === "done") return { text: "DONE", fg: "#2F5722", bg: "#E2EED9" };
-    if (status === "review") return { text: "REVIEW", fg: "#8A6A12", bg: "#FBEFD0" };
-    if (status === "failed") return { text: "FAILED", fg: "#7A2A1F", bg: "#F4D7D2" };
-    return { text: requiresReview ? "HITL" : "WAITING", fg: "#A39F99", bg: "#F4F0E8" };
+    if (status === "running") return { text: t("taskGraph.running"), fg: "#5D3000", bg: "#FBEFD8", anim: true };
+    if (status === "done") return { text: t("taskGraph.done"), fg: "#2F5722", bg: "#E2EED9" };
+    if (status === "review") return { text: t("taskGraph.review"), fg: "#8A6A12", bg: "#FBEFD0" };
+    if (status === "failed") return { text: t("taskGraph.failed"), fg: "#7A2A1F", bg: "#F4D7D2" };
+    return { text: requiresReview ? "HITL" : t("taskGraph.waiting"), fg: "#A39F99", bg: "#F4F0E8" };
   })();
   return (
     <span
@@ -1338,15 +1629,20 @@ function dockShellStyle(width: number): React.CSSProperties {
 // distance grows so we don't pretend to know seconds-old precision a
 // week later. Intl.RelativeTimeFormat would be fine, but writing it out
 // keeps the bundle small and dock typography consistent.
-function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const diff = Date.now() - t;
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  return new Date(t).toLocaleDateString(undefined, {
+// `tr` is the dock-namespace translator passed down from RecentRail (this is
+// a module-level helper, so it can't call useTranslations itself).
+function relativeTime(
+  iso: string,
+  tr: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return "";
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return tr("recent.justNow");
+  if (diff < 3_600_000) return tr("recent.minutesAgo", { count: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return tr("recent.hoursAgo", { count: Math.floor(diff / 3_600_000) });
+  if (diff < 7 * 86_400_000) return tr("recent.daysAgo", { count: Math.floor(diff / 86_400_000) });
+  return new Date(ts).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
   });
@@ -1358,6 +1654,7 @@ function relativeTime(iso: string): string {
 // highlight ring on the bubble. We never switch threads. Empty state
 // stays helpful instead of preachy.
 function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement | null> }) {
+  const t = useTranslations("dock");
   const anchors = useDock((s) => s.recentAnchors);
   const [pulseId, setPulseId] = useState<string | null>(null);
 
@@ -1405,7 +1702,7 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
   if (anchors.length === 0) {
     return (
       <div className="ds-caption" style={{ padding: "12px 8px", color: "#A39F99" }}>
-        Your conversation lives here. Ask Vantage anything to start the log.
+        {t("recent.empty")}
       </div>
     );
   }
@@ -1458,7 +1755,7 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
               className="ds-mono-9"
               style={{ marginTop: 1, color: isMiss ? "#A23A2E" : "#A39F99" }}
             >
-              {isMiss ? "older — open thread to see" : relativeTime(a.createdAt)}
+              {isMiss ? t("recent.olderOpenThread") : relativeTime(a.createdAt, t)}
             </div>
           </button>
         );
@@ -1468,6 +1765,7 @@ function RecentRail({ scrollRoot }: { scrollRoot: React.RefObject<HTMLDivElement
 }
 
 export function AskVantageDock() {
+  const t = useTranslations("dock");
   const state = useDock((s) => s.state);
   const width = useDock((s) => s.width);
   const setWidth = useDock((s) => s.setWidth);
@@ -1504,7 +1802,9 @@ export function AskVantageDock() {
     const auth = currentUser?.displayName?.trim() ?? "";
     const source = resumeName || auth;
     const first = source.split(/\s+/)[0] ?? "";
-    return first || "there";
+    // Empty when nameless — the render site (`who`) supplies the localized
+    // fallback via t("greeting.fallbackName"), so we don't hardcode "there".
+    return first;
   }, [parsedResume, currentUser]);
 
   // Surface + thread override for chips inside the "This résumé" group.
@@ -1616,7 +1916,7 @@ export function AskVantageDock() {
     if ((!text && attachments.length === 0) || streaming) return;
     // Empty body but with attachments? Use a friendly default verb so the
     // agent has something to reason about.
-    const finalPrompt = text || "Please review the attached file(s).";
+    const finalPrompt = text || t("reviewAttachments");
     // On Resume Studio with a résumé loaded, free-text composer turns join
     // the same resume_studio thread the chips use. That's what makes the
     // dock the *single* conversation entry: clicking "Find my résumé's 3
@@ -1649,8 +1949,8 @@ export function AskVantageDock() {
         onClick={toggleDock}
         data-tour="dock"
         type="button"
-        title="Open Ask Vantage"
-        aria-label="Open Ask Vantage"
+        title={t("openAskVantage")}
+        aria-label={t("openAskVantage")}
         style={{
           position: "fixed",
           bottom: 26,
@@ -1721,7 +2021,7 @@ export function AskVantageDock() {
             color: "#A39F99",
           }}
         >
-          Ask
+          {t("askVertical")}
         </span>
       </button>
     );
@@ -1749,7 +2049,7 @@ export function AskVantageDock() {
       {!isFull && (
         <div
           onMouseDown={startResize}
-          title="Drag to resize"
+          title={t("dragToResize")}
           style={{
             position: "absolute",
             left: -3,
@@ -1801,7 +2101,7 @@ export function AskVantageDock() {
               lineHeight: 1.1,
             }}
           >
-            Ask Vantage
+            {t("askVantage")}
           </div>
           {/* Scope strip: on Resume Studio with a résumé loaded, we make it
               clear which conversation track is live so the chip-vs-composer
@@ -1810,17 +2110,17 @@ export function AskVantageDock() {
               identity. */}
           {pathname?.startsWith("/app/studio/resume") && resumeStudioThread ? (
             <div className="ds-mono-9" style={{ color: "#5D3000" }}>
-              TALKING ABOUT THIS RÉSUMÉ
+              {t("subtitleResume")}
             </div>
           ) : (
-            <div className="ds-mono-9">YOUR AGENT · ALWAYS HERE</div>
+            <div className="ds-mono-9">{t("subtitleDefault")}</div>
           )}
         </div>
         <button
           onClick={toggleFull}
-          title={isFull ? "Dock" : "Expand"}
+          title={isFull ? t("dockButton") : t("expandButton")}
           style={iconBtnStyle()}
-          aria-label={isFull ? "Dock" : "Expand"}
+          aria-label={isFull ? t("dockButton") : t("expandButton")}
         >
           {isFull ? (
             <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
@@ -1834,9 +2134,9 @@ export function AskVantageDock() {
         </button>
         <button
           onClick={toggleDock}
-          title="Collapse"
+          title={t("collapse")}
           style={iconBtnStyle()}
-          aria-label="Collapse"
+          aria-label={t("collapse")}
         >
           <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
             <path d="M13 17l5-5-5-5M6 17l5-5-5-5" />
@@ -1860,12 +2160,12 @@ export function AskVantageDock() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 8px 12px" }}>
-              <span className="ds-label" style={{ color: "#6B6560" }}>RECENT</span>
+              <span className="ds-label" style={{ color: "#6B6560" }}>{t("recentLabel")}</span>
               <button
                 onClick={() => useDock.getState().reset()}
-                title="New chat"
+                title={t("newChat")}
                 style={smallIconBtnStyle()}
-                aria-label="New chat"
+                aria-label={t("newChat")}
               >
                 <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 5v14M5 12h14" />
@@ -1957,6 +2257,7 @@ function Greeting({
   // or fall back to the normal "what should we work on" copy.
   parseJobStatus: "idle" | "running" | "done" | "failed";
 }) {
+  const t = useTranslations("dock");
   // Single source of truth for date + greeting: greetingFor() and the same
   // Intl.DateTimeFormat call as the Today header so the dock can never
   // disagree with the main view (bug #1 from the QA pass — dock said "Good
@@ -1971,13 +2272,25 @@ function Greeting({
       })
       .toUpperCase();
   }, []);
-  const greeting = useMemo(() => greetingFor(), []);
-  const who = firstName?.trim() || "there";
+  // Map the English time-of-day from greetingFor() onto a localized word so
+  // the greeting follows the UI locale (greetingFor lives in @/lib/dates and
+  // is locale-agnostic by design — we localize at the render site).
+  const greeting = useMemo(() => {
+    const g = greetingFor();
+    const key =
+      g === "Good morning"
+        ? "morning"
+        : g === "Good afternoon"
+          ? "afternoon"
+          : "evening";
+    return t(`greeting.timeOfDay.${key}`);
+  }, [t]);
+  const who = firstName?.trim() || t("greeting.fallbackName");
   return (
     <div className="animate-fade-up">
-      <div className="ds-mono-10" style={{ marginBottom: 10 }}>TODAY · {today}</div>
+      <div className="ds-mono-10" style={{ marginBottom: 10 }}>{t("greeting.today", { date: today })}</div>
       <h1 className="ds-h2" style={{ margin: "0 0 7px", color: "#2B2822" }}>
-        {greeting}, {who}.
+        {t("greeting.headline", { greeting, name: who })}
       </h1>
       {parseJobStatus === "running" ? (
         // N1 (round-2): when an async résumé parse is in flight, the dock
@@ -1988,18 +2301,15 @@ function Greeting({
         // "failed" the onboarding banner takes over the loud part — the dock
         // paragraph returns to its normal "What should we work on" copy.
         <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
-          Reading your résumé in the background — keep going, I&apos;ll surface
-          weak spots and matches as soon as it&apos;s ready.
+          {t("greeting.parseRunning")}
         </p>
       ) : parseJobStatus === "failed" ? (
         <p className="ds-body-sm" style={{ color: "#A66A00", margin: "0 0 20px" }}>
-          That parse didn&apos;t finish — re-upload or paste the text and I&apos;ll
-          try again.
+          {t("greeting.parseFailed")}
         </p>
       ) : (
         <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
-          What should we work on? Tap a card to send it instantly — or write
-          your own.
+          {t("greeting.parseIdle")}
         </p>
       )}
 
@@ -2033,9 +2343,9 @@ function Greeting({
                   className="ds-mono-10"
                   style={{ color: "#5D3000" }}
                 >
-                  {group.meta.label.toUpperCase()}
+                  {t(group.meta.labelKey).toUpperCase()}
                 </span>
-                {group.meta.scopeHint ? (
+                {group.meta.scopeHintKey ? (
                   <span
                     style={{
                       fontFamily: "Inter, system-ui, sans-serif",
@@ -2043,7 +2353,7 @@ function Greeting({
                       color: "#A39F99",
                     }}
                   >
-                    {group.meta.scopeHint}
+                    {t(group.meta.scopeHintKey)}
                   </span>
                 ) : null}
               </div>
@@ -2054,9 +2364,10 @@ function Greeting({
                 const sendOpts = isScoped && resumeStudioThread
                   ? { surface: "resume_studio" as const, threadIdOverride: resumeStudioThread }
                   : undefined;
+                const chipDisplay = t(chip.displayKey);
                 return (
                   <button
-                    key={`${group.meta.id}:${chip.display}`}
+                    key={`${group.meta.id}:${chip.displayKey}`}
                     onClick={() => {
                       if (chipDisabled) return;
                       // Quick-prompt chips bypass the composer and fire
@@ -2068,8 +2379,8 @@ function Greeting({
                     className="ds-card"
                     title={
                       scopedDisabled
-                        ? "Open a résumé first — these actions need one to scope to."
-                        : chip.prompt !== chip.display
+                        ? t("chips.scopedDisabledHint")
+                        : chip.prompt !== chipDisplay
                           ? chip.prompt
                           : undefined
                     }
@@ -2111,7 +2422,7 @@ function Greeting({
                       </svg>
                     </div>
                     <span style={{ fontFamily: "Inter", fontWeight: 500, fontSize: 13.5, color: "#2B2822" }}>
-                      {chip.display}
+                      {chipDisplay}
                     </span>
                   </button>
                 );
@@ -2122,7 +2433,7 @@ function Greeting({
       })}
 
       <div className="ds-mono-10" style={{ margin: "28px 0 10px", color: "#A39F99" }}>
-        AGENT TEAMS
+        {t("agentTeamsLabel")}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
         {AGENT_TEAMS.map((team) => (
@@ -2141,7 +2452,7 @@ function Greeting({
               }, 0);
             }}
             disabled={streaming}
-            title={team.hint}
+            title={t(team.hintKey)}
             style={{
               cursor: streaming ? "not-allowed" : "pointer",
               border: "1px solid #EDE8DF",
@@ -2166,7 +2477,7 @@ function Greeting({
             }}
           >
             {team.slug}
-            <span style={{ color: "#A39F99", marginLeft: 6 }}>{team.hint}</span>
+            <span style={{ color: "#A39F99", marginLeft: 6 }}>{t(team.hintKey)}</span>
           </button>
         ))}
       </div>
@@ -2187,6 +2498,7 @@ function Composer({
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   streaming: boolean;
 }) {
+  const t = useTranslations("dock");
   const attachments = useDock((s) => s.attachments);
   const addAttachment = useDock((s) => s.addAttachment);
   const removeAttachment = useDock((s) => s.removeAttachment);
@@ -2234,7 +2546,7 @@ function Composer({
     try {
       const res = await filesApi.upload(file);
       if (!res.file) {
-        setUploadError("Upload accepted but no file id returned.");
+        setUploadError(t("composer.uploadNoId"));
         return;
       }
       const att: DockAttachment = {
@@ -2245,7 +2557,7 @@ function Composer({
       };
       addAttachment(att);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload failed";
+      const msg = err instanceof Error ? err.message : t("composer.uploadFailed");
       setUploadError(msg);
     } finally {
       setUploading(false);
@@ -2377,8 +2689,8 @@ function Composer({
               <button
                 type="button"
                 onClick={() => removeAttachment(a.id)}
-                aria-label={`Remove ${a.name}`}
-                title="Remove"
+                aria-label={t("composer.removeNamed", { name: a.name })}
+                title={t("composer.remove")}
                 style={{
                   background: "transparent",
                   border: "none",
@@ -2411,7 +2723,7 @@ function Composer({
               }}
             >
               <Spinner />
-              Uploading…
+              {t("composer.uploading")}
             </span>
           )}
           {uploadError && !uploading && (
@@ -2435,7 +2747,7 @@ function Composer({
       {mentionOpen && filteredMentions.length > 0 && (
         <div
           role="listbox"
-          aria-label="Agent teams"
+          aria-label={t("composer.agentTeamsListLabel")}
           style={{
             position: "absolute",
             left: 16,
@@ -2455,18 +2767,18 @@ function Composer({
           }}
         >
           <div className="ds-mono-9" style={{ padding: "6px 10px", color: "#A39F99" }}>
-            AGENT TEAMS
+            {t("agentTeamsLabel")}
           </div>
-          {filteredMentions.map((t) => (
+          {filteredMentions.map((team) => (
             <button
-              key={t.slug}
+              key={team.slug}
               type="button"
               role="option"
               aria-selected={false}
               onMouseDown={(e) => {
                 // mousedown beats blur so the picker survives the click.
                 e.preventDefault();
-                pickMention(t.slug);
+                pickMention(team.slug);
               }}
               style={{
                 display: "flex",
@@ -2486,9 +2798,9 @@ function Composer({
               onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             >
               <span style={{ fontFamily: "JetBrains Mono, ui-monospace, monospace", color: "#5D3000", minWidth: 80 }}>
-                {t.slug}
+                {team.slug}
               </span>
-              <span style={{ color: "#6B6560", fontSize: 12.5 }}>{t.hint}</span>
+              <span style={{ color: "#6B6560", fontSize: 12.5 }}>{t(team.hintKey)}</span>
             </button>
           ))}
         </div>
@@ -2527,7 +2839,7 @@ function Composer({
           data-vantage-composer="1"
           // Single calm invitation. Discoverability for attach / @team lives
           // on the icons (tooltip) and the chip groups, not on the placeholder.
-          placeholder="Ask anything"
+          placeholder={t("composer.placeholder")}
           rows={1}
           style={{
             width: "100%",
@@ -2567,7 +2879,7 @@ function Composer({
               only appears while empty, and only when the browser supports it,
               so the trailing edge is never crowded next to Send. */}
           <CircleIconButton
-            label="Attach file (PDF / DOCX / TXT)"
+            label={t("composer.attachFile")}
             disabled={uploading || streaming}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -2577,7 +2889,7 @@ function Composer({
           </CircleIconButton>
 
           <CircleIconButton
-            label="Mention an agent team"
+            label={t("composer.mentionTeam")}
             disabled={streaming}
             onClick={() => {
               const el = textareaRef.current;
@@ -2607,7 +2919,7 @@ function Composer({
 
           {!hasContent && speechSupported ? (
             <CircleIconButton
-              label={listening ? "Stop voice input" : "Voice input"}
+              label={listening ? t("composer.stopVoice") : t("composer.voiceInput")}
               disabled={streaming}
               active={listening}
               onClick={() => (listening ? stopListening() : startListening())}
@@ -2656,8 +2968,8 @@ function Composer({
                 ? "none"
                 : "0 2px 6px rgba(93,48,0,.22)",
             }}
-            aria-label={sendDisabled ? "Type a message to send" : "Send"}
-            title={sendDisabled ? "Type to send" : "Send (⌘↵)"}
+            aria-label={sendDisabled ? t("composer.sendAriaDisabled") : t("composer.sendAria")}
+            title={sendDisabled ? t("composer.sendTitleDisabled") : t("composer.sendTitle")}
             onMouseEnter={(e) => {
               if (sendDisabled) return;
               e.currentTarget.style.background = "#7A3F00";

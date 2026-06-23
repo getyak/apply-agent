@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useVantage } from "@/lib/store";
 
 // Lightweight onboarding tour: a 3-step spotlight + popover. The first step
@@ -10,22 +11,10 @@ import { useVantage } from "@/lib/store";
 // React + the existing Tailwind tokens. Anchors are looked up by data-tour
 // id, which the dock and Sidebar set on the relevant DOM nodes.
 
-const STEPS: { target: string; title: string; body: string }[] = [
-  {
-    target: "dock",
-    title: "Ask Vantage anything",
-    body: "The dock on the right is always here — find roles, tailor a résumé, prep an interview. Send a chip to fire it instantly, or write your own.",
-  },
-  {
-    target: "today",
-    title: "Today's matches",
-    body: "Fresh roles scored against your résumé, with the strongest fit at the top. We refresh this every morning.",
-  },
-  {
-    target: "apps",
-    title: "Track every application",
-    body: "Drafts, submissions, interviews, outcomes — all in one place. Status updates land here automatically.",
-  },
+const STEPS: { target: string; key: string }[] = [
+  { target: "dock", key: "dock" },
+  { target: "today", key: "today" },
+  { target: "apps", key: "apps" },
 ];
 
 function useTargetRect(targetId: string | null) {
@@ -51,6 +40,7 @@ function useTargetRect(targetId: string | null) {
 }
 
 export function OnboardingTour() {
+  const t = useTranslations("onboarding");
   const step = useVantage((s) => s.tourStep);
   const nextStep = useVantage((s) => s.nextTourStep);
   const endTour = useVantage((s) => s.endTour);
@@ -94,10 +84,10 @@ export function OnboardingTour() {
         style={{ left: Math.min(popLeft, maxLeft), top: popTop }}
       >
         <p className="font-mono text-[10px] font-medium tracking-[1.5px] text-amber">
-          STEP {step + 1} / {STEPS.length}
+          {t("tour.stepCounter", { current: step + 1, total: STEPS.length })}
         </p>
-        <h3 className="mt-2 font-display text-[17px] font-bold text-ink">{current.title}</h3>
-        <p className="mt-2 font-body text-[13px] leading-relaxed text-ink-light">{current.body}</p>
+        <h3 className="mt-2 font-display text-[17px] font-bold text-ink">{t(`tour.${current.key}.title`)}</h3>
+        <p className="mt-2 font-body text-[13px] leading-relaxed text-ink-light">{t(`tour.${current.key}.body`)}</p>
 
         <div className="mt-4 flex items-center justify-between">
           <button
@@ -105,14 +95,14 @@ export function OnboardingTour() {
             onClick={endTour}
             className="font-body text-[12px] text-ink-muted transition-colors hover:text-ink"
           >
-            Skip
+            {t("tour.skip")}
           </button>
           <button
             type="button"
             onClick={nextStep}
             className="inline-flex items-center gap-1.5 rounded-full bg-brown px-4 py-2 font-body text-[13px] font-medium text-paper transition-opacity hover:opacity-90"
           >
-            {step === STEPS.length - 1 ? "Got it" : "Next"}
+            {step === STEPS.length - 1 ? t("tour.gotIt") : t("tour.next")}
             <ArrowRight size={13} strokeWidth={2} />
           </button>
         </div>

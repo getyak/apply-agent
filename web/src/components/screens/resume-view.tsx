@@ -15,17 +15,40 @@
 // chat-driven "build from scratch" flow) remains separately reachable.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import { resumes as resumesApi, files as filesApi } from "@/lib/api";
 import { useDock } from "@/lib/ask-vantage-store";
 import { useVantage } from "@/lib/store";
 import { ResumeChangeLogPanel } from "@/components/studio/resume-change-log-panel";
 
+type ResumeTrack = "original" | "optimized" | "tailored";
+
 type VersionRow = {
   id: string;
   version: number;
   isBase: boolean;
+  // Dual-track model (migration 017 / design §4). `track` decides which rail
+  // section a version sits in; `derivedFrom` points at the version it was
+  // generated from; `sourceFileId` (originals only) is the uploaded file we
+  // render in the Original Pane.
+  track: ResumeTrack;
+  derivedFrom: string | null;
+  sourceFileId: string | null;
   createdAt: string;
+};
+
+type ResumeSuggestion = {
+  id: string;
+  bullet_stable_id: string | null;
+  section: string | null;
+  change_type: string;
+  before_text: string;
+  after_text: string;
+  rationale: string | null;
+  risk_level: "safe" | "needs_review" | "unsupported";
+  status: string;
+  proposed_by: string;
 };
 
 interface JsonResumeBasics {
@@ -83,24 +106,36 @@ interface JsonResume {
   _source?: ResumeSource;
 }
 
-function relativeTime(iso: string): string {
+// Shared translator type — the next-intl `useTranslations("resume")` return
+// value, narrowed to the calls these helpers need.
+type Translate = (key: string, values?: Record<string, string | number>) => string;
+
+function relativeTime(t: Translate, iso: string): string {
   const d = new Date(iso);
   const diff = Date.now() - d.getTime();
   const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return t("time.justNow");
+  if (minutes < 60) return t("time.minutesAgo", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t("time.hoursAgo", { n: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return t("time.daysAgo", { n: days });
   return d
     .toLocaleDateString(undefined, { day: "2-digit", month: "short" })
     .toUpperCase();
 }
 
-function summarizeChange(v: VersionRow): string {
-  if (v.isBase) return "Your master résumé.";
-  return "Tailored variant — branched from master.";
+function summarizeChange(t: Translate, v: VersionRow): string {
+  switch (v.track) {
+    case "original":
+      return t("track.originalSummary");
+    case "optimized":
+      return t("track.optimizedSummary");
+    case "tailored":
+      return t("track.tailoredSummary");
+    default:
+      return "";
+  }
 }
 
 function VantageMark({ size = 14 }: { size?: number }) {
@@ -121,6 +156,7 @@ function VantageMark({ size = 14 }: { size?: number }) {
 }
 
 export function ResumeView() {
+  const t = useTranslations("resume");
   const currentResumeId = useVantage((s) => s.currentResumeId);
   // currentUser is no longer needed here — the dock now owns the
   // resume_studio thread derivation (user_id × résumé_id), so this view
@@ -155,8 +191,17 @@ export function ResumeView() {
   const [baseDoc, setBaseDoc] = useState<JsonResume | null>(null);
   const [baseDocLoading, setBaseDocLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [compareOn, setCompareOn] = useState(false);
+  const [compareOn, setCompareOn] = useState(true); // diff on by default (§5.1)
   const [error, setError] = useState<string | null>(null);
+  // The proposed AI suggestion stack for the current original (design §6).
+  // Rendered as accept/reject cards in the right pane's suggestions panel and
+  // mirrored into the dock. Reloaded whenever the original changes or a
+  // decision lands.
+  const [suggestions, setSuggestions] = useState<ResumeSuggestion[]>([]);
+  const [suggestionsRefresh, setSuggestionsRefresh] = useState(0);
+  // Bumped after a suggestion is accepted (which creates a new optimized
+  // version) so the version list effect re-fetches the rail.
+  const [versionsRefresh, setVersionsRefresh] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -167,7 +212,16 @@ export function ResumeView() {
       .list()
       .then((res) => {
         if (!alive) return;
-        type Row = { id: string; version: number; is_base: boolean; created_at: string };
+        type Row = {
+          id: string;
+          version: number;
+          is_base: boolean;
+          track?: ResumeTrack;
+          derived_from?: string | null;
+          source_file_id?: string | null;
+          tailored_for_job?: string | null;
+          created_at: string;
+        };
         const rows =
           (res as { data?: Row[]; resumes?: Row[] }).data ??
           (res as { resumes?: Row[] }).resumes ??
@@ -177,13 +231,35 @@ export function ResumeView() {
             id: r.id,
             version: r.version,
             isBase: Boolean(r.is_base),
+            // Fall back to deriving track from legacy columns if a row
+            // predates 017's backfill being read here.
+            track: (r.track ??
+              (r.is_base
+                ? "original"
+                : r.tailored_for_job
+                  ? "tailored"
+                  : "optimized")) as ResumeTrack,
+            derivedFrom: r.derived_from ?? null,
+            sourceFileId: r.source_file_id ?? null,
             createdAt: r.created_at,
           }))
           .sort((a, b) => b.version - a.version);
         setVersions(mapped);
-        const initial =
-          currentResumeId ?? mapped.find((r) => r.isBase)?.id ?? mapped[0]?.id ?? null;
-        setSelectedId(initial);
+        // Default selection: prefer the current original (left pane anchor),
+        // then any optimized sibling, then whatever's newest. On a refresh,
+        // keep the user's current selection if it still exists; otherwise
+        // jump to the newest optimized (the one a just-accepted suggestion
+        // created) so the change the user just approved is what they see.
+        setSelectedId((prev) => {
+          if (prev && mapped.some((r) => r.id === prev)) return prev;
+          return (
+            currentResumeId ??
+            mapped.find((r) => r.track === "optimized")?.id ??
+            mapped.find((r) => r.track === "original")?.id ??
+            mapped[0]?.id ??
+            null
+          );
+        });
       })
       .catch((e: Error) => {
         if (!alive) return;
@@ -195,7 +271,7 @@ export function ResumeView() {
     return () => {
       alive = false;
     };
-  }, [currentResumeId]);
+  }, [currentResumeId, versionsRefresh]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -220,15 +296,41 @@ export function ResumeView() {
     () => versions.find((v) => v.id === selectedId) ?? null,
     [versions, selectedId],
   );
-  const masterVersions = useMemo(() => versions.filter((v) => v.isBase), [versions]);
-  const tailoredVariants = useMemo(() => versions.filter((v) => !v.isBase), [versions]);
+  // Three rails (design §5.2). Originals first (the immutable contract),
+  // optimized siblings, then per-JD tailored variants.
+  const originalVersions = useMemo(
+    () => versions.filter((v) => v.track === "original"),
+    [versions],
+  );
+  const optimizedVersions = useMemo(
+    () => versions.filter((v) => v.track === "optimized"),
+    [versions],
+  );
+  const tailoredVersions = useMemo(
+    () => versions.filter((v) => v.track === "tailored"),
+    [versions],
+  );
+  // The Original Pane always anchors on the current (newest) original — that's
+  // the left half of the dual-pane studio (§5.1). Re-uploads create a new
+  // original; the newest wins.
+  const originalVersion = useMemo(
+    () => originalVersions[0] ?? versions.find((v) => v.isBase) ?? null,
+    [originalVersions, versions],
+  );
 
-  // The diff base is the most-recent master version. (Once the API exposes
-  // resumes.parent_version, switch to following that pointer — for now the
-  // most-recent master is a faithful stand-in.)
-  const baseVersionId = useMemo(() => masterVersions[0]?.id ?? null, [masterVersions]);
-  const tailoredAgainstBase =
-    compareOn && currentVersion != null && !currentVersion.isBase && baseVersionId != null;
+  // The diff base is the current original — every derived version diffs
+  // against the upload (§5.1 diff rules).
+  const baseVersionId = useMemo(() => originalVersion?.id ?? null, [originalVersion]);
+  // A derived version (optimized / tailored) is anything that isn't the
+  // selected original itself. Diff against the original is ON by default for
+  // these (§5.1) — `compareOn` just toggles the highlight emphasis; the base
+  // doc still loads so the diff is ready the moment the user flips it on.
+  const isDerivedSelected =
+    currentVersion != null &&
+    currentVersion.track !== "original" &&
+    baseVersionId != null &&
+    currentVersion.id !== baseVersionId;
+  const tailoredAgainstBase = isDerivedSelected;
 
   useEffect(() => {
     let alive = true;
@@ -262,10 +364,57 @@ export function ResumeView() {
     };
   }, [tailoredAgainstBase, baseVersionId]);
 
+  // Load the proposed suggestion stack for the current original. The stack is
+  // keyed on the original (that's the source_resume_id optimize_general writes
+  // against). Re-runs when the original changes or a decision bumps
+  // suggestionsRefresh.
+  useEffect(() => {
+    const originalId = originalVersion?.id;
+    let alive = true;
+    if (!originalId) {
+      queueMicrotask(() => {
+        if (alive) setSuggestions([]);
+      });
+      return () => {
+        alive = false;
+      };
+    }
+    resumesApi
+      .suggestions(originalId, "proposed")
+      .then((res) => {
+        if (!alive) return;
+        setSuggestions((res as { suggestions?: ResumeSuggestion[] }).suggestions ?? []);
+      })
+      .catch(() => {
+        if (alive) setSuggestions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [originalVersion?.id, suggestionsRefresh]);
+
+  // Accept / reject one suggestion inline. On accept the agent materializes it
+  // into a new optimized version; we refetch both the version list and the
+  // remaining suggestions so the rail + panel stay in sync without a reload.
+  async function decideSuggestion(id: string, decision: "accept" | "reject") {
+    try {
+      await resumesApi.decideSuggestion(id, decision, "studio_panel");
+    } catch {
+      // Best-effort UI — a failed decision just leaves the card in place.
+      return;
+    }
+    setSuggestions((prev) => prev.filter((s) => s.id !== id));
+    if (decision === "accept") {
+      // a new optimized version may have been created — refresh the rail
+      setVersionsRefresh((n) => n + 1);
+    }
+    setSuggestionsRefresh((n) => n + 1);
+  }
+
   function askToTailor() {
     const dock = useDock.getState();
     dock.open();
-    dock.setInput("Tailor this résumé for a new role — ");
+    dock.setInput(t("prompt.tailor"));
   }
 
   // "Help me fill the gaps" CTA from the parse-warnings banner. Drops the
@@ -276,11 +425,9 @@ export function ResumeView() {
     dock.open();
     const wlist = warnings.map((w, i) => `${i + 1}. ${w}`).join("\n");
     const rawSnippet = rawText
-      ? `\n\nHere's the resume text I uploaded:\n\n${rawText.slice(0, 4_000)}`
+      ? `\n\n${t("prompt.fillGapsRawHeader")}\n\n${rawText.slice(0, 4_000)}`
       : "";
-    dock.setInput(
-      `My résumé parse left a few gaps. Please ask me one question at a time so we can fill them in:\n\n${wlist}${rawSnippet}`,
-    );
+    dock.setInput(`${t("prompt.fillGapsIntro")}\n\n${wlist}${rawSnippet}`);
   }
 
   // The header "Upload new" button and the no-résumé empty state both fire
@@ -295,7 +442,7 @@ export function ResumeView() {
   function tellDockAboutUpload() {
     const dock = useDock.getState();
     dock.open();
-    dock.setInput("I want to upload a new résumé.");
+    dock.setInput(t("prompt.upload"));
   }
 
   async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
@@ -382,7 +529,7 @@ export function ResumeView() {
       <>
         {sharedChrome}
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span className="ds-mono-10">LOADING RÉSUMÉ…</span>
+          <span className="ds-mono-10">{t("loading")}</span>
         </div>
       </>,
     );
@@ -395,7 +542,7 @@ export function ResumeView() {
         <div style={{ padding: 32 }}>
           <div className="ds-card" style={{ padding: 22, maxWidth: 540 }}>
             <div className="ds-headline-caps" style={{ color: "#A23A2E", marginBottom: 8 }}>
-              COULDN&apos;T LOAD RÉSUMÉ
+              {t("loadError")}
             </div>
             <p className="ds-body-sm">{error}</p>
           </div>
@@ -410,9 +557,9 @@ export function ResumeView() {
         {sharedChrome}
         <div style={{ padding: 32 }}>
           <div className="ds-card" style={{ padding: 28, maxWidth: 540 }}>
-            <div className="ds-headline-caps" style={{ marginBottom: 8 }}>NO RÉSUMÉ YET</div>
+            <div className="ds-headline-caps" style={{ marginBottom: 8 }}>{t("empty.title")}</div>
             <p className="ds-body-sm" style={{ marginBottom: 18 }}>
-              Upload one, or build one by talking to Vantage.
+              {t("empty.body")}
             </p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
@@ -429,7 +576,7 @@ export function ResumeView() {
                   fontSize: 14,
                 }}
               >
-                Upload a file
+                {t("empty.uploadCta")}
               </button>
               <button
                 onClick={tellDockAboutUpload}
@@ -445,7 +592,7 @@ export function ResumeView() {
                   fontSize: 14,
                 }}
               >
-                Talk it through with Vantage
+                {t("empty.talkCta")}
               </button>
             </div>
           </div>
@@ -493,10 +640,14 @@ export function ResumeView() {
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: "#2B2822", lineHeight: 1.15 }}>
-            {currentVersion?.isBase ? "Master résumé" : "Tailored variant"}
+            {currentVersion?.track === "original"
+              ? t("header.original")
+              : currentVersion?.track === "tailored"
+                ? t("header.tailored")
+                : t("header.optimized")}
           </div>
           <div className="ds-mono-10">
-            VERSION {currentVersion?.version ?? "—"} · {currentVersion ? relativeTime(currentVersion.createdAt) : ""}
+            {t("header.version", { v: currentVersion?.version ?? "—" })} · {currentVersion ? relativeTime(t, currentVersion.createdAt) : ""}
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 11 }}>
@@ -519,7 +670,7 @@ export function ResumeView() {
             }}
           >
             <span style={{ width: 6, height: 6, borderRadius: 999, background: "#4C7A3F" }} />
-            Saved
+            {t("header.saved")}
           </span>
           <button
             onClick={() => setCompareOn((v) => !v)}
@@ -531,28 +682,28 @@ export function ResumeView() {
             // not the fact that they just turned a *mode* on or off.
             // (Round-5 a11y audit, WCAG 2.1 AA § 1.3.1.)
             aria-pressed={compareOn}
-            aria-label={compareOn ? "Exit compare mode" : "Enter compare mode"}
+            aria-label={compareOn ? t("header.exitCompareAria") : t("header.enterCompareAria")}
           >
             <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 3v18" />
               <path d="M5 7l-2 2 2 2M19 7l2 2-2 2" />
               <path d="M3 9h6M15 9h6" />
             </svg>
-            {compareOn ? "Exit compare" : "Compare"}
+            {compareOn ? t("header.exitCompare") : t("header.compare")}
           </button>
           <button onClick={askToUpload} style={chromeBtnStyle(false)}>
             <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 16V4M6 10l6-6 6 6" />
               <path d="M4 20h16" />
             </svg>
-            Upload new
+            {t("header.uploadNew")}
           </button>
           <button onClick={exportResume} style={chromeBtnStyle(false)}>
             <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <path d="M7 10l5 5 5-5M12 15V3" />
             </svg>
-            Export
+            {t("header.export")}
           </button>
         </div>
       </div>
@@ -565,33 +716,55 @@ export function ResumeView() {
       ) : null}
       <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
         <VersionRail
-          versions={masterVersions}
-          variants={tailoredVariants}
+          originals={originalVersions}
+          optimized={optimizedVersions}
+          tailored={tailoredVersions}
           selectedId={selectedId}
-          onSelect={(id) => {
-            setSelectedId(id);
-            setCompareOn(false);
-          }}
+          onSelect={(id) => setSelectedId(id)}
           onTailorPrompt={askToTailor}
         />
-        <DocumentPane
-          basics={basics}
-          contact={contact}
-          work={doc.work ?? []}
-          skills={doc.skills ?? []}
-          education={doc.education ?? []}
-          rawText={doc._raw ?? null}
-          viewMode={viewMode}
-          showAITouchedLabel={!currentVersion?.isBase}
-          compareOn={compareOn}
-          baseDoc={tailoredAgainstBase ? baseDoc : null}
-          baseDocLoading={tailoredAgainstBase && baseDocLoading}
-          baseVersionLabel={
-            tailoredAgainstBase && masterVersions[0]
-              ? `v${masterVersions[0].version}`
-              : null
-          }
+        {/* Original Pane (left) — the immutable upload, always present (§5.1).
+            It renders the real uploaded file (PDF iframe / DOCX→PDF / raw
+            markdown), not the JSON-Resume reflow, so the user's first
+            impression is "my résumé, untouched". */}
+        <OriginalPane
+          original={originalVersion}
+          originalDoc={originalVersion?.id === selectedId ? doc : baseDoc}
         />
+        {/* Derived Pane (right) — the selected optimized/tailored version with
+            diff highlights vs the original, plus the AI suggestion panel.
+            Hidden only when the user is looking at the original itself. */}
+        {currentVersion && currentVersion.track !== "original" ? (
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #EDE8DF" }}>
+            <SuggestionsPanel suggestions={suggestions} onDecide={decideSuggestion} />
+            <DocumentPane
+              basics={basics}
+              contact={contact}
+              work={doc.work ?? []}
+              skills={doc.skills ?? []}
+              education={doc.education ?? []}
+              rawText={doc._raw ?? null}
+              viewMode={viewMode}
+              showAITouchedLabel={true}
+              compareOn={compareOn}
+              baseDoc={tailoredAgainstBase ? baseDoc : null}
+              baseDocLoading={tailoredAgainstBase && baseDocLoading}
+              baseVersionLabel={
+                tailoredAgainstBase && originalVersion
+                  ? `v${originalVersion.version}`
+                  : null
+              }
+            />
+          </div>
+        ) : (
+          // Original selected → show the suggestion panel beside the original
+          // so the user can act on AI proposals without leaving the upload.
+          suggestions.length > 0 ? (
+            <div style={{ width: 380, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #EDE8DF" }}>
+              <SuggestionsPanel suggestions={suggestions} onDecide={decideSuggestion} />
+            </div>
+          ) : null
+        )}
       </div>
       <ResumeChangeLogSection currentVersion={currentVersion} />
       {doc?._source && sourceOpen ? (
@@ -633,6 +806,208 @@ function ResumeChangeLogSection({
   );
 }
 
+// Original Pane (design §5.1) — renders the user's uploaded file with its real
+// layout. PDF / DOCX go through an inline preview URL (DOCX is server-converted
+// to PDF, cached); markdown / text / unavailable degrade to the raw extracted
+// text. This is the left half of the dual-pane studio and the heart of the
+// "your upload is a contract" promise.
+function OriginalPane({
+  original,
+  originalDoc,
+}: {
+  original: VersionRow | null;
+  originalDoc: JsonResume | null;
+}) {
+  const t = useTranslations("resume");
+  const fileId = original?.sourceFileId ?? originalDoc?._source?.fileId ?? null;
+  const rawText = originalDoc?._raw ?? null;
+  type Preview = { loading: boolean; url: string | null; available: boolean };
+  const [preview, setPreview] = useState<Preview>({ loading: true, url: null, available: false });
+
+  useEffect(() => {
+    let alive = true;
+    if (!fileId) {
+      queueMicrotask(() => {
+        if (alive) setPreview({ loading: false, url: null, available: false });
+      });
+      return () => {
+        alive = false;
+      };
+    }
+    queueMicrotask(() => {
+      if (alive) setPreview({ loading: true, url: null, available: false });
+    });
+    filesApi
+      .preview(fileId)
+      .then((res) => {
+        if (!alive) return;
+        setPreview({ loading: false, url: res.url ?? null, available: Boolean(res.available && res.url) });
+      })
+      .catch(() => {
+        if (alive) setPreview({ loading: false, url: null, available: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [fileId]);
+
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "#F3EFE9" }}>
+      <div
+        style={{
+          flexShrink: 0,
+          padding: "10px 18px",
+          borderBottom: "1px solid #E4DCCE",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span className="ds-mono-10" style={{ color: "#6B6560" }}>{t("originalPane.label")}</span>
+        <span className="ds-caption" style={{ color: "#A39F99" }}>
+          {originalDoc?._source?.fileName ?? t("originalPane.uploadedFallback")}
+        </span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: preview.available ? 0 : 22 }}>
+        {!original ? (
+          <div className="ds-caption" style={{ color: "#A39F99" }}>{t("originalPane.none")}</div>
+        ) : preview.loading ? (
+          <div className="ds-mono-10" style={{ color: "#A39F99", padding: 8 }}>{t("originalPane.loading")}</div>
+        ) : preview.available && preview.url ? (
+          <iframe
+            title={t("originalPane.iframeTitle")}
+            src={preview.url}
+            style={{ width: "100%", height: "100%", border: "none", background: "#FFFFFF" }}
+          />
+        ) : rawText ? (
+          // Markdown / text / DOCX-without-converter → show the extracted text
+          // verbatim (the layout we have), preserving paragraph breaks.
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: "Inter",
+              fontSize: 13,
+              lineHeight: 1.55,
+              color: "#3a352e",
+              margin: 0,
+            }}
+          >
+            {rawText}
+          </pre>
+        ) : (
+          <div className="ds-caption" style={{ color: "#A39F99" }}>
+            {t("originalPane.unavailable")}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Suggestions panel (design §6.3) — accept/reject cards for the proposed AI
+// suggestion stack. Lives at the top of the right (Derived) pane and beside the
+// original. Mirrors what the dock shows; deciding here calls the same endpoint.
+function SuggestionsPanel({
+  suggestions,
+  onDecide,
+}: {
+  suggestions: ResumeSuggestion[];
+  onDecide: (id: string, decision: "accept" | "reject") => void;
+}) {
+  const t = useTranslations("resume");
+  if (suggestions.length === 0) return null;
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        maxHeight: "42%",
+        overflowY: "auto",
+        borderBottom: "1px solid #EDE8DF",
+        background: "#FFFBF4",
+        padding: "14px 18px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span className="ds-mono-10" style={{ color: "#5D3000" }}>
+          {t("suggestions.count", { count: suggestions.length })}
+        </span>
+        <span className="ds-caption" style={{ color: "#A39F99" }}>
+          {t("suggestions.subtitle")}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {suggestions.map((s) => (
+          <div key={s.id} className="ds-card" style={{ padding: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+              <span className="ds-mono-10" style={{ color: "#6B6560" }}>{s.change_type}</span>
+              {s.risk_level === "needs_review" ? (
+                <span
+                  style={{
+                    fontFamily: "JetBrains Mono",
+                    fontSize: 8,
+                    letterSpacing: 0.6,
+                    textTransform: "uppercase",
+                    color: "#A66A00",
+                    background: "#FBEFD8",
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                  }}
+                >
+                  {t("suggestions.needsReview")}
+                </span>
+              ) : null}
+            </div>
+            <div className="ds-body-sm" style={{ fontSize: 12.5, color: "#A39F99", textDecoration: "line-through", marginBottom: 4 }}>
+              {s.before_text}
+            </div>
+            <div className="ds-body-sm" style={{ fontSize: 13, color: "#2B2822", marginBottom: 6 }}>
+              {s.after_text}
+            </div>
+            {s.rationale ? (
+              <div className="ds-caption" style={{ color: "#6B6560", marginBottom: 8 }}>{s.rationale}</div>
+            ) : null}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => onDecide(s.id, "accept")}
+                style={{
+                  cursor: "pointer",
+                  border: "1px solid #4C7A3F",
+                  background: "#4C7A3F",
+                  color: "#FFFFFF",
+                  fontFamily: "Inter",
+                  fontWeight: 600,
+                  fontSize: 12,
+                  padding: "5px 12px",
+                  borderRadius: 8,
+                }}
+              >
+                {t("suggestions.accept")}
+              </button>
+              <button
+                onClick={() => onDecide(s.id, "reject")}
+                style={{
+                  cursor: "pointer",
+                  border: "1px solid #D6CEC0",
+                  background: "#FFFFFF",
+                  color: "#6B6560",
+                  fontFamily: "Inter",
+                  fontWeight: 600,
+                  fontSize: 12,
+                  padding: "5px 12px",
+                  borderRadius: 8,
+                }}
+              >
+                {t("suggestions.reject")}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function chromeBtnStyle(active: boolean): React.CSSProperties {
   return {
     cursor: "pointer",
@@ -651,119 +1026,139 @@ function chromeBtnStyle(active: boolean): React.CSSProperties {
   };
 }
 
+// Three-section rail (design §5.2): Original (immutable upload) / Optimized
+// (AI siblings) / Tailored (per-JD). Each row is the same shape; the section
+// header gives it context. Selecting a row drives the right-hand Derived Pane.
 function VersionRail({
-  versions,
-  variants,
+  originals,
+  optimized,
+  tailored,
   selectedId,
   onSelect,
   onTailorPrompt,
 }: {
-  versions: VersionRow[];
-  variants: VersionRow[];
+  originals: VersionRow[];
+  optimized: VersionRow[];
+  tailored: VersionRow[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onTailorPrompt: () => void;
 }) {
+  const t = useTranslations("resume");
   return (
     <aside
       style={{
-        width: 312,
+        width: 280,
         flexShrink: 0,
         borderRight: "1px solid #EDE8DF",
         background: "#FBF8F3",
         overflowY: "auto",
-        padding: "24px 18px",
+        padding: "22px 16px",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 6px", marginBottom: 6 }}>
-        <span className="ds-label" style={{ color: "#6B6560" }}>VERSION HISTORY</span>
-        <span className="ds-mono-10">{versions.length} SAVED</span>
-      </div>
-      <div className="ds-caption" style={{ padding: "0 6px 14px", color: "#A39F99" }}>
-        Every change is kept. Open any point to view it, compare, or restore.
-      </div>
+      <RailSection
+        label={t("rail.original.label")}
+        caption={t("rail.original.caption")}
+        rows={originals}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        labelFor={(v, i) =>
+          i === 0 ? t("rail.original.current", { v: v.version }) : `v${v.version}`
+        }
+      />
 
-      <div style={{ position: "relative", paddingLeft: 4 }}>
-        {versions.map((v) => {
-          const isCurrent = v.id === selectedId;
-          return (
-            <button
-              key={v.id}
-              onClick={() => onSelect(v.id)}
-              style={railRowStyle(isCurrent)}
-              // A11Y1 (round-6): announce which row is the active version
-              // to screen readers. railRowStyle paints the visual cue;
-              // aria-current="true" is the semantic equivalent so SR users
-              // learn from the rail what sighted users learn from the
-              // background colour (WCAG 2.1 AA § 1.3.1 / § 4.1.2).
-              aria-current={isCurrent ? "true" : undefined}
-              onMouseEnter={(e) => {
-                if (!isCurrent) e.currentTarget.style.background = "#F5EDE3";
-              }}
-              onMouseLeave={(e) => {
-                if (!isCurrent) e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <div style={{ position: "relative", width: 13, flexShrink: 0, display: "flex", justifyContent: "center", paddingTop: 4 }}>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: 6,
-                    top: 14,
-                    bottom: -16,
-                    width: 1,
-                    background: "#E2DACB",
-                  }}
-                />
-                <span
-                  style={{
-                    width: 9,
-                    height: 9,
-                    borderRadius: 999,
-                    background: isCurrent ? "#5D3000" : "#FFFFFF",
-                    border: `2px solid ${isCurrent ? "#5D3000" : "#D6CEC0"}`,
-                    zIndex: 1,
-                  }}
-                />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                  <span style={{ fontFamily: "JetBrains Mono", fontWeight: 500, fontSize: 12, color: "#2B2822" }}>
-                    v{v.version}
-                  </span>
-                  <span className="ds-mono-10">{relativeTime(v.createdAt)}</span>
-                  {isCurrent && (
-                    <span
-                      style={{
-                        fontFamily: "JetBrains Mono",
-                        fontSize: 8,
-                        letterSpacing: 0.6,
-                        textTransform: "uppercase",
-                        color: "#FAF8F6",
-                        background: "#4C7A3F",
-                        padding: "2px 6px",
-                        borderRadius: 4,
-                      }}
-                    >
-                      Current
-                    </span>
-                  )}
-                </div>
-                <div className="ds-body-sm" style={{ fontSize: 12.5, color: "#3a352e", marginBottom: 7 }}>
-                  {summarizeChange(v)}
-                </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      <RailSection
+        label={t("rail.optimized.label")}
+        caption={t("rail.optimized.caption")}
+        rows={optimized}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        labelFor={(v) => `v${v.version}`}
+        emptyHint={t("rail.optimized.emptyHint")}
+      />
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 6px", margin: "26px 0 4px" }}>
+      <RailSection
+        label={t("rail.tailored.label")}
+        caption={t("rail.tailored.caption")}
+        rows={tailored}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        labelFor={(v) => t("rail.tailored.rowLabel", { v: v.version })}
+      />
+
+      <button
+        onClick={onTailorPrompt}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          width: "100%",
+          border: "1px dashed #D6CEC0",
+          background: "transparent",
+          borderRadius: 11,
+          padding: 11,
+          marginTop: 10,
+          cursor: "pointer",
+          fontFamily: "Inter",
+          fontWeight: 500,
+          fontSize: 12.5,
+          color: "#6B6560",
+          transition: "all .14s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#5D3000";
+          e.currentTarget.style.color = "#5D3000";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "#D6CEC0";
+          e.currentTarget.style.color = "#6B6560";
+        }}
+      >
+        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        {t("rail.tailorCta")}
+      </button>
+
+      <div style={{ marginTop: 22, padding: 13, background: "#FFFBF4", border: "1px solid #E8DCCA", borderRadius: 11 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+          <div style={{ width: 22, height: 22, borderRadius: 6, background: "#5D3000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <VantageMark size={13} />
+          </div>
+          <span className="ds-mono-10" style={{ color: "#5D3000" }}>{t("rail.editWithVantage")}</span>
+        </div>
+        <p className="ds-body-sm" style={{ fontSize: 12.5, color: "#6B6560", margin: 0 }}>
+          {t("rail.editHint")}
+        </p>
+      </div>
+    </aside>
+  );
+}
+
+function RailSection({
+  label,
+  caption,
+  rows,
+  selectedId,
+  onSelect,
+  labelFor,
+  emptyHint,
+}: {
+  label: string;
+  caption: string;
+  rows: VersionRow[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  labelFor: (v: VersionRow, index: number) => string;
+  emptyHint?: string;
+}) {
+  const t = useTranslations("resume");
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px", marginBottom: 3 }}>
         <span
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
             fontFamily: "Space Grotesk",
             fontWeight: 700,
             fontSize: 10,
@@ -772,121 +1167,57 @@ function VersionRail({
             color: "#6B6560",
           }}
         >
-          <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="#A66A00" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-            <circle cx={6} cy={6} r={3} />
-            <circle cx={6} cy={18} r={3} />
-            <path d="M6 9v6M18 6a3 3 0 0 1-3 3H9" />
-            <circle cx={18} cy={6} r={3} />
-          </svg>
-          TAILORED VARIANTS
+          {label}
         </span>
-        <span className="ds-mono-10">{variants.length}</span>
+        <span className="ds-mono-10">{rows.length}</span>
       </div>
-      <div className="ds-caption" style={{ padding: "0 6px 12px", color: "#A39F99" }}>
-        Branches off your master, tuned per role.
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {variants.map((v) => (
+      <div className="ds-caption" style={{ padding: "0 4px 8px", color: "#A39F99" }}>{caption}</div>
+      {rows.length === 0 && emptyHint ? (
+        <div className="ds-caption" style={{ padding: "2px 4px 4px", color: "#C2BBB0", fontStyle: "italic" }}>
+          {emptyHint}
+        </div>
+      ) : null}
+      {rows.map((v, i) => {
+        const isCurrent = v.id === selectedId;
+        return (
           <button
             key={v.id}
             onClick={() => onSelect(v.id)}
-            className="ds-card"
-            style={{ cursor: "pointer", padding: 12, textAlign: "left", transition: "border-color .14s" }}
-            // A11Y1 (round-6): same aria-current contract as the master
-            // rail above — the active variant card is visually highlighted
-            // by the ds-card hover style; SR users need the semantic flag.
-            aria-current={v.id === selectedId ? "true" : undefined}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#D6CEC0")}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#EDE8DF")}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9 }}>
-              <div
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 8,
-                  background: "#F3F0EB",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "Space Grotesk",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  color: "#2B2822",
-                  flexShrink: 0,
-                }}
-              >
-                v{v.version}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13, color: "#2B2822", lineHeight: 1.2 }}>
-                  Tailored — v{v.version}
-                </div>
-                <div className="ds-mono-10">FROM MASTER · {relativeTime(v.createdAt)}</div>
-              </div>
-            </div>
-            <div className="ds-body-sm" style={{ fontSize: 12, color: "#6B6560" }}>
-              Summary, skills, or bullets reshaped for one role.
-            </div>
-          </button>
-        ))}
-        <button
-          onClick={onTailorPrompt}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            border: "1px dashed #D6CEC0",
-            background: "transparent",
-            borderRadius: 11,
-            padding: 12,
-            cursor: "pointer",
-            fontFamily: "Inter",
-            fontWeight: 500,
-            fontSize: 12.5,
-            color: "#6B6560",
-            transition: "all .14s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = "#5D3000";
-            e.currentTarget.style.color = "#5D3000";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = "#D6CEC0";
-            e.currentTarget.style.color = "#6B6560";
-          }}
-        >
-          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          Tailor for a new role
-        </button>
-      </div>
-
-      <div style={{ marginTop: 26, padding: 14, background: "#FFFBF4", border: "1px solid #E8DCCA", borderRadius: 11 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <div
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 6,
-              background: "#5D3000",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+            style={railRowStyle(isCurrent)}
+            aria-current={isCurrent ? "true" : undefined}
+            onMouseEnter={(e) => {
+              if (!isCurrent) e.currentTarget.style.background = "#F5EDE3";
+            }}
+            onMouseLeave={(e) => {
+              if (!isCurrent) e.currentTarget.style.background = "transparent";
             }}
           >
-            <VantageMark size={13} />
-          </div>
-          <span className="ds-mono-10" style={{ color: "#5D3000" }}>EDIT WITH VANTAGE</span>
-        </div>
-        <p className="ds-body-sm" style={{ fontSize: 12.5, color: "#6B6560", margin: 0 }}>
-          Use the dock to refine, tailor, or rewrite. Vantage saves a new version every time.
-        </p>
-      </div>
-    </aside>
+            <div style={{ position: "relative", width: 13, flexShrink: 0, display: "flex", justifyContent: "center", paddingTop: 4 }}>
+              <span
+                style={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: 999,
+                  background: isCurrent ? "#5D3000" : "#FFFFFF",
+                  border: `2px solid ${isCurrent ? "#5D3000" : "#D6CEC0"}`,
+                }}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                <span style={{ fontFamily: "JetBrains Mono", fontWeight: 500, fontSize: 12, color: "#2B2822" }}>
+                  {labelFor(v, i)}
+                </span>
+                <span className="ds-mono-10">{relativeTime(t, v.createdAt)}</span>
+              </div>
+              <div className="ds-body-sm" style={{ fontSize: 12, color: "#6B6560" }}>
+                {summarizeChange(t, v)}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -973,6 +1304,7 @@ function DocumentPane({
   baseDocLoading: boolean;
   baseVersionLabel: string | null;
 }) {
+  const t = useTranslations("resume");
   // Structured-empty: the parse succeeded technically (no error, no warnings
   // visible) but every section the document pane knows how to render is
   // empty. Falling through to the regular render path here would produce a
@@ -1036,17 +1368,17 @@ function DocumentPane({
             <div style={{ flex: 1 }}>
               <div className="ds-body-sm" style={{ fontWeight: 600, color: "#2B2822" }}>
                 {diffOn
-                  ? `Compare mode — diff vs master ${baseVersionLabel ?? ""}`.trim()
+                  ? t("compare.diffTitle", { v: baseVersionLabel ?? "" }).trim()
                   : baseDocLoading
-                    ? "Compare mode — loading master version…"
-                    : "Compare mode"}
+                    ? t("compare.loadingTitle")
+                    : t("compare.title")}
               </div>
               <div className="ds-body-sm" style={{ color: "#6B6560", marginTop: 1 }}>
                 {diffOn
-                  ? "AI-tailored segments are highlighted in coral. Anything unchanged is your master résumé."
+                  ? t("compare.diffBody")
                   : baseDocLoading
-                    ? "Pulling your master résumé so we can mark what changed."
-                    : "Open a tailored variant to see what AI added vs your master."}
+                    ? t("compare.loadingBody")
+                    : t("compare.body")}
               </div>
             </div>
           </div>
@@ -1060,13 +1392,13 @@ function DocumentPane({
           ) : (
           <>
           <div style={{ marginBottom: 24, paddingBottom: 22, borderBottom: "1px solid #EDE8DF" }}>
-            <h1 className="ds-h1" style={{ margin: "0 0 4px" }}>{basics.name ?? "Your résumé"}</h1>
+            <h1 className="ds-h1" style={{ margin: "0 0 4px" }}>{basics.name ?? t("doc.nameFallback")}</h1>
             <div className="ds-body-md" style={{ color: "#6B6560" }}>{basics.label ?? ""}</div>
             <div className="ds-mono-11" style={{ color: "#A39F99", marginTop: 7 }}>{contact}</div>
           </div>
 
           {basics.summary && (
-            <Section title="SUMMARY">
+            <Section title={t("doc.summary")}>
               <p className="ds-body-sm" style={{ fontSize: 14, lineHeight: 1.65, color: "#3a352e", margin: 0 }}>
                 {diffOn
                   ? tokenise(basics.summary).map((seg, i, arr) => (
@@ -1084,7 +1416,7 @@ function DocumentPane({
 
           {work.length > 0 && (
             <Section
-              title="EXPERIENCE"
+              title={t("doc.experience")}
               trailing={
                 showAITouchedLabel ? (
                   <span
@@ -1099,7 +1431,7 @@ function DocumentPane({
                       borderRadius: 4,
                     }}
                   >
-                    AI · outcome-led
+                    {t("aiOutcomeLed")}
                   </span>
                 ) : null
               }
@@ -1159,7 +1491,7 @@ function DocumentPane({
           )}
 
           {skills.length > 0 && (
-            <Section title="SKILLS">
+            <Section title={t("doc.skills")}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {skills.flatMap((s) => s.keywords ?? [s.name ?? ""]).filter(Boolean).map((sk, i) => {
                   const added = isSkillAdded(sk);
@@ -1187,7 +1519,7 @@ function DocumentPane({
           )}
 
           {education.length > 0 && (
-            <Section title="EDUCATION" last>
+            <Section title={t("doc.education")} last>
               {education.map((e, i) => (
                 <div key={i} className="ds-body-sm" style={{ fontSize: 14, marginBottom: i === education.length - 1 ? 0 : 8 }}>
                   {[e.studyType, e.area].filter(Boolean).join(", ")} · {e.institution}
@@ -1211,6 +1543,7 @@ function DocumentPane({
  * the parse-warnings banner above is how the user moves forward from here.
  */
 function RawTextFallback({ text }: { text: string }) {
+  const t = useTranslations("resume");
   // Split on blank lines so paragraph shape survives. Single line breaks
   // inside a paragraph are preserved via `whiteSpace: "pre-wrap"` below.
   const paragraphs = text
@@ -1246,12 +1579,10 @@ function RawTextFallback({ text }: { text: string }) {
           <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
           </svg>
-          Couldn&apos;t structure — here&apos;s what we saw
+          {t("rawFallback.badge")}
         </div>
         <div className="ds-body-sm" style={{ color: "#6B6560", fontSize: 13, lineHeight: 1.55 }}>
-          Vantage saved your upload, but the AI couldn&apos;t map it into résumé
-          fields. The original text is below — use Ask Vantage to walk through it
-          section by section, or upload a cleaner file.
+          {t("rawFallback.body")}
         </div>
       </div>
       <div
@@ -1288,7 +1619,7 @@ function RawTextFallback({ text }: { text: string }) {
               fontStyle: "italic",
             }}
           >
-            (Empty file — no text could be extracted.)
+            {t("rawFallback.empty")}
           </p>
         )}
       </div>
@@ -1313,6 +1644,7 @@ function ParseProgressBanner({
   onTellDock: () => void;
   onRetry: () => void;
 }) {
+  const t = useTranslations("resume");
   // Idle + no error → render nothing. Lets the chrome stay quiet between
   // uploads while preserving the slot for status when a job is live.
   if (status === "idle" && !error) return null;
@@ -1328,10 +1660,10 @@ function ParseProgressBanner({
       : { bg: "var(--color-gold-bg)", border: "var(--color-cream-border)", text: "var(--color-amber)" };
 
   const label = isFailed
-    ? "Parsing failed"
+    ? t("parse.failed")
     : isDone
-      ? "Parsing complete"
-      : "Parsing résumé…";
+      ? t("parse.complete")
+      : t("parse.running");
 
   // Clamp the progress so a misbehaving backend never pushes the bar off
   // the end of the track.
@@ -1424,7 +1756,7 @@ function ParseProgressBanner({
               marginTop: 1,
             }}
           >
-            Saved as a new version. Open the timeline on the left to review.
+            {t("parse.doneDetail")}
           </div>
         )}
       </div>
@@ -1436,14 +1768,14 @@ function ParseProgressBanner({
               onClick={onRetry}
               style={chromeBtnStyle(false)}
             >
-              Try another file
+              {t("parse.tryAnother")}
             </button>
             <button
               type="button"
               onClick={onTellDock}
               style={chromeBtnStyle(false)}
             >
-              Ask Vantage
+              {t("parse.askVantage")}
             </button>
           </>
         )}
@@ -1451,7 +1783,7 @@ function ParseProgressBanner({
           <button
             type="button"
             onClick={onDismiss}
-            aria-label="Dismiss"
+            aria-label={t("parse.dismissAria")}
             style={{
               cursor: "pointer",
               border: "none",
@@ -1463,7 +1795,7 @@ function ParseProgressBanner({
               padding: "4px 8px",
             }}
           >
-            DISMISS
+            {t("parse.dismiss")}
           </button>
         )}
       </div>
@@ -1546,6 +1878,7 @@ function ParseWarningsBanner({
   warnings: string[];
   onAsk: () => void;
 }) {
+  const t = useTranslations("resume");
   return (
     <div
       style={{
@@ -1578,7 +1911,7 @@ function ParseWarningsBanner({
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 13.5, color: "#5D3000", lineHeight: 1.3 }}>
-          AI couldn&apos;t fully structure your résumé — your text is saved as v1.
+          {t("warnings.title")}
         </div>
         <ul
           style={{
@@ -1606,7 +1939,7 @@ function ParseWarningsBanner({
           ))}
           {warnings.length > 3 ? (
             <li className="ds-mono-10" style={{ color: "#A66A00", marginTop: 2 }}>
-              + {warnings.length - 3} more
+              {t("warnings.more", { n: warnings.length - 3 })}
             </li>
           ) : null}
         </ul>
@@ -1636,7 +1969,7 @@ function ParseWarningsBanner({
           e.currentTarget.style.background = "#FFFFFF";
         }}
       >
-        Help me fill the gaps →
+        {t("warnings.fillCta")}
       </button>
     </div>
   );
@@ -1663,6 +1996,7 @@ function SourceChip({
   source: ResumeSource;
   onClick: () => void;
 }) {
+  const t = useTranslations("resume");
   return (
     <button
       type="button"
@@ -1697,7 +2031,7 @@ function SourceChip({
         <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
       </svg>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        Source · {source.fileName}
+        {t("source.chip", { name: source.fileName })}
       </span>
       <span className="ds-mono-10" style={{ color: "#A39F99" }}>
         {formatBytes(source.sizeBytes)}
@@ -1715,6 +2049,7 @@ function SourceDrawer({
   onClose: () => void;
   onReplace: () => void;
 }) {
+  const t = useTranslations("resume");
   // Combine the three async-status fields into one slice so we can reset them
   // with a single setState during the effect body — React 19's hook rules flag
   // multiple synchronous setStates as cascading renders.
@@ -1739,9 +2074,7 @@ function SourceDrawer({
         setDownload({
           url: null,
           loading: false,
-          error:
-            e.message ||
-            "Couldn't fetch the original — the file may have been removed or storage is offline.",
+          error: e.message || t("source.fetchError"),
         });
       });
     return () => {
@@ -1762,7 +2095,7 @@ function SourceDrawer({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Source file"
+      aria-label={t("source.drawerAria")}
       style={{
         position: "fixed",
         inset: 0,
@@ -1834,7 +2167,7 @@ function SourceDrawer({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("source.closeAria")}
             style={{
               border: "1px solid #D6CEC0",
               background: "#FFFFFF",
@@ -1847,7 +2180,7 @@ function SourceDrawer({
               cursor: "pointer",
             }}
           >
-            CLOSE
+            {t("source.close")}
           </button>
         </header>
 
@@ -1880,26 +2213,26 @@ function SourceDrawer({
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <path d="M7 10l5 5 5-5M12 15V3" />
             </svg>
-            Download original
+            {t("source.download")}
           </a>
           <button type="button" onClick={onReplace} style={chromeBtnStyle(false)}>
             <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 16V4M6 10l6-6 6 6" />
               <path d="M4 20h16" />
             </svg>
-            Replace with a new file
+            {t("source.replace")}
           </button>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, padding: 18, overflow: "auto" }}>
           {loading ? (
             <div style={{ padding: 32, color: "#6B6560" }}>
-              <span className="ds-mono-10">FETCHING SIGNED URL…</span>
+              <span className="ds-mono-10">{t("source.fetching")}</span>
             </div>
           ) : error ? (
             <div className="ds-card" style={{ padding: 18 }}>
               <div className="ds-headline-caps" style={{ color: "#A23A2E", marginBottom: 6 }}>
-                COULDN&apos;T LOAD PREVIEW
+                {t("source.previewError")}
               </div>
               <p className="ds-body-sm" style={{ margin: 0 }}>
                 {error}
@@ -1921,11 +2254,10 @@ function SourceDrawer({
           ) : (
             <div className="ds-card" style={{ padding: 18 }}>
               <div className="ds-headline-caps" style={{ marginBottom: 6 }}>
-                PREVIEW NOT SUPPORTED
+                {t("source.previewUnsupported")}
               </div>
               <p className="ds-body-sm" style={{ margin: "0 0 10px" }}>
-                Inline preview only works for PDFs. Use the download button above
-                to open the original in your editor.
+                {t("source.previewUnsupportedBody")}
               </p>
             </div>
           )}
@@ -1944,6 +2276,7 @@ function ViewModeTabs({
   value: "document" | "extracted";
   onChange: (v: "document" | "extracted") => void;
 }) {
+  const t = useTranslations("resume");
   // Segmented control matching the document chrome's tonal range. Two segments
   // only: "Document" is the canonical structured view, "Extracted" shows the
   // raw Markdown / text the parser saw. The Source PDF lives in the drawer
@@ -1951,7 +2284,7 @@ function ViewModeTabs({
   return (
     <div
       role="tablist"
-      aria-label="Document view mode"
+      aria-label={t("viewMode.tablistAria")}
       style={{
         display: "inline-flex",
         background: "#F3F0EB",
@@ -1983,7 +2316,7 @@ function ViewModeTabs({
               transition: "background .14s, color .14s",
             }}
           >
-            {mode === "document" ? "Document" : "Extracted"}
+            {mode === "document" ? t("viewMode.document") : t("viewMode.extracted")}
           </button>
         );
       })}
@@ -1998,6 +2331,7 @@ function ViewModeTabs({
  * without having to leave Resume Studio (or open the original PDF).
  */
 function ExtractedView({ text }: { text: string }) {
+  const t = useTranslations("resume");
   // Heuristic: if the text contains an ATX heading or any list/bold marker
   // we treat it as Markdown. The upload pipeline emits Markdown (markdown.ts
   // → bytesToMarkdown) so for files this is almost always true; pasted plain
@@ -2025,12 +2359,12 @@ function ExtractedView({ text }: { text: string }) {
             borderRadius: 6,
           }}
         >
-          EXTRACTED · WHAT THE PARSER SAW
+          {t("extracted.badge")}
         </span>
         <span className="ds-body-sm" style={{ color: "#6B6560", fontSize: 12.5 }}>
           {looksMarkdown
-            ? "Rendered from the upload's Markdown middle state."
-            : "Plain text — no Markdown structure detected."}
+            ? t("extracted.markdownHint")
+            : t("extracted.plainHint")}
         </span>
       </div>
       {looksMarkdown ? (

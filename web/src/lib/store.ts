@@ -245,10 +245,23 @@ export const MOCK_QS: MockQ[] = [
 
 export const MOCK_PROGRESS_LABELS = ["Proudest project", "Disagreement with eng", "Why Stripe", "A failure", "Growth areas"];
 
+// A staged chat attachment. Mirrors the dock's DockAttachment but widens
+// `kind` to include images — the chat composer uploads via
+// /api/files/attachment which (unlike the résumé route) accepts PNG/JPG/etc.
+export interface ChatAttachment {
+  id: string; // file id returned by POST /api/files/attachment
+  name: string; // original filename, for chip + accessibility label
+  sizeBytes: number;
+  kind: "pdf" | "docx" | "text" | "image";
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   agent?: string;
+  // Files the user attached to this turn (user messages only). Rendered as
+  // chips under the bubble so the attachment survives a reload.
+  attachments?: ChatAttachment[];
 }
 
 // Structured resume as returned by the LLM parser (JSON Resume subset). Only
@@ -352,6 +365,10 @@ interface VantageState {
   mockThinking: boolean;
   chatLog: ChatEntry[];
   chatInput: string;
+  // Files staged in the chat composer, awaiting send. Cleared after the turn
+  // is dispatched (the names are folded into the outgoing message + attached
+  // to the user ChatMessage for display).
+  chatAttachments: ChatAttachment[];
   chatMessages: ChatMessage[];
   chatSessionId: string | null;
   chatLoading: boolean;
@@ -433,6 +450,8 @@ interface VantageState {
   runFlow: (id: string) => void;
   sendChat: () => void;
   setChatInput: (v: string) => void;
+  addChatAttachment: (a: ChatAttachment) => void;
+  removeChatAttachment: (id: string) => void;
   sendRealChat: () => void;
   hydrateChat: () => Promise<void>;
   createResume: (content: object) => Promise<void>;
@@ -487,6 +506,7 @@ export const useVantage = create<VantageState>((set, get) => ({
   mockThinking: false,
   chatLog: [],
   chatInput: "",
+  chatAttachments: [],
   chatMessages: [],
   // Restore the lifelong session id at store init so a page reload keeps
   // appending to the same conversation instead of forking a new one.
@@ -846,14 +866,47 @@ export const useVantage = create<VantageState>((set, get) => ({
 
   setChatInput: (v) => set({ chatInput: v }),
 
+  addChatAttachment: (a) =>
+    set((s) =>
+      s.chatAttachments.some((x) => x.id === a.id)
+        ? s
+        : { chatAttachments: [...s.chatAttachments, a] },
+    ),
+
+  removeChatAttachment: (id) =>
+    set((s) => ({
+      chatAttachments: s.chatAttachments.filter((a) => a.id !== id),
+    })),
+
   sendRealChat: async () => {
     const s = get();
-    const msg = s.chatInput.trim();
-    if (!msg || s.chatLoading) return;
+    const text = s.chatInput.trim();
+    const atts = s.chatAttachments;
+    // A turn is sendable with text OR attachments alone. An attachment-only
+    // turn gets a friendly default verb so the backend always sees a prompt.
+    if ((!text && atts.length === 0) || s.chatLoading) return;
+    const body =
+      text ||
+      (atts.length === 1
+        ? "Take a look at this file."
+        : "Take a look at these files.");
+    // The chat.send backend contract only carries a message string, so fold
+    // the attachment references into the prompt as a trailing block. The
+    // chips on the ChatMessage carry the human-facing display.
+    const refLines = atts.map((a) => `- ${a.name} (file:${a.id})`).join("\n");
+    const msg = atts.length > 0 ? `${body}\n\nAttached files:\n${refLines}` : body;
     set({
       chatInput: "",
+      chatAttachments: [],
       chatLoading: true,
-      chatMessages: [...s.chatMessages, { role: "user", content: msg }],
+      chatMessages: [
+        ...s.chatMessages,
+        {
+          role: "user",
+          content: body,
+          attachments: atts.length > 0 ? atts : undefined,
+        },
+      ],
     });
     try {
       const res = await chatApi.send(msg, s.chatSessionId || undefined);

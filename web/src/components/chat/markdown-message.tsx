@@ -21,7 +21,14 @@
 
 "use client";
 
-import { useCallback, useEffect, useState, type ComponentProps } from "react";
+import {
+  isValidElement,
+  useCallback,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -85,29 +92,44 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-// react-markdown gives <code> two shapes: inline (`foo`) and block
-// (inside <pre>). We split them so inline code stays compact and block
-// code gets the language label + copy chrome.
-type CodeProps = ComponentProps<"code"> & { inline?: boolean };
+// react-markdown v10 no longer passes an `inline` prop to the `code`
+// component (breaking change from v9). It instead renders block code as
+// <pre><code> and inline code as a bare <code>. So the `code` component
+// must ALWAYS return phrasing content (a plain <code>) — returning a
+// <div>/<pre> here is what produced "<div> cannot be a descendant of <p>"
+// (react-markdown can place an inline <code> inside a <p>; a <div> there
+// is invalid HTML and breaks hydration).
+//
+// The language label + copy chrome therefore live on the `pre` component
+// below, which is only ever emitted for block code and is never nested in
+// a <p>.
+type CodeProps = ComponentProps<"code">;
 
-function CodeBlock({ inline, className, children, ...rest }: CodeProps) {
-  if (inline) {
-    return (
-      <code className="vt-md-inline-code" {...rest}>
-        {children}
-      </code>
-    );
+function InlineOrBlockCode({ className, children, ...rest }: CodeProps) {
+  // Block code carries a `language-*` class from rehype-highlight; inline
+  // code has none. Either way we only emit a <code> here.
+  const isBlock = /\blanguage-/.test(className ?? "");
+  return (
+    <code className={isBlock ? className : "vt-md-inline-code"} {...rest}>
+      {children}
+    </code>
+  );
+}
+
+// Block-code chrome. `pre` is block-level and never lands inside a <p>, so
+// the wrapping <div> + toolbar are safe here. We read the language label and
+// copy buffer off the child <code> element's props.
+function PreBlock({ children }: ComponentProps<"pre">) {
+  const child = Array.isArray(children) ? children[0] : children;
+  let lang = "code";
+  let raw = "";
+  if (isValidElement(child)) {
+    const props = child.props as { className?: string; children?: ReactNode };
+    const langMatch = /language-([\w+-]+)/.exec(props.className ?? "");
+    if (langMatch) lang = langMatch[1];
+    const inner = props.children;
+    raw = Array.isArray(inner) ? inner.join("") : String(inner ?? "");
   }
-
-  // Language hint from rehype-highlight, e.g. "language-ts hljs". Strip
-  // hljs and trailing space; what remains after "language-" is the label
-  // we surface to the user.
-  const langMatch = /language-([\w+-]+)/.exec(className ?? "");
-  const lang = langMatch?.[1] ?? "code";
-
-  // children can be a string (single-line) or an array (multi-line) —
-  // join to a string for the copy buffer regardless.
-  const raw = Array.isArray(children) ? children.join("") : String(children ?? "");
 
   return (
     <div className="vt-md-code-wrap">
@@ -115,11 +137,7 @@ function CodeBlock({ inline, className, children, ...rest }: CodeProps) {
         <span className="vt-md-code-lang">{lang}</span>
         <CopyButton text={raw.replace(/\n$/, "")} />
       </div>
-      <pre className="vt-md-pre">
-        <code className={className} {...rest}>
-          {children}
-        </code>
-      </pre>
+      <pre className="vt-md-pre">{children}</pre>
     </div>
   );
 }
@@ -177,7 +195,8 @@ export function MarkdownMessage({ content, variant = "body" }: MarkdownMessagePr
             </div>
           ),
           hr: () => <hr className="vt-md-hr" />,
-          code: CodeBlock,
+          code: InlineOrBlockCode,
+          pre: PreBlock,
         }}
       >
         {safe}

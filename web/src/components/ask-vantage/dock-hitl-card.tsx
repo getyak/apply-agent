@@ -21,6 +21,7 @@
  */
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { cancelHitl, respondToHitl } from "@/lib/ask-stream";
 import type { DockMessage, HitlStatus } from "@/lib/ask-vantage-store";
@@ -32,6 +33,7 @@ interface Props {
 }
 
 export function HitlCard({ m }: Props) {
+  const t = useTranslations("dock");
   const variant: Variant | null =
     m.kind === "hitl_ask_user"
       ? "ask_user"
@@ -47,8 +49,7 @@ export function HitlCard({ m }: Props) {
         className="my-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs"
         data-testid="hitl-error"
       >
-        HITL surface missing resume_token — agent emitted an interrupt with
-        no resumable thread. This is a wiring bug; please retry or report.
+        {t("hitl.missingToken")}
       </div>
     );
   }
@@ -71,7 +72,7 @@ export function HitlCard({ m }: Props) {
           className="mt-3 border-t border-stone-200 pt-2 text-xs italic text-stone-600"
           data-testid="hitl-answer-summary"
         >
-          You responded: {m.hitlAnswerSummary}
+          {t("hitl.youResponded", { summary: m.hitlAnswerSummary })}
         </p>
       )}
     </div>
@@ -85,12 +86,13 @@ function Header({
   variant: Variant;
   status: HitlStatus;
 }) {
+  const t = useTranslations("dock");
   const title =
     variant === "ask_user"
-      ? "Vantage needs your input"
+      ? t("hitl.titleAskUser")
       : variant === "diff"
-        ? "Review the change"
-        : "Approve next step";
+        ? t("hitl.titleDiff")
+        : t("hitl.titleApproval");
   return (
     <div className="mb-3 flex items-center justify-between">
       <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-700">
@@ -102,14 +104,15 @@ function Header({
 }
 
 function StatusPill({ status }: { status: HitlStatus }) {
+  const t = useTranslations("dock");
   const spec =
     status === "answered"
-      ? { label: "Answered", bg: "#E2EED9", fg: "#2F5722" }
+      ? { label: t("hitl.statusAnswered"), bg: "#E2EED9", fg: "#2F5722" }
       : status === "submitting"
-        ? { label: "Submitting…", bg: "#FBEFD0", fg: "#8A6A12" }
+        ? { label: t("hitl.statusSubmitting"), bg: "#FBEFD0", fg: "#8A6A12" }
         : status === "cancelled"
-          ? { label: "Cancelled", bg: "#F1EAE3", fg: "#6B5B49" }
-          : { label: "Awaiting you", bg: "#E1E8F0", fg: "#2A4759" };
+          ? { label: t("hitl.statusCancelled"), bg: "#F1EAE3", fg: "#6B5B49" }
+          : { label: t("hitl.statusAwaiting"), bg: "#E1E8F0", fg: "#2A4759" };
   return (
     <span
       className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
@@ -121,6 +124,7 @@ function StatusPill({ status }: { status: HitlStatus }) {
 }
 
 function AskUserBody({ m, locked }: { m: DockMessage; locked: boolean }) {
+  const t = useTranslations("dock");
   const payload = m.hitlAskUser;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -171,7 +175,7 @@ function AskUserBody({ m, locked }: { m: DockMessage; locked: boolean }) {
             onChange={(e) => setText(e.target.value)}
             disabled={locked || busy}
             className="flex-1 rounded-md border border-stone-300 bg-white px-2 py-1 text-sm disabled:opacity-50"
-            placeholder="Type your answer…"
+            placeholder={t("hitl.answerPlaceholder")}
           />
           <button
             data-testid="hitl-free-form-send"
@@ -179,7 +183,7 @@ function AskUserBody({ m, locked }: { m: DockMessage; locked: boolean }) {
             disabled={locked || busy || !text.trim()}
             className="rounded-md bg-stone-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
           >
-            Send
+            {t("hitl.send")}
           </button>
         </form>
       )}
@@ -189,6 +193,7 @@ function AskUserBody({ m, locked }: { m: DockMessage; locked: boolean }) {
 }
 
 function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
+  const t = useTranslations("dock");
   const payload = m.hitlDiff;
   const [busy, setBusy] = useState(false);
   if (!payload) return null;
@@ -203,10 +208,10 @@ function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
         m.resumeToken,
         value,
         decision === "approve"
-          ? "Approved"
+          ? t("hitl.summaryApproved")
           : decision === "tweak"
-            ? "Asked to tweak"
-            : "Discarded",
+            ? t("hitl.summaryTweak")
+            : t("hitl.summaryDiscarded"),
       );
     } finally {
       setBusy(false);
@@ -216,8 +221,8 @@ function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
   return (
     <div>
       <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
-        <DiffPane label="Before" value={payload.before} />
-        <DiffPane label="After" value={payload.after} />
+        <DiffPane label={t("hitl.before")} value={payload.before} testId="before" />
+        <DiffPane label={t("hitl.after")} value={payload.after} testId="after" />
       </div>
       <div className="flex flex-wrap gap-2">
         <button
@@ -227,7 +232,7 @@ function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
           onClick={() => void decide("approve")}
           className="rounded-md bg-emerald-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
         >
-          Approve
+          {t("hitl.approve")}
         </button>
         <button
           type="button"
@@ -236,7 +241,7 @@ function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
           onClick={() => void decide("tweak")}
           className="rounded-md border border-stone-400 bg-white px-3 py-1 text-xs font-semibold text-stone-800 disabled:opacity-50"
         >
-          Ask to tweak
+          {t("hitl.askToTweak")}
         </button>
         <button
           type="button"
@@ -245,7 +250,7 @@ function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
           onClick={() => void decide("discard")}
           className="rounded-md border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50"
         >
-          Discard
+          {t("hitl.discard")}
         </button>
       </div>
       <CancelLink m={m} locked={locked} />
@@ -253,7 +258,15 @@ function DiffBody({ m, locked }: { m: DockMessage; locked: boolean }) {
   );
 }
 
-function DiffPane({ label, value }: { label: string; value: unknown }) {
+function DiffPane({
+  label,
+  value,
+  testId,
+}: {
+  label: string;
+  value: unknown;
+  testId: string;
+}) {
   return (
     <div className="rounded-md border border-stone-200 bg-white p-2">
       <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-stone-500">
@@ -261,7 +274,7 @@ function DiffPane({ label, value }: { label: string; value: unknown }) {
       </p>
       <pre
         className="max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px]"
-        data-testid={`diff-${label.toLowerCase()}`}
+        data-testid={`diff-${testId}`}
       >
         {renderValue(value)}
       </pre>
@@ -280,6 +293,7 @@ function renderValue(value: unknown): string {
 }
 
 function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
+  const t = useTranslations("dock");
   const payload = m.hitlApproval;
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -298,8 +312,8 @@ function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
         m.resumeToken,
         value,
         decision === "approve"
-          ? `Approved${reason.trim() ? ` — ${reason.trim()}` : ""}`
-          : `Rejected${reason.trim() ? ` — ${reason.trim()}` : ""}`,
+          ? `${t("hitl.summaryApproved")}${reason.trim() ? ` — ${reason.trim()}` : ""}`
+          : `${t("hitl.summaryRejected")}${reason.trim() ? ` — ${reason.trim()}` : ""}`,
       );
     } finally {
       setBusy(false);
@@ -309,7 +323,10 @@ function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
   return (
     <div>
       <p className="mb-2 text-stone-800">
-        Vantage wants to <strong>{payload.action}</strong>.
+        {t.rich("hitl.wantsTo", {
+          action: payload.action,
+          strong: (chunks) => <strong>{chunks}</strong>,
+        })}
       </p>
       {payload.payload !== undefined && payload.payload !== null && (
         <pre
@@ -325,7 +342,7 @@ function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         disabled={locked || busy}
-        placeholder="Optional note for the agent…"
+        placeholder={t("hitl.optionalNote")}
         className="mb-3 w-full rounded-md border border-stone-300 bg-white px-2 py-1 text-sm disabled:opacity-50"
       />
       <div className="flex gap-2">
@@ -336,7 +353,7 @@ function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
           onClick={() => void decide("approve")}
           className="rounded-md bg-emerald-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
         >
-          Approve
+          {t("hitl.approve")}
         </button>
         <button
           type="button"
@@ -345,7 +362,7 @@ function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
           onClick={() => void decide("reject")}
           className="rounded-md border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50"
         >
-          Reject
+          {t("hitl.reject")}
         </button>
       </div>
       <CancelLink m={m} locked={locked} />
@@ -354,6 +371,7 @@ function ApprovalBody({ m, locked }: { m: DockMessage; locked: boolean }) {
 }
 
 function CancelLink({ m, locked }: { m: DockMessage; locked: boolean }) {
+  const t = useTranslations("dock");
   if (locked) return null;
   return (
     <button
@@ -362,7 +380,7 @@ function CancelLink({ m, locked }: { m: DockMessage; locked: boolean }) {
       onClick={() => cancelHitl(m.id)}
       className="mt-3 text-[11px] text-stone-500 underline-offset-2 hover:underline"
     >
-      Cancel without answering
+      {t("hitl.cancelWithout")}
     </button>
   );
 }

@@ -17,6 +17,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronRight } from "lucide-react";
 
 import type { AgentEvent } from "@/lib/ask-vantage-store";
@@ -42,6 +43,7 @@ function formatDuration(ms: number): string {
 }
 
 export function ReasoningSummary({ events, children }: ReasoningSummaryProps) {
+  const t = useTranslations("dock");
   const running = events.some((e) => e.state === "running");
   const failed = events.some((e) => e.state === "failed");
   const stepCount = events.length;
@@ -83,10 +85,10 @@ export function ReasoningSummary({ events, children }: ReasoningSummaryProps) {
   if (stepCount === 0) return null;
 
   const headerLabel = running
-    ? `Thinking · ${durationLabel} · ${stepCount} step${stepCount === 1 ? "" : "s"}`
+    ? t("reasoning.thinking", { duration: durationLabel, count: stepCount })
     : failed
-      ? `Thought for ${durationLabel} · ${stepCount} step${stepCount === 1 ? "" : "s"} · partial`
-      : `Thought for ${durationLabel} · ${stepCount} step${stepCount === 1 ? "" : "s"}`;
+      ? t("reasoning.thoughtPartial", { duration: durationLabel, count: stepCount })
+      : t("reasoning.thought", { duration: durationLabel, count: stepCount });
 
   const headerTone = failed ? "#A23A2E" : running ? "#A66A00" : "#6B6560";
 
@@ -103,7 +105,7 @@ export function ReasoningSummary({ events, children }: ReasoningSummaryProps) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-label={open ? "Collapse reasoning" : "Expand reasoning"}
+        aria-label={open ? t("reasoning.collapse") : t("reasoning.expand")}
         style={{
           all: "unset",
           cursor: "pointer",
@@ -177,6 +179,7 @@ function ReasoningTranscript({
   events: AgentEvent[];
   running: boolean;
 }) {
+  const t = useTranslations("dock");
   const transcript = useMemo(() => {
     const parts: string[] = [];
     for (const ev of events) {
@@ -209,7 +212,7 @@ function ReasoningTranscript({
         wordBreak: "break-word",
       }}
       aria-live={running ? "polite" : "off"}
-      aria-label="Model reasoning transcript"
+      aria-label={t("reasoning.transcriptLabel")}
     >
       {transcript}
     </div>

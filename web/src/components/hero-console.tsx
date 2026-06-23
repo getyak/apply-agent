@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 import {
   Upload,
   MessageSquare,
@@ -18,12 +19,15 @@ import {
 type Method = "upload" | "chat" | "paste" | "link";
 type Phase = "entry" | "running" | "ready";
 
-const methods: { key: Method; label: string; icon: React.ReactNode }[] = [
-  { key: "upload", label: "Upload", icon: <Upload size={15} /> },
-  { key: "chat", label: "Chat", icon: <MessageSquare size={15} /> },
-  { key: "paste", label: "Paste", icon: <ClipboardPaste size={15} /> },
-  { key: "link", label: "Link", icon: <Link2 size={15} /> },
-];
+// Icons stay in code; labels are resolved from the "landing.heroConsole"
+// namespace inside the component (keyed by method).
+const METHOD_ICONS: Record<Method, React.ReactNode> = {
+  upload: <Upload size={15} />,
+  chat: <MessageSquare size={15} />,
+  paste: <ClipboardPaste size={15} />,
+  link: <Link2 size={15} />,
+};
+const METHOD_KEYS: Method[] = ["upload", "chat", "paste", "link"];
 
 /**
  * CountUp — a small figure that animates from 0 to its target once on mount,
@@ -74,6 +78,7 @@ function CountUp({
 }
 
 export default function HeroConsole() {
+  const t = useTranslations("landing.heroConsole");
   const [method, setMethod] = useState<Method>("upload");
   const [phase, setPhase] = useState<Phase>("entry");
 
@@ -92,11 +97,11 @@ export default function HeroConsole() {
           <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
         </div>
         <span className="ml-2.5 font-mono text-[11px] tracking-[0.6px] uppercase text-dark-muted">
-          vantage · start here
+          {t("titleBar")}
         </span>
         <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] tracking-[0.5px] uppercase text-dark-gold">
           <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse-dot" />
-          live
+          {t("live")}
         </span>
       </div>
 
@@ -104,19 +109,19 @@ export default function HeroConsole() {
         {phase === "entry" && (
           <div className="animate-fade-in">
             <div className="seg flex gap-[5px] bg-[#1b1812] border border-dark-border/40 rounded-xl p-1 mb-4">
-              {methods.map((m) => (
+              {METHOD_KEYS.map((key) => (
                 <button
-                  key={m.key}
-                  onClick={() => setMethod(m.key)}
-                  data-active={method === m.key}
+                  key={key}
+                  onClick={() => setMethod(key)}
+                  data-active={method === key}
                   className={`seg-item cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-[9px] px-1.5 rounded-[9px] font-body font-semibold text-[12.5px] border ${
-                    method === m.key
+                    method === key
                       ? "bg-[#3a3022] text-[#FAF8F6] border-dark-border"
                       : "bg-transparent text-dark-muted border-transparent hover:text-[#d8d0c4]"
                   }`}
                 >
-                  {m.icon}
-                  {m.label}
+                  {METHOD_ICONS[key]}
+                  {t(`methods.${key}`)}
                 </button>
               ))}
             </div>
@@ -131,10 +136,10 @@ export default function HeroConsole() {
                 </div>
                 <div className="text-center">
                   <div className="font-body font-semibold text-[15px] text-[#FAF8F6] mb-[3px]">
-                    Drop your résumé to begin
+                    {t("upload.title")}
                   </div>
                   <div className="font-body text-[13px] text-dark-muted">
-                    PDF, DOCX — or click to browse
+                    {t("upload.hint")}
                   </div>
                 </div>
               </button>
@@ -147,14 +152,14 @@ export default function HeroConsole() {
                 </div>
                 <div>
                   <div className="font-body font-semibold text-[15px] text-[#FAF8F6] mb-[3px]">
-                    No résumé? Build it by talking.
+                    {t("chat.title")}
                   </div>
                   <div className="font-body text-[13px] leading-[1.45] text-dark-muted max-w-[290px]">
-                    Answer a few quick questions and we&apos;ll write it with you.
+                    {t("chat.hint")}
                   </div>
                 </div>
                 <button className="mt-0.5 font-body font-semibold text-sm text-dark bg-gold px-5 py-[11px] rounded-[10px] inline-flex items-center gap-[7px] hover:bg-gold-light transition-colors cursor-pointer border-none">
-                  Start a conversation
+                  {t("chat.cta")}
                   <ArrowRight size={15} />
                 </button>
               </div>
@@ -163,14 +168,13 @@ export default function HeroConsole() {
             {method === "paste" && (
               <div className="min-h-[190px] flex flex-col">
                 <div className="flex-1 bg-[#1b1812] border border-dark-border/40 rounded-[11px] p-[14px_16px] font-body text-[13.5px] leading-[1.6] text-dark-muted text-left">
-                  Paste your résumé text here — experience, skills, education.
-                  We&apos;ll structure it into a profile for you.
+                  {t("paste.placeholder")}
                 </div>
                 <button
                   onClick={startEntry}
                   className="mt-3 self-end cursor-pointer border-none bg-gold text-dark font-body font-semibold text-[13.5px] px-[18px] py-[11px] rounded-[10px] hover:bg-gold-light transition-colors"
                 >
-                  Parse résumé
+                  {t("paste.cta")}
                 </button>
               </div>
             )}
@@ -178,7 +182,7 @@ export default function HeroConsole() {
             {method === "link" && (
               <div className="min-h-[190px] flex flex-col justify-center gap-[13px]">
                 <div className="font-body font-semibold text-sm text-[#FAF8F6] text-left">
-                  Import from a link
+                  {t("link.title")}
                 </div>
                 <div className="flex items-center gap-[9px] bg-[#1b1812] border border-dark-border/40 rounded-[11px] p-[13px_15px]">
                   <Link2 size={16} className="text-dark-muted" />
@@ -190,7 +194,7 @@ export default function HeroConsole() {
                   onClick={startEntry}
                   className="self-end cursor-pointer border-none bg-gold text-dark font-body font-semibold text-[13.5px] px-[18px] py-[11px] rounded-[10px] hover:bg-gold-light transition-colors"
                 >
-                  Import
+                  {t("link.cta")}
                 </button>
               </div>
             )}
@@ -201,7 +205,7 @@ export default function HeroConsole() {
           <div className="animate-fade-in">
             <div className="flex justify-end mb-[18px] animate-step-in">
               <div className="bg-brown text-[#FAF8F6] rounded-[13px_13px_4px_13px] py-[11px] px-[15px] font-body text-[13.5px] leading-[1.45] max-w-[80%]">
-                Here&apos;s my résumé — find roles and get me ready.
+                {t("run.userMessage")}
               </div>
             </div>
 
@@ -209,28 +213,26 @@ export default function HeroConsole() {
               {[
                 {
                   icon: <Search size={14} />,
-                  name: "Scout agent",
-                  result: (
-                    <>
-                      Scanned{" "}
+                  name: t("run.scout.name"),
+                  result: t.rich("run.scout.result", {
+                    count: () => (
                       <span className="count-up text-white font-semibold">
                         <CountUp to={1240} delay={450} />
-                      </span>{" "}
-                      live roles → 8 strong fits
-                    </>
-                  ),
+                      </span>
+                    ),
+                  }),
                   delay: "0.4s",
                 },
                 {
                   icon: <FileText size={14} />,
-                  name: "Résumé agent",
-                  result: "Tailored your résumé for each role",
+                  name: t("run.resume.name"),
+                  result: t("run.resume.result"),
                   delay: "1s",
                 },
                 {
                   icon: <Pencil size={14} />,
-                  name: "Answer agent",
-                  result: "Drafted screening answers from your story",
+                  name: t("run.answer.name"),
+                  result: t("run.answer.result"),
                   delay: "1.6s",
                 },
               ].map((agent) => (
@@ -264,17 +266,17 @@ export default function HeroConsole() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-body font-semibold text-[13.5px] text-[#FAF8F6]">
-                    8 applications ready
+                    {t("ready.title", { count: 8 })}
                   </div>
                   <div className="font-body text-xs text-[#9a9082]">
-                    You review and submit — in your own browser
+                    {t("ready.subtitle")}
                   </div>
                 </div>
                 <a
                   href="/auth?intent=start"
                   className="no-underline font-body font-semibold text-[13px] text-dark bg-gold px-[15px] py-[9px] rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap hover:bg-gold-light transition-colors"
                 >
-                  Enter
+                  {t("ready.cta")}
                   <ArrowRight size={14} />
                 </a>
               </div>

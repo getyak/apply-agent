@@ -30,6 +30,7 @@
 // minimal munging.
 
 import { getToken } from "./api";
+import { getClientLocale } from "@/i18n/locale-client";
 import { API_BASE } from "./api-base";
 import {
   useDock,
@@ -63,7 +64,21 @@ export type ArtifactType =
   | "application_package"
   | "interview_session"
   | "cover_letter"
-  | "market_snapshot";
+  | "market_snapshot"
+  // Dual-track suggestion stack (design §6.3) — accept/reject inline in dock.
+  | "suggestion_list";
+
+// One AI suggestion in a suggestion_list artifact.
+export interface ArtifactSuggestion {
+  id: string;
+  bullet_stable_id: string | null;
+  section: string | null;
+  change_type: string;
+  before_text: string;
+  after_text: string;
+  rationale: string | null;
+  risk_level: "safe" | "needs_review" | "unsupported";
+}
 
 export interface SourceEvidence {
   // Short, user-facing description (e.g. "Stripe JD · staff eng · 2026-04-12")
@@ -96,6 +111,9 @@ export interface Artifact {
   needs_user_review?: boolean;
   source_evidence?: SourceEvidence[];
   next_actions?: ArtifactAction[];
+  // Only present on suggestion_list artifacts.
+  suggestions?: ArtifactSuggestion[];
+  source_resume_id?: string;
 }
 
 // Inline-HITL frames (P1-C) — emitted when dock_agent hits
@@ -562,6 +580,9 @@ export async function runAskStream({
         prompt,
         thread_id: threadId,
         ...(surface ? { surface } : {}),
+        // UI locale (en/zh) so the agent pins its reply language to the
+        // user's chosen interface language instead of guessing from charset.
+        locale: getClientLocale(),
       }),
       signal: abortController.signal,
     });
@@ -1023,6 +1044,17 @@ export async function sendAsk(
               label: n.label,
               route: n.route,
             })),
+            suggestions: a.suggestions?.map((s) => ({
+              id: s.id,
+              bulletStableId: s.bullet_stable_id,
+              section: s.section,
+              changeType: s.change_type,
+              beforeText: s.before_text,
+              afterText: s.after_text,
+              rationale: s.rationale,
+              riskLevel: s.risk_level,
+            })),
+            sourceResumeId: a.source_resume_id,
           },
         });
       },
@@ -1184,6 +1216,17 @@ export async function respondToHitl(
               label: n.label,
               route: n.route,
             })),
+            suggestions: a.suggestions?.map((s) => ({
+              id: s.id,
+              bulletStableId: s.bullet_stable_id,
+              section: s.section,
+              changeType: s.change_type,
+              beforeText: s.before_text,
+              afterText: s.after_text,
+              rationale: s.rationale,
+              riskLevel: s.risk_level,
+            })),
+            sourceResumeId: a.source_resume_id,
           },
         });
       },

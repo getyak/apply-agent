@@ -1,6 +1,7 @@
 "use client";
 
 import { Sparkles, Check, AlertCircle, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useVantage } from "@/lib/store";
 
 // Non-blocking progress banner shown at the top of the workspace while the
@@ -8,6 +9,7 @@ import { useVantage } from "@/lib/store";
 // onboarding change: the user is already working; this just keeps them informed
 // and fills in their real name/skills the moment parsing completes.
 export function OnboardingBanner() {
+  const t = useTranslations("onboarding");
   const status = useVantage((s) => s.parseJobStatus);
   const progress = useVantage((s) => s.parseJobProgress);
   const fileName = useVantage((s) => s.parseFileName);
@@ -32,21 +34,19 @@ export function OnboardingBanner() {
 
         <div className="min-w-0 flex-1">
           <p className="truncate font-body text-[13px] text-ink">
-            {running && (
-              <>
-                Reading your experience from{" "}
-                <span className="font-medium">{fileName || "your résumé"}</span> — keep exploring, this runs in the background.
-              </>
-            )}
-            {done && (
-              <>
-                <span className="font-medium">Résumé ready{name ? `, ${name}` : ""}.</span>{" "}
-                We&apos;re matching it against open roles now.
-              </>
-            )}
+            {running &&
+              t.rich("banner.running", {
+                file: fileName || t("banner.yourResume"),
+                strong: (chunks) => <span className="font-medium">{chunks}</span>,
+              })}
+            {done &&
+              t.rich("banner.done", {
+                name: name ? t("banner.nameSuffix", { name }) : "",
+                strong: (chunks) => <span className="font-medium">{chunks}</span>,
+              })}
             {failed && (
               <span className="text-red-700">
-                {error || "Couldn't finish parsing."} You can re-upload from onboarding anytime.
+                {t("banner.failed", { reason: error || t("banner.failedDefault") })}
               </span>
             )}
           </p>
@@ -65,7 +65,7 @@ export function OnboardingBanner() {
           <button
             type="button"
             onClick={dismiss}
-            aria-label="Dismiss"
+            aria-label={t("banner.dismiss")}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-white hover:text-ink"
           >
             <X size={14} strokeWidth={2} />

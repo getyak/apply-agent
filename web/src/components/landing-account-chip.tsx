@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ArrowRight, LogOut } from "lucide-react";
 import { auth as authApi } from "@/lib/api";
@@ -18,6 +19,7 @@ import { initialsOf } from "@/lib/dates";
 // auth-state flicker — worst case the avatar shows a placeholder initial for
 // the one round-trip it takes me() to resolve the name.
 export function LandingAccountChip() {
+  const t = useTranslations("landing.accountChip");
   const router = useRouter();
   const signOut = useVantage((s) => s.signOut);
   const [name, setName] = useState<string | null>(null);
@@ -85,7 +87,7 @@ export function LandingAccountChip() {
           {initials}
         </span>
         <span className="hidden sm:block max-w-[140px] truncate font-body font-medium text-sm text-ink">
-          {name ?? "Your account"}
+          {name ?? t("fallbackName")}
         </span>
         <ChevronDown
           size={15}
@@ -114,7 +116,7 @@ export function LandingAccountChip() {
             <span className="flex h-7 w-7 items-center justify-center rounded-[7px] bg-brown text-paper">
               <ArrowRight size={14} strokeWidth={2} />
             </span>
-            <span className="font-body text-sm font-medium text-ink">Open workspace</span>
+            <span className="font-body text-sm font-medium text-ink">{t("openWorkspace")}</span>
           </a>
           <button
             type="button"
@@ -127,7 +129,7 @@ export function LandingAccountChip() {
               <LogOut size={14} strokeWidth={1.8} />
             </span>
             <span className="font-body text-sm font-medium text-ink-light group-hover/item:text-ink">
-              Sign out
+              {t("signOut")}
             </span>
           </button>
         </div>

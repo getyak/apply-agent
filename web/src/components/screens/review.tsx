@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useVantage, JOBS } from "@/lib/store";
 import { Button, Card as UICard, CardHeader as UICardHeader, Badge, ScoreRing } from "@/components/ui";
@@ -10,13 +11,14 @@ import { Button, Card as UICard, CardHeader as UICardHeader, Badge, ScoreRing } 
 // so parent re-renders cannot silently wipe user edits — fixing the previous
 // "cover note edits vanish on store update" bug.
 function CoverNoteEditable({ initial }: { initial: string }) {
+  const t = useTranslations("apply");
   const [seedHtml] = useState(() => escapeHtml(initial));
   return (
     <div
       contentEditable
       suppressContentEditableWarning
       role="textbox"
-      aria-label="Editable cover note draft"
+      aria-label={t("review.coverNoteAria")}
       className="mt-3.5 font-body text-[13.5px] leading-[1.65] text-ink whitespace-pre-wrap outline-none focus:bg-paper rounded-[8px] -m-1 p-1 transition-colors"
       dangerouslySetInnerHTML={{ __html: seedHtml }}
     />
@@ -33,6 +35,7 @@ function escapeHtml(s: string): string {
 }
 
 export function ReviewScreen() {
+  const t = useTranslations("apply");
   const activeId = useVantage((s) => s.activeId);
   const backHome = useVantage((s) => s.backHome);
   const submitReview = useVantage((s) => s.submitReview);
@@ -55,11 +58,11 @@ export function ReviewScreen() {
     const TopBar = (
       <div className="h-[60px] shrink-0 border-b border-border bg-paper flex items-center px-5 gap-4">
         <Button onClick={backHome} variant="ghost" size="sm" leadingIcon={<ArrowLeft size={15} />} className="!px-1">
-          Back
+          {t("review.back")}
         </Button>
         <span className="w-px h-5 bg-border-dark" />
         <span className="font-body text-[13.5px] text-ink-light">
-          Review application · <span className="font-semibold text-ink">{apiJob.company}</span>
+          {t("review.reviewApplication")} · <span className="font-semibold text-ink">{apiJob.company}</span>
         </span>
       </div>
     );
@@ -80,16 +83,16 @@ export function ReviewScreen() {
               <ScoreRing value={match} size={72} />
               <div>
                 <div className="font-display font-bold text-[15px] text-ink">
-                  {match >= 85 ? "Strong fit" : match >= 70 ? "Good fit" : "Fair fit"}
+                  {match >= 85 ? t("review.strongFit") : match >= 70 ? t("review.goodFit") : t("review.fairFit")}
                 </div>
                 <div className="font-body text-[13px] text-ink-light leading-[1.4]">
-                  {matched.length} {matched.length === 1 ? "skill" : "skills"} matched
+                  {t("review.skillsMatched", { count: matched.length })}
                 </div>
               </div>
             </div>
             {matched.length > 0 && (
               <div className="mt-8">
-                <h2 className="font-mono text-[10.5px] tracking-[0.6px] uppercase text-ink-muted mb-3.5">Matched skills</h2>
+                <h2 className="font-mono text-[10.5px] tracking-[0.6px] uppercase text-ink-muted mb-3.5">{t("review.matchedSkills")}</h2>
                 <div className="flex flex-wrap gap-2">
                   {matched.map((s) => (
                     <Badge key={s} tone="matched">{s}</Badge>
@@ -99,7 +102,7 @@ export function ReviewScreen() {
             )}
             {missing.length > 0 && (
               <div className="mt-5">
-                <h2 className="font-mono text-[10.5px] tracking-[0.6px] uppercase text-ink-muted mb-3.5">Skill gaps</h2>
+                <h2 className="font-mono text-[10.5px] tracking-[0.6px] uppercase text-ink-muted mb-3.5">{t("review.skillGaps")}</h2>
                 <div className="flex flex-wrap gap-2">
                   {missing.map((s) => (
                     <Badge key={s} tone="gap">{s}</Badge>
@@ -111,17 +114,17 @@ export function ReviewScreen() {
 
           <section className="flex-1 overflow-y-auto">
             <div className="max-w-[640px] mx-auto px-8 py-8">
-              <h2 className="font-display font-bold text-[20px] text-ink">Your application</h2>
-              <p className="font-body text-[13.5px] text-ink-light mt-1 mb-6">Review the details before submitting.</p>
+              <h2 className="font-display font-bold text-[20px] text-ink">{t("review.yourApplication")}</h2>
+              <p className="font-body text-[13.5px] text-ink-light mt-1 mb-6">{t("review.reviewDetails")}</p>
 
               <UICard padding="md">
-                <UICardHeader title="Job details" tag="from database" />
+                <UICardHeader title={t("review.jobDetails")} tag={t("review.fromDatabase")} />
                 <div className="mt-3 font-body text-[13.5px] leading-[1.55] text-ink">
-                  <p><strong>Role:</strong> {apiJob.role_title}</p>
-                  <p><strong>Company:</strong> {apiJob.company}</p>
-                  {location && <p><strong>Location:</strong> {location}</p>}
-                  {salary && <p><strong>Salary:</strong> {salary}</p>}
-                  {skills.length > 0 && <p className="mt-2"><strong>Required skills:</strong> {skills.join(", ")}</p>}
+                  <p><strong>{t("review.roleLabel")}:</strong> {apiJob.role_title}</p>
+                  <p><strong>{t("review.companyLabel")}:</strong> {apiJob.company}</p>
+                  {location && <p><strong>{t("review.locationLabel")}:</strong> {location}</p>}
+                  {salary && <p><strong>{t("review.salaryLabel")}:</strong> {salary}</p>}
+                  {skills.length > 0 && <p className="mt-2"><strong>{t("review.requiredSkillsLabel")}:</strong> {skills.join(", ")}</p>}
                 </div>
               </UICard>
             </div>
@@ -134,13 +137,13 @@ export function ReviewScreen() {
               <Check size={11} className="text-green" strokeWidth={2.6} />
             </span>
             <span>
-              <span className="font-semibold text-ink">Match: {match}%</span> · {matched.length} skills aligned
+              <span className="font-semibold text-ink">{t("review.matchPct", { pct: match })}</span> · {t("review.skillsAligned", { count: matched.length })}
             </span>
           </div>
           <div className="ml-auto flex items-center gap-2.5">
-            <Button onClick={backHome} variant="secondary" size="md">Save for later</Button>
+            <Button onClick={backHome} variant="secondary" size="md">{t("review.saveForLater")}</Button>
             <Button onClick={submitReview} size="md" trailingIcon={<ArrowRight size={15} />}>
-              Submit application
+              {t("review.submitApplication")}
             </Button>
           </div>
         </div>
@@ -157,11 +160,11 @@ export function ReviewScreen() {
         className="cursor-pointer inline-flex items-center gap-1.5 font-body font-medium text-[13.5px] text-ink-light hover:text-ink transition-colors bg-transparent border-none"
       >
         <ArrowLeft size={15} />
-        Back
+        {t("review.back")}
       </button>
       <span className="w-px h-5 bg-border-dark" />
       <span className="font-body text-[13.5px] text-ink-light">
-        Review application ·{" "}
+        {t("review.reviewApplication")} ·{" "}
         <span className="font-semibold text-ink">{job.co}</span>
       </span>
     </div>
@@ -189,10 +192,9 @@ export function ReviewScreen() {
               </p>
             )}
             <p className="font-body text-[13px] text-ink-muted mb-6">
-              This role lives on an external site. We&apos;ll prep your package
-              in the extension when you open it there.
+              {t("review.externalRole")}
             </p>
-            <Button onClick={backHome} size="md">Back to today</Button>
+            <Button onClick={backHome} size="md">{t("review.backToToday")}</Button>
           </div>
         </div>
       </div>
@@ -221,10 +223,10 @@ export function ReviewScreen() {
             <ScoreRing value={job.match} size={72} />
             <div>
               <div className="font-display font-bold text-[15px] text-ink">
-                {job.match >= 85 ? "Strong fit" : job.match >= 70 ? "Good fit" : "Fair fit"}
+                {job.match >= 85 ? t("review.strongFit") : job.match >= 70 ? t("review.goodFit") : t("review.fairFit")}
               </div>
               <div className="font-body text-[13px] text-ink-light leading-[1.4]">
-                {job.whyBullets.length} reasons it lines up
+                {t("review.reasonsLineUp", { count: job.whyBullets.length })}
               </div>
             </div>
           </div>
@@ -232,7 +234,7 @@ export function ReviewScreen() {
           {/* Why you're a fit */}
           <div className="mt-8">
             <h2 className="font-mono text-[10.5px] tracking-[0.6px] uppercase text-ink-muted mb-3.5">
-              Why you&apos;re a fit
+              {t("review.whyFit")}
             </h2>
             <ul className="flex flex-col gap-3">
               {job.whyBullets.map((b, i) => (
@@ -253,15 +255,15 @@ export function ReviewScreen() {
         <section className="flex-1 overflow-y-auto">
           <div className="max-w-[640px] mx-auto px-8 py-8">
             <h2 className="font-display font-bold text-[20px] text-ink">
-              Your application
+              {t("review.yourApplication")}
             </h2>
             <p className="font-body text-[13.5px] text-ink-light mt-1 mb-6">
-              The amber blocks were written for you — glance before you send.
+              {t("review.amberBlocks")}
             </p>
 
             {/* Tailored résumé */}
             <UICard>
-              <UICardHeader title="Tailored résumé" tag="reordered for this role" ai />
+              <UICardHeader title={t("review.tailoredResume")} tag={t("review.reorderedTag")} ai />
               <ul className="flex flex-col gap-3 mt-3.5">
                 {job.resumeBullets?.map((b, i) => (
                   <li key={i} className="flex items-start gap-2.5">
@@ -276,17 +278,17 @@ export function ReviewScreen() {
 
             {/* Cover note — uses the AI tone of Card so the visual signal of AI content stays consistent */}
             <UICard tone="ai" className="mt-5">
-              <UICardHeader title="Cover note" tag="draft" ai />
+              <UICardHeader title={t("review.coverNote")} tag={t("review.draftTag")} ai />
               <CoverNoteEditable initial={job.coverLetter ?? ""} />
               <p className="mt-3 font-body text-[12px] text-ink-muted italic">
-                Click to edit — this is your voice, adjust anything.
+                {t("review.coverNoteHint")}
               </p>
             </UICard>
 
             {/* Screening questions */}
             {job.qa && job.qa.length > 0 && (
               <UICard className="mt-5">
-                <UICardHeader title="Screening questions" tag="drafted" ai />
+                <UICardHeader title={t("review.screeningQuestions")} tag={t("review.draftedTag")} ai />
                 <div className="flex flex-col gap-4 mt-3.5">
                   {job.qa.map((item, i) => (
                     <div key={i}>
@@ -312,13 +314,13 @@ export function ReviewScreen() {
             <Check size={11} className="text-green" strokeWidth={2.6} />
           </span>
           <span>
-            <span className="font-semibold text-ink">{(job.resumeBullets?.length ?? 0) + (job.qa?.length ?? 0) + 1} blocks ready</span> · written by AI — glance before you send
+            <span className="font-semibold text-ink">{t("review.blocksReady", { count: (job.resumeBullets?.length ?? 0) + (job.qa?.length ?? 0) + 1 })}</span> · {t("review.writtenByAi")}
           </span>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
-          <Button onClick={backHome} variant="secondary" size="md">Save for later</Button>
+          <Button onClick={backHome} variant="secondary" size="md">{t("review.saveForLater")}</Button>
           <Button onClick={submitReview} size="md" trailingIcon={<ArrowRight size={15} />}>
-            Looks right — submit
+            {t("review.looksRightSubmit")}
           </Button>
         </div>
       </div>

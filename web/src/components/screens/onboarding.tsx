@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { useTranslations } from "next-intl";
 import {
   Upload,
   MessageSquare,
@@ -14,11 +15,11 @@ import {
 import { useVantage, type OnboardMethod } from "@/lib/store";
 import { Button } from "@/components/ui";
 
-const METHODS: { key: OnboardMethod; label: string; Icon: typeof Upload }[] = [
-  { key: "upload", label: "Upload", Icon: Upload },
-  { key: "chat", label: "Chat", Icon: MessageSquare },
-  { key: "paste", label: "Paste", Icon: ClipboardPaste },
-  { key: "link", label: "Link", Icon: Link },
+const METHODS: { key: OnboardMethod; labelKey: string; Icon: typeof Upload }[] = [
+  { key: "upload", labelKey: "method.upload", Icon: Upload },
+  { key: "chat", labelKey: "method.chat", Icon: MessageSquare },
+  { key: "paste", labelKey: "method.paste", Icon: ClipboardPaste },
+  { key: "link", labelKey: "method.link", Icon: Link },
 ];
 
 function Logo() {
@@ -35,6 +36,7 @@ function Logo() {
 }
 
 function IdleState() {
+  const t = useTranslations("onboarding");
   const onboardMethod = useVantage((s) => s.onboardMethod);
   const setOnboardMethod = useVantage((s) => s.setOnboardMethod);
   const startByChat = useVantage((s) => s.startByChat);
@@ -59,16 +61,15 @@ function IdleState() {
         </div>
 
         <h1 className="animate-fade-up mt-10 font-display text-[46px] font-bold leading-[1.08] -tracking-[0.5px] text-ink">
-          Your job hunt, handled.
+          {t("heroTitle")}
         </h1>
 
         <p className="animate-fade-up-delay mt-5 max-w-[420px] font-body text-[17px] leading-relaxed text-ink-light">
-          Drop your résumé in. We find the roles, tailor each application, and prep
-          you for every interview — you stay in control.
+          {t("heroSubtitle")}
         </p>
 
         <div className="animate-fade-up-delay mt-9 flex items-center gap-2">
-          {METHODS.map(({ key, label, Icon }) => {
+          {METHODS.map(({ key, labelKey, Icon }) => {
             const active = onboardMethod === key;
             return (
               <button
@@ -84,7 +85,7 @@ function IdleState() {
                 }
               >
                 <Icon size={15} strokeWidth={2} />
-                {label}
+                {t(labelKey)}
               </button>
             );
           })}
@@ -112,8 +113,8 @@ function IdleState() {
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cream text-amber">
                   <FileText size={22} strokeWidth={1.75} />
                 </div>
-                <span className="font-display text-[17px] font-medium text-ink">Drop your résumé to begin</span>
-                <span className="font-body text-[13px] text-ink-muted">PDF or DOCX · or click to browse</span>
+                <span className="font-display text-[17px] font-medium text-ink">{t("upload.title")}</span>
+                <span className="font-body text-[13px] text-ink-muted">{t("upload.hint")}</span>
               </button>
             </>
           )}
@@ -123,9 +124,9 @@ function IdleState() {
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gold-bg text-amber">
                 <Sparkles size={22} strokeWidth={1.75} />
               </div>
-              <p className="font-display text-[17px] font-medium text-ink">No résumé? Build one by talking.</p>
+              <p className="font-display text-[17px] font-medium text-ink">{t("chat.title")}</p>
               <p className="max-w-[360px] font-body text-[13px] text-ink-light">
-                Answer a few questions and we&apos;ll draft a strong résumé from scratch.
+                {t("chat.desc")}
               </p>
               <Button
                 type="button"
@@ -134,7 +135,7 @@ function IdleState() {
                 className="mt-1 !rounded-full"
                 trailingIcon={<ArrowRight size={15} strokeWidth={2} />}
               >
-                Start a conversation
+                {t("chat.cta")}
               </Button>
             </div>
           )}
@@ -144,7 +145,7 @@ function IdleState() {
               <textarea
                 value={uploadText}
                 onChange={(e) => setUploadText(e.target.value)}
-                placeholder="Paste your résumé text here…"
+                placeholder={t("paste.placeholder")}
                 className="h-40 w-full resize-none rounded-xl border border-border bg-paper px-4 py-3 font-body text-[14px] text-ink outline-none placeholder:text-ink-muted focus:border-border-dark"
               />
               <Button
@@ -155,7 +156,7 @@ function IdleState() {
                 className="self-end !rounded-full"
                 trailingIcon={<ArrowRight size={15} strokeWidth={2} />}
               >
-                Parse résumé
+                {t("paste.cta")}
               </Button>
             </div>
           )}
@@ -169,7 +170,7 @@ function IdleState() {
                 disabled
               />
               <p className="text-left font-body text-[12px] text-ink-muted">
-                Link import is coming soon — for now, upload a file or paste your résumé text.
+                {t("link.comingSoon")}
               </p>
             </div>
           )}
@@ -183,7 +184,7 @@ function IdleState() {
         )}
 
         <p className="animate-fade-up-delay mt-8 font-mono text-[11px] text-ink-muted">
-          Password never stored · your data can stay on your device
+          {t("privacyNote")}
         </p>
       </div>
     </div>

@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
 import { statusVisual, type AppColumn } from "@/lib/status";
 import { Sparkles, Inbox, Compass, ArrowRight, X, ShieldCheck } from "lucide-react";
+
+type Translator = ReturnType<typeof useTranslations>;
 
 /** Row shape rendered in any column. Unifies the demo "applied" entries (kept
  *  for the empty-state seed during dev) and real API applications under a
@@ -29,17 +32,17 @@ interface TrackerCard {
   nextAction?: string | null;
 }
 
-const COLUMN_TITLES: Record<AppColumn, string> = {
-  applied: "Applied",
-  interviewing: "Interviewing",
-  outcome: "Outcome",
-};
+const columnTitles = (t: Translator): Record<AppColumn, string> => ({
+  applied: t("columns.applied"),
+  interviewing: t("columns.interviewing"),
+  outcome: t("columns.outcome"),
+});
 
-const COLUMN_EMPTY_COPY: Record<AppColumn, string> = {
-  applied: "Submit an application and it lands here.",
-  interviewing: "When a recruiter replies, the conversation moves to this column.",
-  outcome: "Offers and closed loops settle here.",
-};
+const columnEmptyCopy = (t: Translator): Record<AppColumn, string> => ({
+  applied: t("empty.applied"),
+  interviewing: t("empty.interviewing"),
+  outcome: t("empty.outcome"),
+});
 
 // Reverse mapping: the canonical status we PATCH to when a card is dropped
 // into a column. status.ts → kanban column is many-to-one (e.g. screen and
@@ -67,33 +70,33 @@ function monoFor(name: string): string {
 }
 
 /** Best-effort "2d ago" / "Just now" formatter from an ISO timestamp. */
-function relativeFrom(iso?: string | null): string {
+function relativeFrom(iso: string | null | undefined, t: Translator): string {
   if (!iso) return "";
   const ts = Date.parse(iso);
   if (!Number.isFinite(ts)) return "";
   const diffMs = Date.now() - ts;
   const s = Math.max(0, Math.floor(diffMs / 1000));
-  if (s < 60) return "Just now";
+  if (s < 60) return t("time.justNow");
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return t("time.minutesAgo", { n: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return t("time.hoursAgo", { n: h });
   const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
+  if (d < 7) return t("time.daysAgo", { n: d });
   const w = Math.floor(d / 7);
-  return `${w}w ago`;
+  return t("time.weeksAgo", { n: w });
 }
 
 // Compact "what's next on this row" chip (P3.2). Distinct color tracks
 // per action kind so the user can scan the column for "anything urgent
 // I need to do today" without reading every card.
-function NextActionBadge({ value }: { value: string }) {
+function NextActionBadge({ value, t }: { value: string; t: Translator }) {
   const spec = (() => {
-    if (value === "interview") return { text: "INTERVIEW", fg: "#7A2A1F", bg: "#F4D7D2" };
-    if (value === "follow_up") return { text: "FOLLOW UP", fg: "#8A6A12", bg: "#FBEFD0" };
-    if (value === "submit") return { text: "READY", fg: "#2F5722", bg: "#E2EED9" };
-    if (value === "prep") return { text: "PREP", fg: "#5D3000", bg: "#FBEFD8" };
-    if (value === "close_loop") return { text: "WRAP UP", fg: "#5D5046", bg: "#F4F0E8" };
+    if (value === "interview") return { text: t("nextAction.interview"), fg: "#7A2A1F", bg: "#F4D7D2" };
+    if (value === "follow_up") return { text: t("nextAction.followUp"), fg: "#8A6A12", bg: "#FBEFD0" };
+    if (value === "submit") return { text: t("nextAction.ready"), fg: "#2F5722", bg: "#E2EED9" };
+    if (value === "prep") return { text: t("nextAction.prep"), fg: "#5D3000", bg: "#FBEFD8" };
+    if (value === "close_loop") return { text: t("nextAction.wrapUp"), fg: "#5D5046", bg: "#F4F0E8" };
     return null;
   })();
   if (!spec) return null;
@@ -127,15 +130,15 @@ function appliedToCard(a: Applied, i: number): TrackerCard {
   };
 }
 
-function apiToCard(a: ApiApplication): TrackerCard {
-  const company = a.company || "Unknown company";
+function apiToCard(a: ApiApplication, t: Translator): TrackerCard {
+  const company = a.company || t("unknownCompany");
   return {
     key: `api-${a.id}`,
     applicationId: a.id,
     mono: monoFor(company),
     company,
-    role: a.role_title || "Role",
-    when: relativeFrom(a.submitted_at || a.created_at),
+    role: a.role_title || t("role"),
+    when: relativeFrom(a.submitted_at || a.created_at, t),
     status: a.status,
     nextAction: a.next_action ?? a.next_action_derived ?? null,
   };
@@ -157,6 +160,7 @@ function Column({
   onCardDragStart,
   onCardDragEnd,
   draggingId,
+  t,
 }: {
   column: AppColumn;
   title: string;
@@ -171,6 +175,7 @@ function Column({
   onCardDragStart: (id: string, status: string) => void;
   onCardDragEnd: () => void;
   draggingId: string | null;
+  t: Translator;
 }) {
   const dropHighlight = isHovered
     ? "border-brown bg-cream/60"
@@ -232,7 +237,7 @@ function Column({
                   if (card.applicationId) onCardPick(card.applicationId);
                 }}
                 disabled={!card.applicationId}
-                aria-label={`Open ${card.role} at ${card.company}`}
+                aria-label={t("openCard", { role: card.role, company: card.company })}
                 className={`block w-full text-left bg-white border rounded-xl p-[15px] shadow-sm transition-all ${highlight} ${
                   card.applicationId
                     ? "cursor-pointer hover:border-brown-light hover:shadow-md"
@@ -257,11 +262,11 @@ function Column({
                     {card.when}
                   </span>
                   <div className="flex items-center gap-[5px]">
-                    {card.nextAction ? <NextActionBadge value={card.nextAction} /> : null}
+                    {card.nextAction ? <NextActionBadge value={card.nextAction} t={t} /> : null}
                     <span
                       className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
                     >
-                      {card.isNew ? "Just sent" : v.label}
+                      {card.isNew ? t("justSent") : v.label}
                     </span>
                   </div>
                 </div>
@@ -276,14 +281,14 @@ function Column({
 
 // ─── Detail drawer ─────────────────────────────────────────────────────
 
-const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "draft", label: "Draft" },
-  { value: "review", label: "In review" },
-  { value: "submitted", label: "Submitted" },
-  { value: "interview", label: "Interviewing" },
-  { value: "offer", label: "Offer" },
-  { value: "rejected", label: "Rejected" },
-  { value: "ghosted", label: "Ghosted" },
+const statusOptions = (t: Translator): Array<{ value: string; label: string }> => [
+  { value: "draft", label: t("status.draft") },
+  { value: "review", label: t("status.review") },
+  { value: "submitted", label: t("status.submitted") },
+  { value: "interview", label: t("status.interview") },
+  { value: "offer", label: t("status.offer") },
+  { value: "rejected", label: t("status.rejected") },
+  { value: "ghosted", label: t("status.ghosted") },
 ];
 
 function DetailDrawer({
@@ -292,12 +297,14 @@ function DetailDrawer({
   onPatch,
   busy,
   errorMsg,
+  t,
 }: {
   application: ApiApplication;
   onClose: () => void;
   onPatch: (patch: { status?: string; outcome?: string; coverLetter?: string }) => void;
   busy: boolean;
   errorMsg: string | null;
+  t: Translator;
 }) {
   // A11Y_T3 (round-14): the round-14 a11y audit pointed out that this
   // drawer correctly declared role="dialog" + aria-modal="true" but
@@ -348,16 +355,16 @@ function DetailDrawer({
         <div className="flex items-start justify-between p-6 border-b border-border">
           <div className="min-w-0 flex-1 pr-3">
             <div className="font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2">
-              Application
+              {t("drawer.application")}
             </div>
             <h2
               id="application-drawer-title"
               className="font-display font-bold text-[20px] leading-[1.25] text-ink m-0"
             >
-              {application.role_title || "Role"}
+              {application.role_title || t("role")}
             </h2>
             <div className="font-body text-[13px] text-ink-light mt-1">
-              {application.company || "Unknown company"}
+              {application.company || t("unknownCompany")}
             </div>
             <div className="flex items-center gap-3 mt-3">
               <span
@@ -367,8 +374,8 @@ function DetailDrawer({
               </span>
               <span className="font-mono text-[10px] text-ink-muted">
                 {application.submitted_at
-                  ? `submitted ${relativeFrom(application.submitted_at)}`
-                  : `created ${relativeFrom(application.created_at)}`}
+                  ? t("drawer.submittedWhen", { when: relativeFrom(application.submitted_at, t) })
+                  : t("drawer.createdWhen", { when: relativeFrom(application.created_at, t) })}
               </span>
             </div>
           </div>
@@ -376,7 +383,7 @@ function DetailDrawer({
             ref={closeBtnRef}
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("drawer.close")}
             className="text-ink-light hover:text-ink p-2 -m-2"
           >
             <X className="w-[18px] h-[18px]" strokeWidth={1.7} />
@@ -391,7 +398,7 @@ function DetailDrawer({
           {/* Status field — primary edit. Backed by PATCH ?status=. */}
           <section>
             <label className="block font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2">
-              Status
+              {t("drawer.statusLabel")}
             </label>
             <select
               value={application.status}
@@ -399,15 +406,14 @@ function DetailDrawer({
               onChange={(e) => onPatch({ status: e.target.value })}
               className="w-full bg-white border border-border-dark rounded-[8px] px-3 py-2 font-body text-[14px] text-ink focus:outline-none focus:border-brown disabled:opacity-60"
             >
-              {STATUS_OPTIONS.map((s) => (
+              {statusOptions(t).map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
                 </option>
               ))}
             </select>
             <div className="font-body text-[11px] text-ink-muted mt-2 leading-[1.5]">
-              Moves the card between columns. The change saves immediately;
-              if it fails, the previous status comes back.
+              {t("drawer.statusHelp")}
             </div>
           </section>
 
@@ -417,13 +423,13 @@ function DetailDrawer({
               htmlFor="application-outcome"
               className="block font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2"
             >
-              Outcome (optional)
+              {t("drawer.outcomeLabel")}
             </label>
             <input
               id="application-outcome"
               type="text"
               defaultValue={application.outcome ?? ""}
-              placeholder="e.g. signed offer, closed at recruiter screen…"
+              placeholder={t("drawer.outcomePlaceholder")}
               disabled={busy}
               onBlur={(e) => {
                 const next = e.target.value.trim();
@@ -433,7 +439,7 @@ function DetailDrawer({
               className="w-full bg-white border border-border-dark rounded-[8px] px-3 py-2 font-body text-[14px] text-ink focus:outline-none focus:border-brown disabled:opacity-60"
             />
             <div className="font-body text-[11px] text-ink-muted mt-2 leading-[1.5]">
-              Narrative for what actually happened. Saved on blur.
+              {t("drawer.outcomeHelp")}
             </div>
           </section>
 
@@ -443,12 +449,12 @@ function DetailDrawer({
               htmlFor="application-cover"
               className="block font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2"
             >
-              Cover letter draft
+              {t("drawer.coverLabel")}
             </label>
             <textarea
               id="application-cover"
               defaultValue={application.cover_letter ?? ""}
-              placeholder="Paste or write the cover letter you sent…"
+              placeholder={t("drawer.coverPlaceholder")}
               rows={8}
               disabled={busy}
               onBlur={(e) => {
@@ -482,6 +488,7 @@ function DetailDrawer({
 // ─── TrackerView ───────────────────────────────────────────────────────
 
 export function TrackerView() {
+  const t = useTranslations("tracker");
   // Seed entries from the demo onboarding path — kept ONLY until the user
   // submits their first real application. Once any API application lands the
   // seeds are dropped from the board so columns are exclusively real.
@@ -545,13 +552,13 @@ export function TrackerView() {
       outcome: [],
     };
     apiApplications.forEach((a) => {
-      buckets[statusVisual(a.status).column].push(apiToCard(a));
+      buckets[statusVisual(a.status).column].push(apiToCard(a, t));
     });
     if (apiApplications.length === 0) {
       applied.forEach((a, i) => buckets.applied.push(appliedToCard(a, i)));
     }
     return buckets;
-  }, [apiApplications, applied]);
+  }, [apiApplications, applied, t]);
 
   const selected = useMemo(
     () => apiApplications.find((a) => a.id === selectedId) ?? null,
@@ -621,8 +628,8 @@ export function TrackerView() {
       if (!res.ok) {
         setDropError(
           res.error
-            ? `Couldn't update that card: ${res.error}`
-            : "Couldn't update that card. Try again.",
+            ? t("dropErrorWithReason", { reason: res.error })
+            : t("dropError"),
         );
       }
     } finally {
@@ -640,18 +647,18 @@ export function TrackerView() {
   return (
     <div className="px-12 pt-10 pb-[60px] animate-fade-up">
       <div className="font-mono text-[11px] tracking-[1px] uppercase text-ink-muted mb-[10px]">
-        Pipeline
+        {t("pipeline")}
       </div>
       <div className="flex items-baseline justify-between mb-[26px] gap-4 flex-wrap">
         <h1 className="font-display font-bold text-[32px] -tracking-[0.3px] text-ink m-0">
-          Applications
+          {t("title")}
         </h1>
         <span className="font-body text-[13px] text-ink-muted">
           {apiAppsLoading
-            ? "Syncing with database…"
+            ? t("syncing")
             : totalReal === 0
-              ? "Nothing submitted yet — your seed flow is below."
-              : `${totalReal} ${totalReal === 1 ? "application" : "applications"} tracked`}
+              ? t("nothingSubmitted")
+              : t("tracked", { count: totalReal })}
         </span>
       </div>
 
@@ -662,20 +669,19 @@ export function TrackerView() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-body font-semibold text-[13.5px] text-ink">
-              You submit · we prepare
+              {t("delivery.title")}
             </div>
             <div className="font-body text-[12.5px] text-ink-light mt-[3px] leading-snug">
-              Vantage tailors your résumé, drafts the cover letter, and pre-fills
-              the form — but the final <strong className="font-semibold">Submit</strong>{" "}
-              click happens in your browser, under your login, on your IP.
-              Zero risk of bot-detection, no stored ATS passwords.
+              {t.rich("delivery.body", {
+                strong: (chunks) => <strong className="font-semibold">{chunks}</strong>,
+              })}
             </div>
           </div>
           <button
             type="button"
             onClick={dismissDeliveryInfo}
-            title="Got it — don't show again"
-            aria-label="Dismiss explanation"
+            title={t("delivery.dismissTitle")}
+            aria-label={t("delivery.dismissLabel")}
             className="shrink-0 cursor-pointer border-none bg-transparent text-ink-muted hover:text-ink p-1 rounded-[6px]"
           >
             <X className="w-[14px] h-[14px]" strokeWidth={1.8} />
@@ -697,8 +703,8 @@ export function TrackerView() {
           <button
             type="button"
             onClick={() => setDropError(null)}
-            title="Dismiss"
-            aria-label="Dismiss drop error"
+            title={t("dismiss")}
+            aria-label={t("dismissDropError")}
             className="shrink-0 cursor-pointer border-none bg-transparent p-1 rounded-[6px]"
             style={{ color: "#7A2A1F" }}
           >
@@ -711,15 +717,17 @@ export function TrackerView() {
         <div className="mb-6 flex items-center gap-3 bg-gold-bg border border-cream-border rounded-[13px] px-4 py-3">
           <Sparkles className="w-[16px] h-[16px] text-amber" strokeWidth={1.8} />
           <span className="font-body text-[13.5px] text-brown flex-1">
-            You have {cards.interviewing.length} active {cards.interviewing.length === 1 ? "interview" : "interviews"}.
-            Click <strong className="font-semibold">Prep this interview</strong> to launch a mock.
+            {t.rich("interviewingBanner", {
+              count: cards.interviewing.length,
+              strong: (chunks) => <strong className="font-semibold">{chunks}</strong>,
+            })}
           </span>
           <button
             type="button"
             onClick={() => openPrep(0)}
             className="cursor-pointer border-none bg-brown text-paper font-body font-semibold text-[12.5px] px-[14px] py-[7px] rounded-[8px] hover:bg-brown-light transition-colors"
           >
-            Open prep
+            {t("openPrep")}
           </button>
         </div>
       )}
@@ -735,18 +743,17 @@ export function TrackerView() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-body font-semibold text-[13.5px] text-ink">
-              Nothing here yet — pick a role from today&apos;s matches to begin.
+              {t("firstEmptyTitle")}
             </div>
             <div className="font-body text-[12.5px] text-ink-light mt-[3px]">
-              Once you tailor and submit your first application, this board fills
-              with real activity. The cards below are a preview only.
+              {t("firstEmptyBody")}
             </div>
           </div>
           <Link
             href="/app/today"
             className="shrink-0 inline-flex items-center gap-[6px] no-underline border-none bg-brown text-paper font-body font-semibold text-[12.5px] px-[14px] py-[7px] rounded-[8px] hover:bg-brown-light transition-colors"
           >
-            Browse matches
+            {t("browseMatches")}
             <ArrowRight className="w-[13px] h-[13px]" strokeWidth={2} />
           </Link>
         </div>
@@ -757,9 +764,9 @@ export function TrackerView() {
           <Column
             key={column}
             column={column}
-            title={COLUMN_TITLES[column]}
+            title={columnTitles(t)[column]}
             cards={cards[column]}
-            emptyCopy={COLUMN_EMPTY_COPY[column]}
+            emptyCopy={columnEmptyCopy(t)[column]}
             isDropTarget={draggingId !== null}
             isHovered={hoveredColumn === column}
             onDragOver={(e) => onColumnDragOver(column, e)}
@@ -772,6 +779,7 @@ export function TrackerView() {
               setHoveredColumn(null);
             }}
             draggingId={draggingId}
+            t={t}
           />
         ))}
       </div>
@@ -786,6 +794,7 @@ export function TrackerView() {
           onPatch={(patch) => applyPatch(selected.id, patch)}
           busy={drawerBusy}
           errorMsg={drawerError}
+          t={t}
         />
       ) : null}
     </div>
