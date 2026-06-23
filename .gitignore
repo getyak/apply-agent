@@ -101,6 +101,9 @@ TODO.md
 /.lock
 /__probe_*
 
+# relay-up skill runtime artifacts (logs + pids for the local dev stack)
+/.relay-stack/
+
 # env (ensure .env.example is allowed)
 .env.*
 !.env.example
