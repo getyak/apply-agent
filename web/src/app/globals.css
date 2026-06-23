@@ -2398,3 +2398,113 @@ html { scroll-padding-top: 5rem; }
      so the entrance never plays even partially. */
   :focus-visible { animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v27 — Tempered lustre. v9–v26 lit the surface and tuned the ground it rests
+   on; v27 is the polish pass that makes the *same warm metal* speak through
+   four small, often-touched moments — the text you select, the card grid you
+   sweep, the wordmark you glance back at, the quiet section labels. Every move
+   is additive and rides a signal the page already publishes (PointerFX's
+   smoothed `--pointer-heat` 0..1 on <html>, the `html[data-idle]` rest flag,
+   the per-card `--gx/--gy` pool position, the `[data-glowing]` switch), so each
+   rule collapses to a *pixel-identical* rest state at heat 0 / no idle / no
+   hover — nothing here paints until the hand actually does something. The whole
+   layer sits under the reduced-motion guard at the foot, and the live signals
+   it reads are themselves only ever produced on a fine pointer with motion
+   allowed, so it is doubly dark for keyboard + reduced-motion users.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Heat-warmed selection — the highlight is cream at rest (identical to the
+   v-earlier ::selection), but because you can only select text *while the
+   cursor is moving*, --pointer-heat is naturally up at the exact moment the
+   highlight is drawn. So the band warms cream→gold under an active drag and
+   settles back to cream the instant you let go: the selection reads as struck
+   from the same lamp as everything else, not a flat browser blue. color-mix's
+   second-colour percentage is driven by heat (0% → pure cream), and
+   --pointer-heat inherits from <html> down into the ::selection pseudo. */
+::selection {
+  background: color-mix(in oklab,
+    #F2D49A,
+    #EBB54A calc(var(--pointer-heat, 0) * 100%));
+  color: #2B2822;
+  text-shadow: none;
+}
+
+/* (2) Heat-fanned card pool — re-states the v19 .card-glow::after background so
+   the travelling spotlight intensifies and widens as the hand quickens, exactly
+   as the v25 page aura answers heat. Every term reduces to the v19 value at
+   heat 0 (260px / 0.20 alpha), so a still grid is untouched; under a fast sweep
+   the pool grows ~40% and warms, and a tight bright core kindles in only when
+   hot — so sweeping a wall of cards feels like running a lamp across forged
+   metal rather than toggling eight identical glows. Selector + pseudo match the
+   v19 rule, later same-specificity wins, so the on-dark `screen` variant and
+   the `[data-glowing]` opacity switch below it are inherited untouched. */
+.card-glow::after {
+  background:
+    radial-gradient(calc(120px + var(--pointer-heat, 0) * 120px) circle
+        at var(--gx, 50%) var(--gy, 0%),
+      rgba(247, 212, 136, calc(var(--pointer-heat, 0) * 0.22)),
+      transparent 60%),
+    radial-gradient(calc(260px + var(--pointer-heat, 0) * 110px) circle
+        at var(--gx, 50%) var(--gy, 0%),
+      rgba(232, 163, 23, calc(0.20 + var(--pointer-heat, 0) * 0.08)),
+      rgba(232, 163, 23, 0.05) 42%, transparent 66%);
+}
+
+/* (3) Idle wordmark breath — the VANTAGE wordmark carries a periodic gleam
+   sweep (v5); v27 hangs a slow warm halo on it that only kindles once the
+   reader holds still (root gains data-idle from PointerFX — the same rest
+   signal the v24 eyebrow ember rides), so the brand mark keeps a faint pulse of
+   life while the page rests, then drops to nothing the moment the hand moves.
+   Pure text-shadow breath: no layout, no colour change to the glyphs. */
+@keyframes wordmark-idle-breath {
+  0%, 100% { text-shadow: 0 0 0 rgba(232, 163, 23, 0); }
+  50%      { text-shadow: 0 1px 16px rgba(243, 200, 105, 0.45); }
+}
+html[data-idle="true"] .wordmark-gleam {
+  animation: wordmark-idle-breath 5s var(--ease-in-out) infinite;
+}
+
+/* (4) Kindled eyebrow rule — the section-label rule already grows + pans a gold
+   gradient on arrival (v-earlier). v27 lets it answer the room: it lengthens a
+   touch and lifts a soft gilt glow when the cursor rests over its section
+   (`:hover` on the label's group) and breathes that same glow slowly while the
+   whole page is idle, so even the quiet eyebrows read as lit from within rather
+   than printed flat. Glow only — width eases by a few px, the arrival animation
+   and gradient pan are untouched. */
+.eyebrow-rule {
+  transition:
+    width var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .group:hover .eyebrow-rule,
+  .eyebrow-row:hover .eyebrow-rule {
+    width: 40px;
+    box-shadow: 0 0 12px -1px rgba(243, 200, 105, 0.8);
+  }
+}
+@keyframes eyebrow-rule-breath {
+  0%, 100% { box-shadow: 0 0 6px -2px rgba(232, 163, 23, 0.5); }
+  50%      { box-shadow: 0 0 14px 0 rgba(243, 200, 105, 0.85); }
+}
+html[data-idle="true"] .eyebrow-rule {
+  animation:
+    underline-grow 0.7s var(--ease-out) both,
+    gradient-pan 4s linear infinite,
+    eyebrow-rule-breath 4.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* PointerFX never arms under reduced motion, so heat stays 0 and data-idle is
+     never set — every move above is already at rest. Pin the two idle
+     animations off explicitly (the `*` guard flattens durations but can't stop
+     a named keyframe mid-cycle) and drop selection back to flat cream so no
+     color-mix is evaluated against a stray heat value. */
+  ::selection { background: #F2D49A; }
+  html[data-idle="true"] .wordmark-gleam { animation: none !important; }
+  html[data-idle="true"] .eyebrow-rule {
+    animation: underline-grow 0.7s var(--ease-out) both !important;
+  }
+  .eyebrow-rule { transition: none !important; }
+}
