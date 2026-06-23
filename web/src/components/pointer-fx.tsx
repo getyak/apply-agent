@@ -20,6 +20,16 @@ import { useEffect } from "react";
  *   5. Pointer-lit cards (v19) — a warm pool tracks the cursor across the
  *      pricing + differentiator cards (`data-glow`), so a whole grid lights up
  *      under the hand rather than each card waking only on direct hover.
+ *   6. Kindled wake (v25) — the page reads how *fast* the hand is moving and
+ *      lets the warm light answer. Pointer speed is differentiated into a
+ *      smoothed `--pointer-heat` (0..1) on <html>; the continuous aura (effect
+ *      7 below / the v21 field) reads it to bloom brighter and wider as the
+ *      hand quickens — fanning the lamp — and a sparse trail of gold embers
+ *      sheds from the cursor when the heat crests, drifting up and burning out.
+ *      Both decay to nothing the instant the hand stills, so a resting page
+ *      costs zero frames and is pixel-identical to before. This is the same
+ *      forge/ember/lamp vocabulary the rest of the page already speaks, now
+ *      made responsive to the reader's own tempo.
  *
  * v13 — weighted light. Effects 2–4 used to write the raw cursor target every
  * frame, so the lean and the light *snapped* to the pointer. They now ride a
@@ -297,6 +307,120 @@ export default function PointerFX() {
       window.clearTimeout(idleTimer);
       aura.remove();
       delete root.dataset.idle;
+    });
+
+    // ── Kindled wake (v25) ───────────────────────────────────────────────────
+    // The page already follows *where* the hand is (the v21 aura); v25 lets it
+    // feel *how fast*. Each pointer move differentiates px-travelled / ms into an
+    // impulse; a single rAF bleeds that energy back toward 0 with exponential
+    // decay and publishes the smoothed value as `--pointer-heat` (0..1) on the
+    // root. The CSS aura reads it to brighten + widen as the hand quickens, then
+    // settles as it stills. The loop *parks itself* the instant heat returns to
+    // rest, so a still page runs zero frames — same discipline as the scroll
+    // momentum engine. Heat is built here rather than in the existing inertial
+    // tick because it is a decaying scalar, not a target-seeking spring.
+    let heat = 0;
+    let hRaf = 0;
+    let hx = 0;
+    let hy = 0;
+    let hT = performance.now();
+    let primed = false; // skip the first sample so a teleport-in can't spike heat
+    const HEAT_PEAK = 2.6; // px/ms that maps to full heat (a brisk flick)
+    const HEAT_DECAY = 0.9; // fraction of heat retained per frame at rest
+    const writeHeat = (v: number) =>
+      root.style.setProperty("--pointer-heat", v.toFixed(3));
+
+    // Ember wake: a capped, throttled pool of motes shed from the cursor while
+    // the heat is high. Each is a single <span> appended to the aura node (which
+    // is already fixed, full-viewport and pointer-transparent), positioned in
+    // viewport px and self-removing on animationend — no per-frame bookkeeping.
+    const MOTE_CAP = 14; // hard ceiling on concurrent motes (busyness guard)
+    const MOTE_GAP = 55; // ms — minimum spacing between emissions
+    let liveMotes = 0;
+    let lastMote = 0;
+    let lastMx = 0;
+    let lastMy = 0;
+    const shedMote = (x: number, y: number, now: number) => {
+      if (liveMotes >= MOTE_CAP || now - lastMote < MOTE_GAP) return;
+      lastMote = now;
+      liveMotes++;
+      const mote = document.createElement("span");
+      mote.className = "wake-mote";
+      // Scatter a touch off the exact cursor point and vary size/rise/drift so
+      // the trail reads as live sparks, not a mechanical dotted line.
+      const jitter = () => (Math.random() - 0.5) * 14;
+      mote.style.left = `${x + jitter()}px`;
+      mote.style.top = `${y + jitter()}px`;
+      mote.style.setProperty("--m-size", `${(3 + Math.random() * 3).toFixed(1)}px`);
+      mote.style.setProperty("--m-rise", `${(34 + Math.random() * 40).toFixed(0)}px`);
+      mote.style.setProperty("--m-drift", `${(Math.random() - 0.5) * 26}px`);
+      mote.style.setProperty("--m-dur", `${(0.85 + Math.random() * 0.7).toFixed(2)}s`);
+      mote.addEventListener(
+        "animationend",
+        () => {
+          mote.remove();
+          liveMotes--;
+        },
+        { once: true },
+      );
+      aura.appendChild(mote);
+    };
+
+    const heatDecay = () => {
+      hRaf = 0;
+      heat *= HEAT_DECAY;
+      if (heat < 0.005) {
+        heat = 0;
+        writeHeat(0);
+        return; // settled — park the loop
+      }
+      writeHeat(heat);
+      hRaf = requestAnimationFrame(heatDecay);
+    };
+    const onHeat = (e: PointerEvent) => {
+      const now = performance.now();
+      const x = e.clientX;
+      const y = e.clientY;
+      if (!primed) {
+        primed = true;
+        hx = x;
+        hy = y;
+        hT = now;
+        lastMx = x;
+        lastMy = y;
+        return;
+      }
+      const dt = Math.max(now - hT, 1);
+      const dist = Math.hypot(x - hx, y - hy);
+      const v = dist / dt; // px/ms
+      hx = x;
+      hy = y;
+      hT = now;
+      heat = Math.min(1, Math.max(heat, heat * 0.5 + (v / HEAT_PEAK)));
+      writeHeat(heat);
+      if (!hRaf) hRaf = requestAnimationFrame(heatDecay);
+      // Once warm enough, shed embers — and only along real travel, so a slow
+      // drift never sparks. Sample a few points along the segment when the jump
+      // is large so a fast fling still lays a continuous wake, not gaps.
+      if (heat > 0.42) {
+        const seg = Math.hypot(x - lastMx, y - lastMy);
+        const steps = Math.min(3, Math.max(1, Math.floor(seg / 26)));
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          shedMote(lastMx + (x - lastMx) * t, lastMy + (y - lastMy) * t, now);
+        }
+        lastMx = x;
+        lastMy = y;
+      } else {
+        lastMx = x;
+        lastMy = y;
+      }
+    };
+    window.addEventListener("pointermove", onHeat, { passive: true });
+    cleanups.push(() => {
+      window.removeEventListener("pointermove", onHeat);
+      if (hRaf) cancelAnimationFrame(hRaf);
+      root.style.removeProperty("--pointer-heat");
     });
 
     return () => {
