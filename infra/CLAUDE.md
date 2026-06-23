@@ -29,9 +29,13 @@ PostgreSQL with extensions: `pgvector`, `pgcrypto`, `pg_trgm`, `uuid-ossp`.
 | 009 | Interviews | `interview_sessions`, `interview_questions`, `interview_question_pool` (vector) |
 | 010 | Agents | `agent_configs`, `agent_tasks` |
 
+Later migrations (011–017) extend this base: 011 user password, 012/013 Vantage UI + interview modes, 014 TTAR metrics, 015 application next-action, 016 atomic resume version trigger, **017 dual-track résumé** (`resumes.track` original/optimized/tailored + `derived_from` + `bullet_index`; new `resume_suggestions` table; `prevent_original_mutation` trigger). 017 backs `docs/design/resume-original-vs-optimized-vibe-design.md`.
+
 Key patterns:
 - pgvector (1536-dim, ivfflat) on resumes / jobs / memories / question pool for semantic search
 - Optimistic locking on resumes via `version` field
+- Dual-track résumés: `track` axis (original = immutable upload, optimized = AI sibling, tailored = per-JD); `resume_suggestions` is the long-lived AI suggestion stack (proposed → accepted/rejected)
+- Bullet-level stable IDs in `resumes.bullet_index` — the physical basis for per-bullet vibe edits
 - Soft-delete on `user_files` (GDPR)
 - HITL fields on `agent_tasks` (action, payload, decision, decided_at)
 - Auto `updated_at` trigger on users / jobs / applications / memories
