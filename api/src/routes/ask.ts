@@ -28,11 +28,28 @@ import type { AppEnv } from "../types";
 // through to the dock channel server-side.
 const SURFACES = ["dock", "resume_studio", "mock_studio", "applications"] as const;
 
+// Supported UI locales (mirror of web/src/i18n/config.ts LOCALES). The
+// gateway forwards the resolved locale to the Python agent host as
+// X-Relay-Locale so the coordinator/router can pin reply language instead
+// of re-guessing from the message charset on every turn.
+const LOCALES = ["en", "zh"] as const;
+
 const AskBody = z.object({
   prompt: z.string().min(1).max(8_000),
   thread_id: z.string().min(1).max(200),
   surface: z.enum(SURFACES).optional(),
+  // UI locale chosen by the user (dock sends it from the NEXT_LOCALE cookie
+  // mirror). Optional so older clients keep working; falls back to the
+  // Accept-Language header, then "en" downstream.
+  locale: z.enum(LOCALES).optional(),
 });
+
+// Map an Accept-Language header to a supported locale. Anything Chinese → zh,
+// else en. Used only when the body omits an explicit locale.
+function localeFromHeader(acceptLanguage: string | undefined): "en" | "zh" {
+  if (!acceptLanguage) return "en";
+  return /(^|[,;\s])zh/i.test(acceptLanguage) ? "zh" : "en";
+}
 
 const AGENT_HUMAN_LABEL: Record<string, string> = {
   resume_agent: "RÉSUMÉ AGENT",
@@ -121,9 +138,14 @@ function truncateForHistory(text: string): string {
 
 routes.use("/stream", authMiddleware);
 routes.post("/stream", validateBody(AskBody), async (c) => {
-  const { prompt, thread_id, surface } = c.get("validatedBody") as z.infer<
-    typeof AskBody
-  >;
+  const { prompt, thread_id, surface, locale } = c.get(
+    "validatedBody",
+  ) as z.infer<typeof AskBody>;
+  // Resolve the locale once: explicit body choice wins, else fall back to the
+  // browser's Accept-Language, else "en". Forwarded downstream so the agent
+  // reply language is pinned to the user's UI language (not re-guessed).
+  const resolvedLocale =
+    locale ?? localeFromHeader(c.req.header("accept-language"));
   const userId = c.get("userId") as string;
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/ask/stream`;
 
@@ -185,6 +207,8 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
         // to load. Default to "dock" upstream if absent, so older clients
         // keep working unchanged.
         ...(surface ? { "X-Relay-Surface": surface } : {}),
+        // UI locale — pins the agent's reply language (en/zh). Always sent.
+        "X-Relay-Locale": resolvedLocale,
         ...(requestId ? { "X-Request-Id": requestId } : {}),
       },
       body: JSON.stringify({ message: prompt }),
@@ -651,6 +675,7 @@ function toNdjson(
 
 function humanizeAction(agent: string, action: string): string {
   if (agent === "resume_agent" && action === "customize") return "Tailored résumé ready";
+  if (agent === "resume_agent" && action === "optimize_general") return "Résumé suggestions ready";
   if (agent === "resume_agent" && action === "update_field") return "Résumé update queued";
   if (agent === "interview_agent" && action === "build_mock_graph") return "Mock session ready";
   if (agent === "trend_agent" && action === "daily_snapshot") return "Today's market snapshot";
@@ -703,6 +728,16 @@ interface ArtifactAction {
   label: string;
   route?: string;
 }
+interface SuggestionOut {
+  id: string;
+  bullet_stable_id: string | null;
+  section: string | null;
+  change_type: string;
+  before_text: string;
+  after_text: string;
+  rationale: string | null;
+  risk_level: "safe" | "needs_review" | "unsupported";
+}
 interface ArtifactOut {
   artifact_type:
     | "resume_version"
@@ -710,7 +745,10 @@ interface ArtifactOut {
     | "application_package"
     | "interview_session"
     | "cover_letter"
-    | "market_snapshot";
+    | "market_snapshot"
+    // Dual-track suggestion stack (design §6.3) — accept/reject cards rendered
+    // inline in the dock, no page jump.
+    | "suggestion_list";
   id: string;
   title: string;
   sub: string;
@@ -718,6 +756,9 @@ interface ArtifactOut {
   needs_user_review?: boolean;
   source_evidence?: ArtifactSource[];
   next_actions?: ArtifactAction[];
+  // Only set for suggestion_list artifacts.
+  suggestions?: SuggestionOut[];
+  source_resume_id?: string;
 }
 
 export function buildArtifact(
@@ -755,6 +796,42 @@ export function buildArtifact(
       next_actions: [
         { kind: "open", label: "Open résumé", route: route ?? "/app/studio/resume" },
         { kind: "tweak", label: "Tweak in studio", route: "/app/studio/resume" },
+      ],
+    };
+  }
+  // Dual-track optimize pass → a suggestion-list card the user accepts/rejects
+  // inline in the dock (design §6.3). The suggestions ride in the payload from
+  // the router's optimize_resume dispatch.
+  if (agent === "resume_agent" && action === "optimize_general") {
+    const raw = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+    const suggestions: SuggestionOut[] = raw
+      .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null)
+      .map((s) => ({
+        id: String(s.id ?? ""),
+        bullet_stable_id: (s.bullet_stable_id as string) ?? null,
+        section: (s.section as string) ?? null,
+        change_type: String(s.change_type ?? ""),
+        before_text: String(s.before_text ?? ""),
+        after_text: String(s.after_text ?? ""),
+        rationale: (s.rationale as string) ?? null,
+        risk_level: (s.risk_level as SuggestionOut["risk_level"]) ?? "needs_review",
+      }))
+      .filter((s) => s.id && s.after_text);
+    return {
+      artifact_type: "suggestion_list",
+      id,
+      title: suggestions.length
+        ? `${suggestions.length} quick win${suggestions.length === 1 ? "" : "s"} ready`
+        : "Your résumé looks solid",
+      sub: suggestions.length
+        ? "Accept to fold into your optimized version. Originals stay untouched."
+        : "Nothing pressing to change right now.",
+      needs_user_review: suggestions.some((s) => s.risk_level === "needs_review"),
+      suggestions,
+      source_resume_id:
+        typeof payload.source_resume_id === "string" ? payload.source_resume_id : undefined,
+      next_actions: [
+        { kind: "open", label: "Open in studio", route: "/app/studio/resume" },
       ],
     };
   }

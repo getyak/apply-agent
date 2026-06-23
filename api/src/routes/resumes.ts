@@ -16,6 +16,7 @@ import { cache } from "../cache";
 import { llm, LLMUnavailableError } from "../llm";
 import { parseResumeText } from "../resume-parse";
 import { createJob, getJob, runJob } from "../jobs";
+import { config } from "../config";
 import { ConflictError, NotFoundError, UpstreamError } from "../errors";
 import type {
   CreateResume,
@@ -178,32 +179,55 @@ async function saveBaseResume(
     ...(source ? { source } : {}),
   };
 
-  // Re-upload semantics: a re-parse replaces the user's base row IN PLACE —
-  // we don't bump version. Only JD-tailored variants and user-driven edits
-  // (PUT /:id) create new versions; "user re-uploads the same PDF" is a
-  // refresh of the same v1, not a v2.
+  // Re-upload semantics changed with migration 017 (dual-track model):
+  // originals are IMMUTABLE — the prevent_original_mutation trigger rejects any
+  // content change on a track='original' row. So a re-upload can no longer
+  // UPDATE the base in place; it INSERTs a NEW track='original' row (the old
+  // one is preserved, satisfying the "your upload is a contract" promise in
+  // docs/design/resume-original-vs-optimized-vibe-design.md §3.1/§7.2).
   //
-  // Two writers serialise cleanly: the UPDATE locks the base row, and even
-  // if no base exists yet, the INSERT path passes version=0 so migration
-  // 016's trigger assigns a fresh version under a per-user advisory lock.
-  // The old MAX(version)+1 race is gone on both branches.
-  const updateResult = await query(
-    `UPDATE resumes
-       SET content = $1
-     WHERE user_id = $2 AND is_base = true
-     RETURNING id, user_id, content, version, is_base, created_at`,
-    [JSON.stringify(content), userId],
+  // To keep legacy `WHERE is_base = true` readers correct (they expect one
+  // current base), we demote any prior base to is_base = false first. That
+  // UPDATE only touches the is_base flag, not content, so the immutability
+  // trigger allows it. The INSERT passes version = 0 so migration 016's trigger
+  // assigns the next per-user version under an advisory lock (no 23505 race).
+  await query(
+    `UPDATE resumes SET is_base = false
+       WHERE user_id = $1 AND is_base = true`,
+    [userId],
   );
-  if (updateResult.rows.length > 0) return updateResult.rows[0];
 
-  // First-time upload for this user — let the trigger assign the version.
   const insert = await query(
-    `INSERT INTO resumes (user_id, content, version, is_base, created_at)
-     VALUES ($1, $2, 0, true, NOW())
+    `INSERT INTO resumes (user_id, content, version, is_base, track, source_file_id, created_at)
+     VALUES ($1, $2, 0, true, 'original', $3, NOW())
      RETURNING id, user_id, content, version, is_base, created_at`,
-    [userId, JSON.stringify(content)],
+    [userId, JSON.stringify(content), sourceFileId ?? null],
   );
   return insert.rows[0];
+}
+
+/**
+ * Fire-and-forget chain into the Python agent's no-JD optimize pass.
+ * Best-effort: any failure (agent down, parse race) is logged, never thrown —
+ * onboarding must not block on it. The agent persists the suggestion stack +
+ * optimized sibling itself; we don't await a body.
+ */
+async function triggerResumeOptimize(userId: string, resumeId: string): Promise<void> {
+  try {
+    const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/optimize`;
+    const resp = await fetch(target, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-relay-user-id": userId },
+      body: JSON.stringify({ base_resume_id: resumeId }),
+    });
+    if (!resp.ok) {
+      console.warn(
+        `[resume] optimize chain returned ${resp.status} for resume ${resumeId}`,
+      );
+    }
+  } catch (err) {
+    console.warn(`[resume] optimize chain failed for resume ${resumeId}:`, err);
+  }
 }
 
 /** Shape returned to the client when a parse job finishes. */
@@ -245,6 +269,15 @@ app.post("/parse-async", parseAsyncLimiter, validateBody(ParseResumeAsyncSchema)
       const row = await saveBaseResume(userId, parsed, sourceFileId);
       saved = true;
       resumeId = row.id as string;
+      // Chain an AI optimize pass (design §6.2): the original is now saved, so
+      // kick off a no-JD best-practice pass in the agent layer. Fire-and-forget
+      // — the optimized sibling + suggestions surface asynchronously in the dock
+      // and studio; a failure here never blocks onboarding. Only chain when the
+      // parse actually produced structure (a fallback raw-text v1 has nothing to
+      // optimize yet).
+      if (!parsed.usedFallback && (resumeId as string)) {
+        void triggerResumeOptimize(userId, resumeId as string);
+      }
     }
     return {
       resume: parsed.resume,
@@ -285,8 +318,11 @@ app.get("/", async (c) => {
 
   const result = await query(
     // sort/order come from the validated allowlist, so identifier interpolation
-    // is safe here; limit/offset stay bound parameters.
-    `SELECT id, version, is_base, tailored_for_job, created_at FROM resumes
+    // is safe here; limit/offset stay bound parameters. track/derived_from
+    // (migration 017) let the studio split versions into Original / Optimized /
+    // Tailored rails and draw the derivation chain.
+    `SELECT id, version, is_base, tailored_for_job, track, derived_from,
+            source_file_id, created_at FROM resumes
      WHERE user_id = $1 ORDER BY ${sort} ${order} LIMIT $2 OFFSET $3`,
     [userId, limit, offset],
   );
@@ -502,6 +538,94 @@ app.get("/:id/analyze", async (c) => {
     }
     throw err;
   }
+});
+
+// ── Dual-track suggestion stack (migration 017 / design §6) ──────────────
+
+// GET /:id/suggestions — the AI suggestion stack for a résumé. Read straight
+// from PG (no LLM); the studio + dock render these as accept/reject cards.
+// ?status= filters (default: proposed, i.e. things still awaiting a decision).
+app.get("/:id/suggestions", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  // Ownership: a suggestion is only returned when its source résumé belongs to
+  // the caller. We scope by both the suggestion's user_id and the résumé id.
+  const status = c.req.query("status") ?? "proposed";
+  const rows = await query(
+    `SELECT id, bullet_stable_id, section, change_type, before_text,
+            after_text, rationale, risk_level, status, proposed_by, proposed_at
+       FROM resume_suggestions
+      WHERE user_id = $1 AND source_resume_id = $2 AND status = $3
+      ORDER BY proposed_at ASC`,
+    [userId, id, status],
+  );
+  return c.json({ suggestions: rows.rows });
+});
+
+// POST /:id/bullet-edit — vibe chat on ONE bullet (design §6.3 [Discuss]).
+// Proxies to the agent's propose_bullet_edit, which returns a single proposed
+// suggestion the dock renders as a fresh suggestion card.
+app.post("/:id/bullet-edit", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const body = (await c.req.json().catch(() => ({}))) as {
+    bulletStableId?: string;
+    instruction?: string;
+  };
+  if (!body.bulletStableId || !body.instruction) {
+    throw new ConflictError("bulletStableId and instruction are required");
+  }
+  const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/propose-bullet-edit`;
+  const resp = await fetch(target, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-relay-user-id": userId },
+    body: JSON.stringify({
+      resume_id: id,
+      bullet_stable_id: body.bulletStableId,
+      instruction: body.instruction,
+    }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new UpstreamError(
+      `agent propose-bullet-edit returned ${resp.status}`,
+      text.slice(0, 500),
+    );
+  }
+  return c.json(await resp.json());
+});
+
+// POST /suggestions/:sid/decision — accept or reject one suggestion. Proxies to
+// the agent layer, which (on accept) materializes it into a new optimized
+// version under the fabrication guard. Kept thin: the agent owns the write.
+app.post("/suggestions/:sid/decision", async (c) => {
+  const userId = c.get("userId");
+  const sid = c.req.param("sid");
+  const body = (await c.req.json().catch(() => ({}))) as {
+    decision?: string;
+    decidedVia?: string;
+  };
+  if (body.decision !== "accept" && body.decision !== "reject") {
+    throw new ConflictError("decision must be 'accept' or 'reject'");
+  }
+  const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/suggestions/${sid}/decision`;
+  const resp = await fetch(target, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-relay-user-id": userId },
+    body: JSON.stringify({
+      decision: body.decision,
+      decided_via: body.decidedVia ?? "dock_inline",
+    }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    if (resp.status === 404) throw new NotFoundError("Suggestion not found");
+    throw new UpstreamError(
+      `agent suggestion decision returned ${resp.status}`,
+      text.slice(0, 500),
+    );
+  }
+  return c.json(await resp.json());
 });
 
 export default app;
