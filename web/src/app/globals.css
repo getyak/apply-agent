@@ -2334,3 +2334,67 @@ html[data-idle="true"] .eyebrow-dot {
   }
   .wake-mote { animation: none !important; opacity: 0 !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v26 — Settled finish. v9–v25 built the lit, living surface; v26 tunes the
+   ground it all rests on, so the loud layers read as *considered* rather than
+   busy. Four moves, all additive and zero-specificity (`:where`) where they
+   touch shared tags, so nothing here can outrank a component rule: (1) type is
+   set with kerning, ligatures and contextual alternates, headings balance and
+   body copy wraps "pretty" — no orphans, no jagged ragged edges; (2) every
+   animated counter and stat is pinned to tabular numerals so a number that
+   counts up no longer reflows its neighbours mid-tick; (3) the keyboard focus
+   ring now *arrives* — it blooms out on a spring instead of snapping, the one
+   moment of warmth a keyboard user actually waits on; (4) the scrollbar thumb
+   warms to brand gold the instant it's grabbed, and anchored scrolls leave
+   breathing room up top. The whole layer collapses under the reduced-motion
+   guard at the foot (and the global `*` guard already pins durations to ~0).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Considered type — global finish, zero-specificity so components win.
+   optimizeLegibility + the feature set turn on the font's real kerning and
+   ligature tables; balanced headings keep a two-line title from dropping a
+   lonely last word; pretty body wrapping kills single-word orphan lines. */
+body {
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+:where(h1, h2, h3, .h-balance) { text-wrap: balance; }
+:where(p, li, blockquote, figcaption, dd) { text-wrap: pretty; }
+
+/* (2) Stable numerals — any number that animates or sits in a stat slot holds
+   a fixed advance width, so a counting tick or a changing figure never nudges
+   the layout around it. Joins the v-earlier .num-flow / .count-up pair. */
+.num-rise,
+.count-pop,
+.stat-cell,
+.stat-value,
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* (3) A focus ring that arrives — re-states the base :focus-visible's final
+   geometry as the end of a spring bloom (offset eases 5px→2px, the soft gold
+   halo expands from nothing), so the ring lands with the same confident
+   overshoot every other motion in the app shares. Rest state is pixel-identical
+   to the base rule; only the entrance is new. */
+@keyframes focus-bloom {
+  from { outline-offset: 5px; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+  to   { outline-offset: 2px; box-shadow: 0 0 0 4px rgba(232, 163, 23, 0.18); }
+}
+:focus-visible { animation: focus-bloom var(--dur-base) var(--ease-spring) both; }
+
+/* (4) Kindled scrollbar + anchored breathing room — the thumb you're actively
+   dragging warms from stone to brand gold (the one scrollbar moment with real
+   intent behind it); smooth-scrolled anchors stop 5rem short so a target never
+   hides under a sticky header. */
+::-webkit-scrollbar-thumb:active { background: var(--grad-gold); }
+html { scroll-padding-top: 5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the calm version: the ring appears at rest with no bloom. The global
+     `*` guard already flattens durations, but pin the animation off explicitly
+     so the entrance never plays even partially. */
+  :focus-visible { animation: none !important; }
+}
