@@ -110,7 +110,7 @@ export default async function HomePage({
       <header className="site-nav sticky top-0 z-40 backdrop-blur-[20px] bg-paper/82 border-b border-border h-[66px]">
         <div className="max-w-[1140px] mx-auto px-4 sm:px-8 h-full flex items-center gap-3.5">
           <div className="nav-assemble flex items-center gap-[9px]" style={{ "--ni": 0 } as CSSProperties}>
-            <div className="w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
+            <div className="logo-spark w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
             <span className="wordmark-gleam weight-hover font-display font-bold text-lg tracking-[3px] text-brown">
@@ -228,7 +228,7 @@ export default async function HomePage({
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             <span className="eyebrow-dot" aria-hidden />{t("steps.eyebrow")}<span className="eyebrow-rule" aria-hidden />
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
             {t("steps.title")}
           </h2>
           <p data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
@@ -371,7 +371,7 @@ export default async function HomePage({
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             <span className="eyebrow-dot" aria-hidden />{t("features.eyebrow")}<span className="eyebrow-rule" aria-hidden />
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
             {t("features.title")}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -442,7 +442,7 @@ export default async function HomePage({
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
             <span className="eyebrow-dot" aria-hidden />{t("bets.eyebrow")}
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
             {t("bets.title")}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">
@@ -496,7 +496,7 @@ export default async function HomePage({
       <footer className="edge-light relative border-t border-border bg-white">
         <div data-reveal className="max-w-[1140px] mx-auto px-6 sm:px-8 py-11 flex items-center gap-3.5 flex-wrap">
           <div className="flex items-center gap-[9px]">
-            <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
+            <div className="logo-spark w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
             <span className="wordmark-gleam weight-hover font-display font-bold text-[15px] tracking-[2.5px] text-brown">

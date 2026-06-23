@@ -2508,3 +2508,78 @@ html[data-idle="true"] .eyebrow-rule {
   }
   .eyebrow-rule { transition: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v28 — Grounded lustre. v9–v27 lit the surface, taught the light to follow the
+   hand, and tuned the metal it's struck from. v28 is the *grounding* pass: it
+   settles the type so headlines read as set, not stacked; lets the gold the
+   page already speaks reach two surfaces it had missed (the reader's scroll
+   thread, and any text selected on the dark panel); and hangs one quiet idle
+   gleam on the brand mark itself. Every rule is additive + opt-in, rides a
+   signal the page already publishes (PointerFX's `--pointer-heat`, the
+   `html[data-idle]` rest flag) or is pure static refinement, and collapses to a
+   pixel-identical rest state under the reduced-motion guard at the foot below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Set type — balanced headline wrapping + sharper rendering. `text-wrap:
+   balance` evens the ragged right edge of a multi-line heading so a title reads
+   as *composed* rather than reflowed; optical kerning + legibility hinting firm
+   up the small print. Opt-in via `.balance`; both properties degrade to a
+   silent no-op where unsupported, so nothing regresses on older engines. */
+.balance { text-wrap: balance; }
+body { text-rendering: optimizeLegibility; font-kerning: normal; }
+
+/* (2) Heat-kindled scroll thread — the v20 gold progress rail reads where the
+   reader *is* on the page; v28 lets it answer how fast they move. Its glow
+   swells and warms with `--pointer-heat` (inherited from <html>), so flicking
+   down a long page brightens the thread like a wire under current, then it
+   settles to its calm ember as the hand stills. Restates box-shadow only — the
+   scaleX fill written from rAF is untouched — and at heat 0 it resolves to the
+   exact v20 resting glow, so a still page is pixel-identical. */
+.scroll-progress {
+  box-shadow:
+    0 0 calc(12px + var(--pointer-heat, 0) * 16px) -1px
+      rgba(232, 163, 23, calc(0.7 + var(--pointer-heat, 0) * 0.3));
+}
+
+/* (3) Struck-gold selection on the dark panel — the v27 heat-warmed selection
+   is a warm cream tuned for the paper field; dragged across the near-black
+   differentiators section it reads as a pale smudge. Here the same gesture
+   lands as lit gold ink on dark, so selecting the manifesto copy feels struck
+   from the section's own embers. Scoped to `.bg-dark`; paper selection is
+   untouched. */
+.bg-dark ::selection {
+  background: rgba(232, 163, 23, 0.30);
+  color: #FBF2E1;
+  text-shadow: none;
+}
+
+/* (4) Brand-mark idle gleam — the wordmark already breathes on idle (v27); v28
+   lets the little brown logo tile beside it answer too, with a slow gold rim
+   that kindles only while the page rests (`html[data-idle]`) and is dark the
+   instant the hand moves. A masked gradient ring sits behind the tile (same
+   technique as `.grad-border`), so the tile fill and the check glyph are
+   untouched — only a 1.5px gilt halo bleeds past the corners. */
+.logo-spark { position: relative; isolation: isolate; }
+.logo-spark::before {
+  content: ""; position: absolute; inset: -1.5px; z-index: -1; border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(120deg,
+    rgba(232, 163, 23, 0) 18%, rgba(243, 200, 105, 0.95) 50%, rgba(232, 163, 23, 0) 82%);
+  background-size: 220% auto;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0; transition: opacity var(--dur-base) var(--ease-out);
+}
+html[data-idle="true"] .logo-spark::before {
+  opacity: 1;
+  animation: border-pan 4.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Heat never rises and data-idle is never set under reduced motion, so both
+     effects above already rest — pin them to their static values explicitly so
+     no heat term is evaluated and the idle ring stays dark. */
+  .scroll-progress { box-shadow: 0 0 12px -1px rgba(232, 163, 23, 0.7); }
+  html[data-idle="true"] .logo-spark::before { animation: none !important; opacity: 0 !important; }
+}
