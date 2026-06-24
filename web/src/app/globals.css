@@ -2862,3 +2862,92 @@ html[data-idle="true"] .logo-spark::before {
     transition: none !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v33 — Carried afterglow & lit pipeline
+   v9–v32 lit every surface, taught the light to follow the hand (v21 aura),
+   feel its tempo (v25/v29/v30 heat), answer a fling (v20/v31/v32 energy) and
+   hang a filament under the cursor (v30) — and swept the page's strips, cards,
+   text and seams into that one warm language. Two things still sat outside it.
+   First, the warmth lived *inside* the column: the four margins the eye frames
+   the page against stayed cool no matter how hard the reader worked the page.
+   Second, the How-it-works pipeline — `.flow-rail`, the one structural rail
+   that draws the five steps into a single line — drew itself once on arrival
+   and then went inert, the last warm wire that never breathed.
+
+   v33 closes both. The whole viewport now wears a *carried afterglow*: a warm
+   light blooms inward from the four edges as `--pointer-heat` crests, so moving
+   fast frames the page in the same gold the cursor already trails — then bleeds
+   back to nothing the instant the hand stills. And the pipeline rail joins the
+   living-light vocabulary at last: it kindles a warm glow with the hand's tempo,
+   pulses brighter when the page is flung, and keeps a slow idle breath when the
+   whole page is still, exactly as the section eyebrows already do (v24).
+
+   Additive + signal-only, as ever. Both read only the `--pointer-heat` /
+   `--scroll-energy` / `html[data-idle]` channels the page already publishes on
+   <html> (inherited everywhere) — no new markup, no new JS. The afterglow is a
+   single `body::before` pinned to the viewport, pointer-transparent and
+   `screen`-blended so it only ever *adds* light, never darkens a glyph; it sits
+   below the v22 arrival bloom so that one beat still crowns it. Every term
+   resolves to a transparent / zero-spread no-op at heat 0 / energy 0, so a
+   still page is byte-for-byte v32, and the guard at the foot pins that rest
+   state hard for motion-sensitive readers (where neither engine ever runs).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Carried afterglow — a warm frame of light that blooms in from the four
+   viewport edges with the hand's tempo. The gradient is transparent across the
+   whole centre (62%) and only warms in the outer rim, so it lights the margins
+   the reader frames the column against without ever touching the copy. `screen`
+   blend = pure addition; `opacity` rides `--pointer-heat` so the entire layer is
+   absent at rest and bleeds away the moment the hand stills. z-index sits just
+   under the v22 arrival bloom (9990) so first paint still crowns the page. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 9989; pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: var(--pointer-heat, 0);
+  background:
+    radial-gradient(135% 100% at 50% 50%,
+      transparent 62%,
+      rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.11)) 84%,
+      rgba(232, 163, 23, calc(var(--pointer-heat, 0) * 0.18)) 100%);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* (2) Lit pipeline — the How-it-works rail finally answers the room. A heat- and
+   energy-scaled warm drop-shadow is applied to `.flow-rail` (so it lifts the
+   rendered output of the rail's own `::before` thread + `::after` photon without
+   touching their draw transform), kindling the wire as the hand quickens and
+   pulsing it brighter when the page is flung toward the section. At heat 0 /
+   energy 0 the shadow is a 0px transparent no-op, so the drawn rail is
+   unchanged. */
+.flow-rail {
+  filter: drop-shadow(
+    0 0 calc(var(--pointer-heat, 0) * 6px + var(--scroll-energy, 0) * 5px)
+      rgba(243, 200, 105,
+        calc(var(--pointer-heat, 0) * 0.5 + var(--scroll-energy, 0) * 0.45)));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+/* Idle breath — when the whole page holds still the rail keeps a slow pulse of
+   life, mirroring the v24 eyebrow ember, so the pipeline never reads as frozen
+   between gestures. Heat is naturally 0 while idle, so this never fights (1). */
+@keyframes flow-rail-breath {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 5px rgba(243, 200, 105, 0.32)); }
+}
+html[data-idle="true"] .flow-rail {
+  animation: flow-rail-breath 5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither the pointer-heat nor the scroll-energy engine runs under reduced
+     motion, so both terms above already evaluate to their rest no-ops. Pin them
+     hard anyway so a stale custom property can never light the frame or the rail
+     for a motion-sensitive reader. */
+  body::before { opacity: 0 !important; background: none !important; }
+  .flow-rail {
+    filter: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
