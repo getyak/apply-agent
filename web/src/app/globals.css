@@ -2708,3 +2708,93 @@ html[data-idle="true"] .logo-spark::before {
   .cta-aura::before { opacity: 0; }
   .cta-aura:hover::before { opacity: 0.85; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v31 — Answered relief. v9–v30 lit the surface, taught the light to follow the
+   hand (v21 aura), feel its tempo (v25/v29 heat) and hang a filament under the
+   cursor (v30); the scroll engine (v20) gave the rail velocity. What was left
+   were a handful of surfaces that still sat *outside* that vocabulary — the
+   paper's own grain didn't react to a fling, the "agents live" badge pulsed at
+   a fixed warmth no matter the tempo, the icon tiles only woke on a direct
+   hover, and the ATS-logo row was the one interactive strip with no drawn gold
+   under the hand. v31 brings each into the language the rest of the page already
+   speaks. Every rule is additive + opt-in, reads only signals the page already
+   publishes (`--scroll-energy` + `--pointer-heat`, inherited from <html>),
+   composes onto — never replaces — the resting value of the primitive it
+   upgrades, and collapses to a pixel-identical rest state under the
+   reduced-motion guard at the foot.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Velocity-lifted grain — the v10 film grain is a fixed sub-perceptual veil
+   that makes the warm paper read as material. v31 lets that material *answer a
+   fling*: its opacity gains a small `--scroll-energy` term so flicking down the
+   page momentarily deepens the tactile grain (a surface catching motion), then
+   it settles to its exact v10 rest. At energy 0 the term is 0 → opacity 0.5,
+   pixel-identical. The grain-shift animation is untouched. */
+.grain-overlay {
+  opacity: calc(0.5 + var(--scroll-energy, 0) * 0.13);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* (2) Heat-fanned live badge — the hero "agents live" status dot pulses on a
+   fixed green keyframe. v31 lets it breathe with the reader's tempo: a
+   `--pointer-heat`-scaled green drop-shadow blooms around it as the hand
+   quickens, so the live signal reads hotter under motion and calms as the hand
+   stills. `filter` is a separate channel from the keyframe's `box-shadow`, so
+   the pulse is preserved; at heat 0 it resolves to a 0px transparent shadow —
+   a no-op. */
+.animate-pulse-dot {
+  filter: drop-shadow(0 0 calc(var(--pointer-heat, 0) * 7px)
+    rgba(76, 122, 63, calc(var(--pointer-heat, 0) * 0.75)));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+
+/* (3) Heat-pre-warmed icon tiles — the v9 `.icon-glow` bloom only wakes on a
+   direct group hover. v31 lets a *fast hand sweeping the grid* pre-kindle the
+   tiles, so the features/steps rows feel lit before the pointer settles on any
+   one. Restates only the bloom's resting opacity as a `--pointer-heat` term
+   (0 at rest → pixel-identical to v9); the `.group:hover` rule has higher
+   specificity and still wins to full strength on contact. The blur/colour and
+   the hover transition are inherited from the v9 declaration above. */
+.icon-glow::before {
+  opacity: calc(var(--pointer-heat, 0) * 0.3);
+}
+
+/* (4) Drawn gold under the ATS logos — the trust strip's wordmarks lift + warm
+   to brown on hover but were the one interactive row with no struck-gold mark,
+   the language every other link on the page speaks (v23/v29 underline-grow).
+   v31 draws a thin gilt rule under each logo that grows from the centre on
+   hover and brightens with `--pointer-heat`, so a name met at speed lights a
+   hotter stroke. Rests fully collapsed (scaleX 0 / no glow), so the static row
+   is untouched. */
+.scan-strip .press { position: relative; }
+.scan-strip .press::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 2px;
+  border-radius: 9999px; pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent, rgba(232, 163, 23, 0.95), transparent);
+  transform: scaleX(0); transform-origin: center;
+  opacity: 0;
+  transition: transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .scan-strip .press:hover::after {
+    transform: scaleX(1); opacity: 1;
+    box-shadow: 0 1px calc(8px + var(--pointer-heat, 0) * 10px) -1px
+      rgba(232, 163, 23, calc(0.55 + var(--pointer-heat, 0) * 0.35));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine runs under reduced motion (`--scroll-energy`/`--pointer-heat`
+     stay 0), so every term above already evaluates to its rest value. Pin them
+     explicitly anyway so no custom property is read: the grain holds its v10
+     opacity, the badge sheds its filter, the tiles rest dark, and the ATS rule
+     stays collapsed even on hover. */
+  .grain-overlay { opacity: 0.5; transition: none !important; }
+  .animate-pulse-dot { filter: none !important; }
+  .icon-glow::before { opacity: 0; }
+  .scan-strip .press::after { display: none !important; }
+}
