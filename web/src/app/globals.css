@@ -2951,3 +2951,96 @@ html[data-idle="true"] .flow-rail {
     transition: none !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v34 — Quickened atmosphere
+   v9–v33 lit every surface and swept the page's foreground — strips, cards,
+   text, seams, the viewport frame and the pipeline rail — into one warm
+   living-light language driven by the hand's tempo (`--pointer-heat`), the
+   page's momentum (`--scroll-energy`) and its stillness (`html[data-idle]`).
+   One whole register still sat outside it: the *atmosphere*. The decorative
+   fields the page floats its content over — the hero's drifting aurora blobs,
+   the dark panel's two-tone aurora-mesh, and the column of rising embers that
+   makes the "bets" section read as a banked fire — all drifted at a single
+   fixed pace and brightness no matter how hard the reader worked the page. The
+   foreground answered the room; the air it hung in did not.
+
+   v34 quickens the air. As the hand picks up speed the aurora pools *saturate
+   and brighten*, so the warmth behind the hero swells with the reader's tempo
+   and settles back the instant they still. And the banked fire on the dark
+   panel is now fanned by the reader's draft: each ember's core flares hotter as
+   the hand quickens and — most of all — as the page is flung down toward the
+   section, exactly like a real fire breathed on. Nothing moves on a new path;
+   the established drifts (aurora/mesh-drift/ember-rise) are untouched, so the
+   choreography is byte-for-byte v33 and only the *intensity* breathes.
+
+   Additive + signal-only, as ever. Every rule reads only the channels the page
+   already publishes on <html> (inherited everywhere), composes onto a separate
+   visual channel (`filter` / `box-shadow`) so it never replaces the layer's own
+   drift, and resolves to a no-op at heat 0 / energy 0 — saturate(1)/brightness(1)
+   and a 0px transparent shadow — so a still page is pixel-identical to v33. The
+   blobs drive `filter` (not `opacity`), so the page's inline opacity tuning on
+   individual blobs is left intact. The guard at the foot pins every term to its
+   rest value for motion-sensitive readers, where neither engine ever arms. */
+
+/* (1) Warmed aurora — the hero's drifting gold pools (and any other
+   `.aurora-blob`) gain saturation + a touch of brightness with the hand's
+   tempo, so the warmth behind the headline swells as the reader moves and eases
+   back as they still. The base `blur(60px)` is restated so the heat terms layer
+   onto it rather than dropping the blur; at heat 0 the added factors are
+   saturate(1)/brightness(1) — exact no-ops — so the resting field is unchanged,
+   and because this drives `filter` (not `opacity`) the inline opacity tuning on
+   the second/CTA blobs is preserved. */
+.aurora-blob {
+  filter: blur(60px)
+    saturate(calc(1 + var(--pointer-heat, 0) * 0.6))
+    brightness(calc(1 + var(--pointer-heat, 0) * 0.22));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+
+/* (2) Warmed mesh — the dark panel's two-tone aurora-mesh pools answer the same
+   tempo. Its base `blur(80px)` is restated with the heat-scaled saturate/
+   brightness so the embered backdrop deepens as the hand quickens. Both pseudos
+   share the rule; at heat 0 it collapses to the exact v-earlier `blur(80px)`. */
+.aurora-mesh::before,
+.aurora-mesh::after {
+  filter: blur(80px)
+    saturate(calc(1 + var(--pointer-heat, 0) * 0.5))
+    brightness(calc(1 + var(--pointer-heat, 0) * 0.18));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+
+/* (3) Fanned embers — the banked fire is breathed on by the reader's draft.
+   Each rising mote's halo swells and warms with the hand's tempo and, above
+   all, with the page's downward momentum toward the section (`--scroll-energy`),
+   so flinging down to the dark panel fans the fire like a real bellows; a
+   heat-scaled drop-shadow rides a separate channel to brighten the core. The
+   v-earlier resting glow `0 0 8px 1px rgba(232,163,23,0.45)` is restated as the
+   zero-signal floor, so a still page keeps the exact banked ember. (The
+   `ember-rise` keyframe animates `transform`/`opacity` only, so neither added
+   channel collides with it.) */
+.ember {
+  box-shadow: 0 0
+    calc(8px + var(--pointer-heat, 0) * 10px + var(--scroll-energy, 0) * 9px) 1px
+    rgba(232, 163, 23,
+      calc(0.45 + var(--pointer-heat, 0) * 0.32 + var(--scroll-energy, 0) * 0.28));
+  filter: drop-shadow(0 0 calc(var(--pointer-heat, 0) * 5px)
+    rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.7)));
+  transition: box-shadow var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine arms under reduced motion, so every heat/energy term above is
+     already at its rest no-op. Pin them hard anyway so a stale custom property can
+     never warm the atmosphere for a motion-sensitive reader: restore each layer's
+     exact resting filter/shadow and drop the transitions. */
+  .aurora-blob { filter: blur(60px) !important; transition: none !important; }
+  .aurora-mesh::before,
+  .aurora-mesh::after { filter: blur(80px) !important; transition: none !important; }
+  .ember {
+    box-shadow: 0 0 8px 1px rgba(232, 163, 23, 0.45) !important;
+    filter: none !important;
+    transition: none !important;
+  }
+}
