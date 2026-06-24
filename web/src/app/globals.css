@@ -3044,3 +3044,93 @@ html[data-idle="true"] .flow-rail {
     transition: none !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v35 — Caught lamp
+   v9–v34 swept the whole page into one warm living-light language driven by the
+   hand's tempo (`--pointer-heat`), the page's momentum (`--scroll-energy`) and
+   its stillness (`html[data-idle]`): surfaces, text, seams, the viewport frame,
+   the pipeline rail and — last turn — the very atmosphere the content floats in.
+   One thing still stood apart, and it was the most literal object on the page:
+   the hero *device mock* — the one rendered product the page actually shows off.
+   v-earlier gave it real physicality (it tips toward the cursor in 3D and a
+   broad specular slides across its glass), but that gloss only ever woke on a
+   *direct hover*, and it caught a fixed, cool white light no matter how hard the
+   reader worked the page. The lamp the reader carries — fanned brighter and
+   wider across every other surface as the hand quickens — never reached the
+   product on display. The showcased object sat in its own still pool of light
+   while the room around it breathed.
+
+   v35 hands it the room's lamp. The mock's specular now *glints with the hand's
+   tempo* even with the cursor nowhere near it — so the gloss across the screen
+   swells as the carried lamp is fanned and eases back the instant the hand
+   stills, while a direct hover still crowns it at full as before. And the whole
+   device now casts a warm gold halo that swells with that same heat and pulses
+   when the page is flung toward the hero (`--scroll-energy`), so the product
+   floats in exactly the gold the cursor trails everywhere else. When the page
+   holds still the halo keeps a slow ember breath, mirroring the eyebrow (v24)
+   and the pipeline (v33), so the one object the page is selling never reads as
+   frozen between gestures.
+
+   Additive + signal-only, as ever. Every rule reads only the channels the page
+   already publishes on <html> (inherited everywhere), composes onto a separate
+   visual channel (specular `opacity` / a `filter` halo) so it never disturbs the
+   mock's own tilt transform or its tilt-derived gloss *position*, and resolves
+   to a no-op at heat 0 / energy 0 — opacity 0 and a 0px transparent halo — so a
+   resting page is pixel-identical to v34. The hover crown keeps the higher
+   specificity it always had, so pointing at the mock still lights it fully. The
+   guard at the foot pins every term to rest for motion-sensitive readers, where
+   neither engine ever arms. */
+
+/* (1) Heat-glinted specular — the mock's broad gloss no longer waits for a
+   direct hover. Its resting opacity now rides `--pointer-heat`, so the highlight
+   across the glass brightens as the carried lamp is fanned and bleeds back to
+   nothing the moment the hand stills. Only `opacity` is touched — the gloss's
+   tilt-derived *position* and its screen blend are left exactly as set earlier,
+   and the transition declared on the base rule still carries this easing. At
+   heat 0 the opacity is a hard 0 (exact no-op); the higher-specificity hover
+   rule above still crowns it to full when the cursor lands on the mock. */
+.tilt-shine::after {
+  opacity: calc(var(--pointer-heat, 0) * 0.55);
+}
+
+/* (2) Caught-lamp halo — the device mock casts a warm gold glow that swells with
+   the hand's tempo and pulses when the page is flung toward the hero, so the
+   showcased product floats in the same gold the cursor trails. A `filter`
+   drop-shadow rides its own channel (the v-earlier `box-shadow` hover lift and
+   the 3D tilt transform are untouched); its transition is restated to ease both
+   the lifted box-shadow and this halo. At heat 0 / energy 0 the shadow is a 0px
+   transparent no-op, so the resting mock is unchanged. */
+.tilt-pointer {
+  filter: drop-shadow(
+    0 0 calc(var(--pointer-heat, 0) * 16px + var(--scroll-energy, 0) * 11px)
+      rgba(243, 200, 105,
+        calc(var(--pointer-heat, 0) * 0.5 + var(--scroll-energy, 0) * 0.4)));
+  transition: box-shadow var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out);
+}
+
+/* (3) Idle ember — when the whole page holds still the halo keeps a slow breath,
+   mirroring the v24 eyebrow and the v33 pipeline rail, so the product never
+   reads as frozen. Heat is naturally 0 while idle, so this never fights (2). */
+@keyframes tilt-lamp-breath {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 10px rgba(243, 200, 105, 0.3)); }
+}
+html[data-idle="true"] .tilt-pointer {
+  animation: tilt-lamp-breath 5.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine arms under reduced motion, so every heat/energy term above is
+     already at its rest no-op. Pin them hard anyway so a stale custom property can
+     never light the mock for a motion-sensitive reader. The higher-specificity
+     hover rule is left intact — a hover is not motion — so pointing at the mock
+     still lights its gloss. */
+  .tilt-shine::after { opacity: 0; }
+  .tilt-pointer {
+    filter: none !important;
+    animation: none !important;
+    transition: box-shadow var(--dur-base) var(--ease-out) !important;
+  }
+}
