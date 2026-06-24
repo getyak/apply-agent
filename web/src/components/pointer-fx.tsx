@@ -423,6 +423,46 @@ export default function PointerFX() {
       root.style.removeProperty("--pointer-heat");
     });
 
+    // ── Carried filament (v30) ───────────────────────────────────────────────
+    // The v21 aura is the broad lamp the reader carries; v30 hangs its bright
+    // *filament* right under the cursor — a small, tight warm core that trails on
+    // its own inertial spring, so the held light has a glowing wick, not just a
+    // diffuse field. It rides the same `--pointer-heat` the rest of the page
+    // reads (kindling brighter + tighter as the hand quickens) and fades with the
+    // aura at the window's edge. Pointer-transparent, `screen`-blended (only ever
+    // adds light) and pinned to viewport px in its own fixed node, so it never
+    // disturbs layout or copy. Like every effect here it is gated to a fine
+    // pointer with motion allowed, and rests fully transparent until the first
+    // move, so a no-JS / reduced-motion page is pixel-identical.
+    const filament = document.createElement("div");
+    filament.className = "cursor-filament";
+    filament.setAttribute("aria-hidden", "true");
+    document.body.appendChild(filament);
+    const filamentSpring = makeSpring(
+      [window.innerWidth / 2, window.innerHeight / 2],
+      0.22, // tighter than the aura's 0.08 — the wick stays close to the hand
+      (v) => {
+        filament.style.setProperty("--fx", `${v[0].toFixed(1)}px`);
+        filament.style.setProperty("--fy", `${v[1].toFixed(1)}px`);
+      },
+    );
+    const onFilament = (e: PointerEvent) => {
+      filamentSpring.target[0] = e.clientX;
+      filamentSpring.target[1] = e.clientY;
+      filament.dataset.lit = "true";
+      wake();
+    };
+    const onFilamentLeave = () => {
+      filament.dataset.lit = "false";
+    };
+    window.addEventListener("pointermove", onFilament, { passive: true });
+    document.addEventListener("mouseleave", onFilamentLeave);
+    cleanups.push(() => {
+      window.removeEventListener("pointermove", onFilament);
+      document.removeEventListener("mouseleave", onFilamentLeave);
+      filament.remove();
+    });
+
     return () => {
       cleanups.forEach((fn) => fn());
       if (blobs.length) window.removeEventListener("pointermove", onWindowMove);

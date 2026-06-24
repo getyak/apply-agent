@@ -2638,3 +2638,73 @@ html[data-idle="true"] .logo-spark::before {
   .gradient-text { filter: drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22)); }
   .underline-grow:hover::after { box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.6); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v30 — Carried filament. v21 taught the page that the reader carries a lamp;
+   v25 taught that lamp to flare with the hand's tempo. But the light has only
+   ever been a *broad field* — there has been no bright point where the hand
+   actually is. v30 hangs the lamp's filament under the cursor: a tight warm core
+   (the PointerFX `.cursor-filament` node, trailed on its own inertial spring)
+   that the page already reaches for. Two moves carry the same forge signal one
+   step further: the filament kindles brighter and tighter as `--pointer-heat`
+   rises, mirroring the v25 aura; and a primary CTA now *pre-warms* its aura from
+   the same heat, so a button approached at speed is already glowing before the
+   pointer lands. Every rule is additive, rides only signals the page already
+   publishes (the `data-lit` switch + `--pointer-heat`, both inherited from the
+   gated PointerFX island), composes onto — never replaces — the value it
+   upgrades, and collapses to a pixel-identical rest state under the
+   reduced-motion guard at the foot. The filament node only exists on a fine
+   pointer with motion allowed; keyboard, touch and reduced-motion users never
+   see it built.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) The filament itself — a small, soft warm core pinned to the cursor in
+   viewport px (`--fx`/`--fy`, written from the v30 spring). It rests dark
+   (opacity 0) and fades in via `data-lit` once the hand is in the window, so a
+   still or just-loaded page is untouched. `screen` blend means it only ever adds
+   light — copy under it is never darkened — and `pointer-events: none` keeps it
+   out of every hit-test. Two stacked radials give it a bright kindled point and
+   a softer falloff, like the wick of the broad v21 aura the reader carries. */
+.cursor-filament {
+  position: fixed; inset: 0; z-index: 2;
+  margin: 0; pointer-events: none;
+  mix-blend-mode: screen; opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out);
+  /* The node spans the viewport, so `--fx`/`--fy` (viewport px) address screen
+     space directly. Two stacked radials: a bright kindled core + a softer
+     falloff, both tightening and warming as `--pointer-heat` rises. */
+  background:
+    radial-gradient(calc(16px + var(--pointer-heat, 0) * 10px) circle
+        at var(--fx, 50%) var(--fy, 50%),
+      rgba(247, 212, 136, calc(0.30 + var(--pointer-heat, 0) * 0.45)),
+      transparent 62%),
+    radial-gradient(calc(64px + var(--pointer-heat, 0) * 40px) circle
+        at var(--fx, 50%) var(--fy, 50%),
+      rgba(232, 163, 23, calc(0.10 + var(--pointer-heat, 0) * 0.16)),
+      transparent 70%);
+}
+.cursor-filament[data-lit="true"] { opacity: 1; }
+
+/* (2) Heat-pre-warmed CTA aura — the v4 `.cta-aura` bloom only wakes on direct
+   hover; v30 lets it answer the room's tempo, so a CTA approached at speed is
+   already kindling before the pointer arrives. Restates the bloom's opacity as a
+   `--pointer-heat` term that resolves to 0 at rest (pixel-identical to v4) and
+   lifts to a soft pre-glow under a fast hand; the existing `:hover` rule still
+   wins to full strength on contact. A faint heat-scaled spread keeps the bloom
+   from looking switched rather than warmed. */
+.cta-aura::before {
+  opacity: calc(var(--pointer-heat, 0) * 0.4);
+}
+@media (hover: hover) {
+  .cta-aura:hover::before { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The filament node is never created under reduced motion (PointerFX bails),
+     and `--pointer-heat` never rises — so both moves already rest. Pin them
+     explicitly: keep the filament dark even if a stray node exists, and drop the
+     CTA aura back to its v4 hover-only behaviour with no heat term evaluated. */
+  .cursor-filament { opacity: 0 !important; }
+  .cta-aura::before { opacity: 0; }
+  .cta-aura:hover::before { opacity: 0.85; }
+}
