@@ -81,14 +81,75 @@ export default function HeroConsole() {
   const t = useTranslations("landing.heroConsole");
   const [method, setMethod] = useState<Method>("upload");
   const [phase, setPhase] = useState<Phase>("entry");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const interacted = useRef(false);
+  const autoTimer = useRef(0);
 
-  const startEntry = useCallback(() => {
-    setPhase("running");
-    setTimeout(() => setPhase("ready"), 2600);
+  // The reader has taken the wheel — record it and kill any pending auto-demo
+  // so the console never yanks itself out from under a hand that's mid-reach.
+  const markInteracted = useCallback(() => {
+    interacted.current = true;
+    if (autoTimer.current) {
+      window.clearTimeout(autoTimer.current);
+      autoTimer.current = 0;
+    }
   }, []);
 
+  const startEntry = useCallback(() => {
+    markInteracted();
+    setPhase("running");
+    setTimeout(() => setPhase("ready"), 2600);
+  }, [markInteracted]);
+
+  const chooseMethod = useCallback(
+    (key: Method) => {
+      markInteracted();
+      setMethod(key);
+    },
+    [markInteracted],
+  );
+
+  // Self-running demo. The console is the one product the page actually shows
+  // off, yet it sits frozen at the static "entry" state until someone clicks —
+  // so most visitors never see the agent run that *is* the pitch (scout finds
+  // 1,240 roles → résumé tailored → answers drafted → 8 ready to send). Once it
+  // scrolls into view we play that run for them exactly once, so the magic
+  // moment lands without a click. It's cancelled the instant the reader takes
+  // over (any tab/upload press marks intent), skipped wholesale under reduced
+  // motion, and one-shot — never a loop — so it informs and then rests on the
+  // CTA rather than nagging. The short lead-in gives a beat to interact first.
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (reduce) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          io.disconnect();
+          if (interacted.current) return;
+          autoTimer.current = window.setTimeout(() => {
+            if (!interacted.current) startEntry();
+          }, 1100);
+        }
+      },
+      { threshold: 0.55 },
+    );
+    io.observe(node);
+    return () => {
+      io.disconnect();
+      if (autoTimer.current) window.clearTimeout(autoTimer.current);
+    };
+  }, [startEntry]);
+
   return (
-    <div className="tilt-shine bg-dark rounded-[18px] border border-dark-border/40 shadow-[0_24px_70px_rgba(40,25,5,0.22)] overflow-hidden">
+    <div
+      ref={rootRef}
+      className="tilt-shine bg-dark rounded-[18px] border border-dark-border/40 shadow-[0_24px_70px_rgba(40,25,5,0.22)] overflow-hidden"
+    >
       {/* Title bar */}
       <div className="group h-[46px] border-b border-dark-border/40 flex items-center px-4 gap-2">
         <div className="dots flex gap-1.5">
@@ -112,7 +173,7 @@ export default function HeroConsole() {
               {METHOD_KEYS.map((key) => (
                 <button
                   key={key}
-                  onClick={() => setMethod(key)}
+                  onClick={() => chooseMethod(key)}
                   data-active={method === key}
                   className={`seg-item cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-[9px] px-1.5 rounded-[9px] font-body font-semibold text-[12.5px] border ${
                     method === key
@@ -209,7 +270,13 @@ export default function HeroConsole() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-[11px]">
+            {/* The three agent steps read as one flowing pipeline: a gold thread
+                draws down the icon column (v36) while each row steps in, each
+                tile kindles the instant its agent fires, and the check pops a
+                beat later so completion lands as a struck note. `step` drives
+                every beat off one number so the thread and rows stay in lockstep. */}
+            <div className="relative flex flex-col gap-[11px]">
+              <span className="pipeline-thread" aria-hidden="true" />
               {[
                 {
                   icon: <Search size={14} />,
@@ -221,29 +288,32 @@ export default function HeroConsole() {
                       </span>
                     ),
                   }),
-                  delay: "0.4s",
+                  step: 0.4,
                 },
                 {
                   icon: <FileText size={14} />,
                   name: t("run.resume.name"),
                   result: t("run.resume.result"),
-                  delay: "1s",
+                  step: 1,
                 },
                 {
                   icon: <Pencil size={14} />,
                   name: t("run.answer.name"),
                   result: t("run.answer.result"),
-                  delay: "1.6s",
+                  step: 1.6,
                 },
               ].map((agent) => (
                 <div
                   key={agent.name}
-                  className="flex items-start gap-[11px]"
+                  className="relative flex items-start gap-[11px]"
                   style={{
-                    animation: `step-in 0.5s ease-out ${agent.delay} both`,
+                    animation: `step-in 0.5s ease-out ${agent.step}s both`,
                   }}
                 >
-                  <div className="w-[26px] h-[26px] rounded-[7px] bg-[#352d22] flex items-center justify-center shrink-0 text-dark-gold">
+                  <div
+                    className="tile-kindle w-[26px] h-[26px] rounded-[7px] bg-[#352d22] flex items-center justify-center shrink-0 text-dark-gold"
+                    style={{ animationDelay: `${agent.step}s` }}
+                  >
                     {agent.icon}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -254,7 +324,14 @@ export default function HeroConsole() {
                       {agent.result}
                     </div>
                   </div>
-                  <Check size={16} className="text-[#5bbf8a] shrink-0 mt-[3px]" strokeWidth={2.4} />
+                  <Check
+                    size={16}
+                    className="text-[#5bbf8a] shrink-0 mt-[3px]"
+                    strokeWidth={2.4}
+                    style={{
+                      animation: `check-in 0.42s var(--ease-spring) ${agent.step + 0.32}s both`,
+                    }}
+                  />
                 </div>
               ))}
             </div>

@@ -3134,3 +3134,50 @@ html[data-idle="true"] .tilt-pointer {
     transition: box-shadow var(--dur-base) var(--ease-out) !important;
   }
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   v36 — threaded run. The hero console's running phase is the page's one real
+   product demo (and the v-earlier auto-play exists solely to show it off), yet
+   the three agent steps land as disconnected rows. This layer makes the run
+   read as a single flowing pipeline: a warm gold thread draws *down* the icon
+   column in step with the agents, each tile kindles to gold the instant it
+   fires, and every check pops a beat after its row settles — so completion
+   reads as a struck note, not a painted-in tick. Everything is additive and
+   timed off the same delays the rows already use; all of it rests at its lit
+   final state, so the prefers-reduced-motion `*` guard above leaves a fully
+   drawn, fully checked pipeline rather than a blank or half-built one.
+   ─────────────────────────────────────────────────────────────────────── */
+@keyframes thread-draw {
+  from { transform: scaleY(0); opacity: 0; }
+  20%  { opacity: 1; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+.pipeline-thread {
+  position: absolute;
+  left: 12px;            /* centre of the 26px icon-tile column */
+  top: 13px;             /* centre of the first tile */
+  bottom: 13px;          /* centre of the last tile */
+  width: 2px;
+  border-radius: 2px;
+  transform-origin: top center;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(232, 163, 23, 0) 0%,
+    rgba(232, 163, 23, 0.5) 14%,
+    rgba(243, 200, 105, 0.62) 50%,
+    rgba(232, 163, 23, 0.5) 86%,
+    rgba(232, 163, 23, 0) 100%);
+  box-shadow: 0 0 8px rgba(232, 163, 23, 0.35);
+  animation: thread-draw 1.7s var(--ease-out) 0.45s both;
+}
+
+/* Tile kindle — a cold brown tile flares to lit gold as its agent fires, then
+   settles back. Background/colour/shadow all return to the resting `#352d22` /
+   dark-gold the markup already paints, so the keyframe is a self-erasing pulse
+   that never leaves a tile mis-coloured once it has played. */
+@keyframes tile-kindle {
+  0%   { background-color: #352d22; color: #d9a45f; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+  38%  { background-color: #4a3a1d; color: #f0b53a; box-shadow: 0 0 0 4px rgba(232, 163, 23, 0.16), 0 0 18px rgba(232, 163, 23, 0.5); }
+  100% { background-color: #352d22; color: #d9a45f; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+}
+.tile-kindle { animation: tile-kindle 1.2s var(--ease-out) both; }
