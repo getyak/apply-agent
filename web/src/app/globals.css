@@ -2798,3 +2798,67 @@ html[data-idle="true"] .logo-spark::before {
   .icon-glow::before { opacity: 0; }
   .scan-strip .press::after { display: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v32 — Lit seams. v9–v31 lit the surfaces, taught the light to follow the hand
+   (v21 aura), feel its tempo (v25/v29/v30 heat) and answer a fling (v20/v31
+   energy) — and v31 swept the last *interactive* strips into that language. But
+   one structural element still sat outside it: `.edge-light`, the thin gilt rule
+   the page draws across its joins — the top of the footer and the lip of the
+   final-CTA card. It was the one piece of gold that never breathed: a flat
+   hairline no matter how fast the hand moved or how hard the page was flung. v32
+   brings the seam itself into the vocabulary. As `--pointer-heat` rises the rule
+   *fans* — its bright band widens out from centre and warms — and as the reader
+   arrives at the foot of the page with momentum (`--scroll-energy`) the join
+   blooms a soft downward gold light, so reaching the bottom with speed lights the
+   seam like a struck wire. Every rule is additive, reads only signals the page
+   already publishes on <html> (`--pointer-heat` + `--scroll-energy`, inherited
+   everywhere), composes onto — never replaces — the resting hairline, and
+   collapses to a pixel-identical rest state under the reduced-motion guard at the
+   foot: at heat 0 / energy 0 every term below resolves to the exact v9 rule.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Heat-fanned seam + (2) warm bloom. The v9 rule was a single bright point
+   at 50% fading to transparent at the inset edges. v32 restates that same band
+   with two bright stops that *spread outward* from centre as the hand quickens
+   (both pinned to 50% at rest, so the gradient is byte-for-byte the v9 single-
+   point band) and lifts their opacity with the same heat. A heat-scaled warm
+   drop-shadow rides alongside on a separate channel so the rule reads as a wire
+   catching light rather than a line being recoloured; at heat 0 the shadow is a
+   0px transparent no-op. The rule's own colour never changes, so a still page is
+   untouched. */
+.edge-light::before {
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(243, 200, 105, calc(0.65 + var(--pointer-heat, 0) * 0.33))
+      calc(50% - var(--pointer-heat, 0) * 24%),
+    rgba(243, 200, 105, calc(0.65 + var(--pointer-heat, 0) * 0.33))
+      calc(50% + var(--pointer-heat, 0) * 24%),
+    transparent);
+  filter: drop-shadow(0 0 calc(var(--pointer-heat, 0) * 6px)
+    rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.7)));
+  /* (3) Fling bloom — the join casts a soft gold light downward as the page is
+     flung toward it, hottest when a fast hand and a hard fling coincide. Rests
+     at 0-spread transparent, a no-op, so the static seam is pixel-identical. */
+  box-shadow: 0 calc(var(--scroll-energy, 0) * 2px)
+    calc(var(--scroll-energy, 0) * 16px + var(--pointer-heat, 0) * 8px) 0
+    rgba(232, 163, 23,
+      calc(var(--scroll-energy, 0) * 0.5 + var(--pointer-heat, 0) * 0.25));
+  transition: background var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine runs under reduced motion (`--pointer-heat`/`--scroll-energy`
+     stay 0), so every term above already evaluates to the v9 hairline. Pin it
+     hard anyway so no custom property is ever read: restore the exact single-
+     point band and shed the heat/energy channels and their transition. */
+  .edge-light::before {
+    background: linear-gradient(90deg,
+      transparent, rgba(243, 200, 105, 0.65), transparent) !important;
+    filter: none !important;
+    box-shadow: none !important;
+    transition: none !important;
+  }
+}
