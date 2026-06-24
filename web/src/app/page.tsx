@@ -120,10 +120,10 @@ export default async function HomePage({
           {/* Anchor nav collapses on mobile — the Sign in + Start free CTAs in
               the right-hand cluster are the only nav users need below md. */}
           <nav className="ml-[34px] hidden md:flex items-center gap-7">
-            <a href="#how" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 1 } as CSSProperties}>{t("nav.howItWorks")}</a>
-            <a href="#chat" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 2 } as CSSProperties}>{t("nav.theAgents")}</a>
-            <a href="#features" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 3 } as CSSProperties}>{t("nav.features")}</a>
-            <a href="#pricing" className="nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 4 } as CSSProperties}>{t("nav.pricing")}</a>
+            <a href="#how" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 1 } as CSSProperties}>{t("nav.howItWorks")}</a>
+            <a href="#chat" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 2 } as CSSProperties}>{t("nav.theAgents")}</a>
+            <a href="#features" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 3 } as CSSProperties}>{t("nav.features")}</a>
+            <a href="#pricing" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 4 } as CSSProperties}>{t("nav.pricing")}</a>
           </nav>
           <div className="nav-assemble ml-auto flex items-center gap-4" style={{ "--ni": 5 } as CSSProperties}>
             <LanguageSwitcher variant="inline" />

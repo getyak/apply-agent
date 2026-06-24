@@ -3181,3 +3181,73 @@ html[data-idle="true"] .tilt-pointer {
   100% { background-color: #352d22; color: #d9a45f; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
 }
 .tile-kindle { animation: tile-kindle 1.2s var(--ease-out) both; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v37 — carried marker. The header anchors were lit only under the hand; once
+   the reader scrolled past the fold the nav stopped telling them where they
+   were. This layer makes the nav a live position indicator: the link whose
+   section fills the viewport lights to ink with its gold underline already
+   struck (driven by the scroll-spy observer in LandingMotion, which sets
+   `data-active-section` on exactly one link at a time), and jumping to a
+   section via its anchor blooms the destination's eyebrow so the landing reads
+   as an arrival rather than a silent teleport. All of it is state + a one-shot
+   bloom hung on primitives already in the markup — no layout moves, and the
+   reduced-motion guard at the foot strips the bloom while keeping the marker,
+   since a position indicator is information, not motion.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* (1) Active marker — the spied link settles to full ink and carries its gold
+   underline struck at rest (the v23 gradient + bloom the hover already paints),
+   so the current section's tab glows without the reader touching it. A leading
+   gold tick fades in to the left as a travelling cursor between tabs. The
+   underline transition is inherited from `.underline-grow::after`, so the bar
+   eases in and out as the marker moves down the page rather than snapping. */
+.nav-link { transition: color var(--dur-base) var(--ease-out); }
+.nav-link[data-active-section] { color: var(--color-ink, #2B2822); }
+.nav-link[data-active-section]::after {
+  transform: scaleX(1);
+  box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.55);
+}
+.nav-link::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  background: var(--grad-gold, #e8a317);
+  box-shadow: 0 0 7px -1px rgba(232, 163, 23, 0.8);
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+.nav-link[data-active-section]::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* (2) Arrival bloom — following an anchor lands the section under the sticky
+   nav (scroll-padding already offsets it); this gives that landing a beat of
+   warmth by flaring the destination section's eyebrow dot. A self-erasing
+   pulse: it returns to the resting dot the markup already paints, so a section
+   that stays `:target` in the URL is left in its calm state, not stuck lit. */
+@keyframes arrival-eyebrow {
+  0%   { box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7); transform: scale(1); }
+  30%  { box-shadow: 0 0 0 5px rgba(232, 163, 23, 0.22), 0 0 18px 2px rgba(243, 200, 105, 0.75); transform: scale(1.5); }
+  100% { box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7); transform: scale(1); }
+}
+section[id]:target .eyebrow-dot {
+  animation: arrival-eyebrow 1.5s var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the marker (it's positional information), drop every animated flourish:
+     the leading tick snaps rather than springs, and the arrival bloom is pinned
+     off so a motion-sensitive reader gets a calm, fully-resolved nav. */
+  .nav-link::before { transition: none !important; }
+  section[id]:target .eyebrow-dot { animation: none !important; }
+}

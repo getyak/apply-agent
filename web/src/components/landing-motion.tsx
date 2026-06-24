@@ -53,6 +53,61 @@ export default function LandingMotion() {
       targets.forEach((el) => io!.observe(el));
     }
 
+    // ── Scroll-spy nav (v37) ───────────────────────────────────────────────
+    // The header anchors (#how / #chat / #features / #pricing) are dead until
+    // clicked. This lights the one whose section the reader is currently in, so
+    // the nav reads as a live position indicator — a warm gold marker that
+    // travels with the read. Pure state (a `data-active-section` flag the CSS
+    // styles), no motion of its own, so it's safe to run under reduced motion.
+    // One observer with a band centred on the viewport: a section claims the nav
+    // when its body crosses the middle third, so the active link flips at the
+    // moment a section actually fills the page rather than the instant its top
+    // edge peeks in.
+    const navLinks = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>("a[data-nav-link]"),
+    );
+    const linkFor = new Map<string, HTMLAnchorElement>();
+    navLinks.forEach((a) => {
+      const id = a.getAttribute("href")?.replace(/^#/, "");
+      if (id) linkFor.set(id, a);
+    });
+    const spySections = Array.from(linkFor.keys())
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => Boolean(el));
+    let spy: IntersectionObserver | null = null;
+    if (spySections.length) {
+      const visible = new Map<string, number>();
+      const setActive = (id: string | null) => {
+        navLinks.forEach((a) => {
+          const on = a.getAttribute("href") === `#${id}`;
+          if (on) a.setAttribute("data-active-section", "true");
+          else a.removeAttribute("data-active-section");
+        });
+      };
+      spy = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            const id = (e.target as HTMLElement).id;
+            if (e.isIntersecting) visible.set(id, e.intersectionRatio);
+            else visible.delete(id);
+          }
+          // The most-covered section in the centre band wins; ties go to the
+          // one nearest the top so scrolling down advances the marker cleanly.
+          let best: string | null = null;
+          let bestRatio = 0;
+          for (const [id, ratio] of visible) {
+            if (ratio > bestRatio) {
+              best = id;
+              bestRatio = ratio;
+            }
+          }
+          setActive(best);
+        },
+        { rootMargin: "-40% 0px -40% 0px", threshold: [0, 0.25, 0.5, 1] },
+      );
+      spySections.forEach((el) => spy!.observe(el));
+    }
+
     // ── Scroll-progress + comet head + nav condense ────────────────────────
     const bar = document.getElementById("scroll-progress");
     const comet = document.getElementById("scroll-comet");
@@ -122,6 +177,7 @@ export default function LandingMotion() {
       if (raf) cancelAnimationFrame(raf);
       if (mRaf) cancelAnimationFrame(mRaf);
       io?.disconnect();
+      spy?.disconnect();
       root.classList.remove("reveal-ready");
       root.style.removeProperty("--scroll-energy");
       delete root.dataset.scrolled;
