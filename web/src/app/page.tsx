@@ -177,7 +177,7 @@ export default async function HomePage({
               <span className="kw" style={{ "--kw": 4 } as CSSProperties}>{t("hero.headline.line3")}</span>
             </span>
           </h1>
-          <p className="font-body text-lg leading-[1.55] text-ink-light m-0 mb-8 max-w-[480px]">
+          <p className="text-pretty font-body text-lg leading-[1.55] text-ink-light m-0 mb-8 max-w-[480px]">
             {t("hero.subhead")}
           </p>
           <div className="flex flex-wrap items-center gap-3.5 mb-[22px]">
@@ -231,7 +231,7 @@ export default async function HomePage({
           <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
             {t("steps.title")}
           </h2>
-          <p data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
+          <p data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="text-pretty font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
             {t("steps.subtitle")}
           </p>
           <div className="relative">
@@ -273,7 +273,7 @@ export default async function HomePage({
             <br />
             {t("chat.titleLine2")}
           </h2>
-          <p className="font-body text-[17px] leading-[1.6] text-ink-light m-0 mb-7">
+          <p className="text-pretty font-body text-[17px] leading-[1.6] text-ink-light m-0 mb-7">
             {t("chat.body")}
           </p>
           <div className="flex flex-col gap-3.5">
@@ -481,7 +481,7 @@ export default async function HomePage({
               <span className="kw gradient-text text-halo crown" style={{ "--kw": 1 } as CSSProperties}>{t("finalCta.headlineHighlight")}</span>
               <span className="kw" style={{ "--kw": 2 } as CSSProperties}>{t("finalCta.headlinePost")}</span>
             </h2>
-            <p className="font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
+            <p className="text-pretty font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
               {t("finalCta.body")}
             </p>
             <a href={primaryCtaHref} data-magnetic="0.3" data-ripple className="group/cta magnet shine cta-aura no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">

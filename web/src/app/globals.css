@@ -2583,3 +2583,58 @@ html[data-idle="true"] .logo-spark::before {
   .scroll-progress { box-shadow: 0 0 12px -1px rgba(232, 163, 23, 0.7); }
   html[data-idle="true"] .logo-spark::before { animation: none !important; opacity: 0 !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v29 — Quickened gold. v21 taught the atmosphere *where* the hand is; v25 let
+   it feel *how fast*. So far only the page's light field and selection answered
+   that tempo — the words themselves stayed still. v29 carries the same forge
+   signal up into the content: the gold a headline is struck from flares brighter
+   and wider the quicker the reader moves, and a link followed at speed lights a
+   hotter bloom under the hand. One static type-craft refinement rides along —
+   the lede copy stops orphaning its last word. Every rule is additive + opt-in,
+   reads only signals the page already publishes (PointerFX's `--pointer-heat`
+   inherited from <html>), composes onto — never replaces — the resting value of
+   the primitive it upgrades, and collapses to a pixel-identical rest state under
+   the reduced-motion guard at the foot.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Set the lede — `text-wrap: pretty` lets the engine look ahead a few lines
+   to avoid a stranded one-word last line in a paragraph, the body-copy partner
+   to v28's headline `.balance`. Opt-in via `.text-pretty`; a no-op on engines
+   that don't support it, so nothing regresses. */
+.text-pretty { text-wrap: pretty; }
+
+/* (2) Quickened crown — the shared `.gradient-text` accent already wears a v22
+   emissive halo so the gold reads as lit metal at rest; v29 hangs a *second*
+   drop-shadow on top that swells and warms with `--pointer-heat`, so flicking
+   around the hero fans the headline word like a coal under breath, then it
+   settles back to the v22 glow as the hand stills. The v22 term is restated
+   first so it is preserved (filter does not cascade additively), and the heat
+   term resolves to `drop-shadow(0 0 0 transparent)` at heat 0 — pixel-identical
+   to v22 on a still page. */
+.gradient-text {
+  filter:
+    drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22))
+    drop-shadow(0 0 calc(var(--pointer-heat, 0) * 16px)
+      rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.55)));
+}
+
+/* (3) Hotter link bloom — the v23 gold underline lights a fixed bloom on hover;
+   v29 lets that bloom answer the reader's tempo, so a link chased at speed
+   flares warmer and wider than one met at a drift. Restates the v23 hover
+   box-shadow with its exact value as the base term plus a `--pointer-heat`
+   addend, so at heat 0 it is identical to v23. Must sit after v23 in source
+   order — it does, appended here at the foot. */
+.underline-grow:hover::after {
+  box-shadow: 0 1px calc(8px + var(--pointer-heat, 0) * 11px) -1px
+    rgba(232, 163, 23, calc(0.6 + var(--pointer-heat, 0) * 0.35));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `--pointer-heat` never rises under reduced motion (PointerFX bails before it
+     publishes), so every heat term above already evaluates to its rest value.
+     Pin the two upgraded primitives to their exact static glow anyway, so no
+     heat custom-property is read and the surfaces are provably frozen. */
+  .gradient-text { filter: drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22)); }
+  .underline-grow:hover::after { box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.6); }
+}
