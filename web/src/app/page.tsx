@@ -228,7 +228,7 @@ export default async function HomePage({
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             <span className="eyebrow-dot" aria-hidden />{t("steps.eyebrow")}<span className="eyebrow-rule" aria-hidden />
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
             {t("steps.title")}
           </h2>
           <p data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="text-pretty font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
@@ -371,7 +371,7 @@ export default async function HomePage({
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
             <span className="eyebrow-dot" aria-hidden />{t("features.eyebrow")}<span className="eyebrow-rule" aria-hidden />
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
             {t("features.title")}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -442,7 +442,7 @@ export default async function HomePage({
           <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
             <span className="eyebrow-dot" aria-hidden />{t("bets.eyebrow")}
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="balance font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
             {t("bets.title")}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">

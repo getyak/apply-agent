@@ -3251,3 +3251,74 @@ section[id]:target .eyebrow-dot {
   .nav-link::before { transition: none !important; }
   section[id]:target .eyebrow-dot { animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v38 — Struck heading rule. v9–v37 lit the surfaces, carried the lamp, and
+   taught the nav to mark the read — but the three eyebrow-led section titles
+   (How it works / Features / The bets) still landed as bare type. The eyebrow
+   above each gets a tiny gold rule; the title itself got nothing, so the heads
+   read lighter than the labels that introduce them. v38 strikes a short gilt
+   rule under each of those titles the moment it scrolls into view: the bar draws
+   from the left on the page's gold gradient while a single bright spark rides its
+   leading edge and burns out at the end — the same comet/forge-light vocabulary
+   the scroll rail and pipeline already speak, now signing each section heading.
+   Discipline matches the rest of the layer: the rule's *resting* state is the
+   drawn gilt bar, so a no-JS page shows it fully struck; it is only hidden once
+   `html.reveal-ready` arms and before the heading is `.revealed`; and the spark
+   lives only inside the keyframe, so the prefers-reduced-motion `*` guard leaves
+   a calm, fully-drawn rule with no travelling light. Hung on `[data-reveal]`'s
+   existing `.revealed` switch + per-element `--reveal-delay`, so it cascades with
+   the heading it underlines and adds no JS and no layout.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes rule-strike {
+  0%   { transform: scaleX(0); opacity: 0; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+  55%  { opacity: 1; box-shadow: 0 0 15px 1px rgba(243, 200, 105, 0.72); }
+  100% { transform: scaleX(1); opacity: 1; box-shadow: 0 1px 7px -1px rgba(232, 163, 23, 0.5); }
+}
+@keyframes rule-spark {
+  0%   { opacity: 0; transform: translateX(0) scale(0.5); }
+  22%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(var(--rule-w, 56px)) scale(1.05); }
+}
+.head-rule { position: relative; }
+/* (1) The rule itself — rests fully drawn (no-JS / reduced-motion safe). */
+.head-rule::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  width: var(--rule-w, 56px);
+  height: 2px;
+  border-radius: 2px;
+  transform-origin: left center;
+  background: var(--grad-gold, #e8a317);
+  box-shadow: 0 1px 7px -1px rgba(232, 163, 23, 0.5);
+  pointer-events: none;
+}
+/* (2) The spark that rides the drawing edge — exists only inside the keyframe,
+   so it rests invisible and never shows for a reduced-motion reader. */
+.head-rule::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: calc(100% + 3px);
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #fff3d6 0%, #f3c869 42%, rgba(232, 163, 23, 0) 72%);
+  opacity: 0;
+  pointer-events: none;
+}
+/* Armed: hide the rule until its heading is seen. Without JS this scope never
+   exists, so the rule is left in its resting drawn state. */
+.reveal-ready .head-rule:not(.revealed)::after {
+  transform: scaleX(0);
+  opacity: 0;
+}
+.reveal-ready .head-rule.revealed::after {
+  animation: rule-strike 0.85s var(--ease-out) calc(var(--reveal-delay, 0ms) + 0.12s) both;
+}
+.reveal-ready .head-rule.revealed::before {
+  animation: rule-spark 0.85s var(--ease-out) calc(var(--reveal-delay, 0ms) + 0.12s) both;
+}
