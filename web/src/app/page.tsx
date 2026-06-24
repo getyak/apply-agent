@@ -493,8 +493,14 @@ export default async function HomePage({
       </section>
 
       {/* FOOTER */}
-      <footer className="edge-light relative border-t border-border bg-white">
-        <div data-reveal className="max-w-[1140px] mx-auto px-6 sm:px-8 py-11 flex items-center gap-3.5 flex-wrap">
+      <footer className="hearth-host edge-light relative overflow-hidden border-t border-border bg-white">
+        {/* v39 — Banked hearth. The page opens carrying a lamp; here it sets the
+            lamp down to bank as embers at the foot of the read. A soft warm pool
+            rests against the footer's top seam (visible with no JS), kindles up
+            once as the footer is reached, then breathes slowly while the page
+            idles. Decorative + behind content; pinned calm under reduced motion. */}
+        <div aria-hidden data-reveal className="footer-hearth" />
+        <div data-reveal className="relative max-w-[1140px] mx-auto px-6 sm:px-8 py-11 flex items-center gap-3.5 flex-wrap">
           <div className="flex items-center gap-[9px]">
             <div className="logo-spark w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
               <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />

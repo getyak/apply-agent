@@ -3322,3 +3322,84 @@ section[id]:target .eyebrow-dot {
 .reveal-ready .head-rule.revealed::before {
   animation: rule-spark 0.85s var(--ease-out) calc(var(--reveal-delay, 0ms) + 0.12s) both;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v39 — Banked hearth. v9–v38 lit the surfaces, carried the lamp across the
+   read, struck rules under the heads, and let the nav mark the read — but the
+   page still *ended* flat: the footer was a bare white seam, so the warm light
+   the whole page speaks simply stopped. v39 closes the loop on the page's own
+   metaphor — the lamp the hero carries (v35) is set down here to bank as embers
+   at the foot of the read. A soft, wide ember-gold pool rests against the
+   footer's top seam, a brighter core sits in its centre, and the wordmark + ©
+   read inside that warm light. The hearth's *resting* state is the lit pool, so
+   a no-JS page closes warm; it only kindles (cold → warm swell) once when the
+   footer is reached (hung on the footer's existing `[data-reveal]` switch), then
+   breathes slowly while the reader holds still (the shared `html[data-idle]`
+   signal the aura/eyebrows already answer). Discipline matches the layer: the
+   element is decorative (`aria-hidden`), sits behind the content (its own stack
+   context, content lifted with `position: relative`), adds no layout, and pins
+   to a calm, fully-lit rest under reduced motion. Two custom rules only; no JS.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.hearth-host { position: relative; }
+/* The banked pool — rests lit (no-JS / reduced-motion safe). A wide soft
+   ember-gold wash rising from the footer's top seam, with a hotter core. */
+.footer-hearth {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: min(820px, 92%);
+  height: 168px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(58% 132% at 50% 0%,
+      rgba(243, 200, 105, 0.30) 0%,
+      rgba(232, 163, 23, 0.16) 34%,
+      rgba(232, 163, 23, 0.06) 60%,
+      rgba(232, 163, 23, 0) 82%),
+    radial-gradient(22% 90% at 50% 0%,
+      rgba(255, 240, 205, 0.42) 0%,
+      rgba(243, 200, 105, 0) 70%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 100%);
+  will-change: opacity, transform;
+}
+@keyframes hearth-kindle {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.92); }
+  60%  { opacity: 1; }
+  /* Brief over-bright as the embers catch, then settle to the resting pool. */
+  72%  { opacity: 1; filter: brightness(1.16) saturate(1.05); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); filter: none; }
+}
+@keyframes hearth-breath {
+  0%, 100% { opacity: 0.82; transform: translateX(-50%) scale(0.985); }
+  50%      { opacity: 1;    transform: translateX(-50%) scale(1.018); }
+}
+/* Armed: hold the hearth cold (unlit) until the footer is actually reached.
+   More specific than the base `.reveal-ready [data-reveal]` hide rule, and it
+   neutralises that rule's blur/translate so the pool only fades + kindles —
+   it never blur-rises like a content block. Without JS this scope never
+   exists, so the hearth is left in its resting lit state. */
+.reveal-ready .footer-hearth:not(.revealed) {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px) scale(0.92);
+  filter: none;
+}
+.reveal-ready .footer-hearth.revealed {
+  animation: hearth-kindle 1.15s var(--ease-out) 0.1s both;
+}
+/* Banked breath — once the page settles, the embers swell and ebb slowly.
+   Lower priority than the kindle (kindle runs once on arrival, then this idles). */
+html[data-idle="true"] .footer-hearth.revealed {
+  animation: hearth-breath 6.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No kindle, no breath — a motion-sensitive reader still gets the warm pool,
+     just held perfectly still and fully lit. The `*` guard does not reach this
+     element's resting paint, so the hearth keeps its glow; we only ensure the
+     armed/idle animation rules can never leave it cold or moving. */
+  .footer-hearth { animation: none !important; opacity: 1 !important; transform: translateX(-50%) !important; filter: none !important; }
+  .reveal-ready .footer-hearth:not(.revealed) { opacity: 1 !important; transform: translateX(-50%) !important; }
+}
