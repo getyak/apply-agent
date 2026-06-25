@@ -395,9 +395,52 @@ export const resumes = {
     >("/api/resumes"),
 
   get: (id: string) =>
-    api<{ resume: { id: string; content: object; version: number } }>(
-      `/api/resumes/${id}`,
-    ),
+    api<{
+      resume: {
+        id: string;
+        content: { _markdown?: string; [k: string]: unknown };
+        version: number;
+        is_base?: boolean;
+        track?: "original" | "optimized" | "tailored";
+        tailored_for_job?: string | null;
+        // Publish state (migration 018). Both nullable: the résumé starts
+        // unpublished, revoke sets publish_token back to NULL but keeps
+        // published_at as an audit trail.
+        publish_token?: string | null;
+        published_at?: string | null;
+      };
+    }>(`/api/resumes/${id}`),
+
+  /**
+   * Hand-edit a résumé (inline studio writes go through this).
+   *
+   * - `mode: "draft"` overwrites content at the SAME row version — autosave
+   *   uses this so the timeline doesn't grow per keystroke.
+   * - `mode: "snapshot"` (default) bumps version — that's the user-visible
+   *   "Save snapshot" / Cmd+S action.
+   *
+   * Both paths still gate on `expectedVersion`; a concurrent tab racing the
+   * same row surfaces as 409 (`ConflictError`) for the §5 reconcile UX.
+   * The response echoes `mode` so the status chip can branch without
+   * comparing version numbers (racy across tabs).
+   */
+  update: (
+    id: string,
+    payload: { content: Record<string, unknown>; expectedVersion: number },
+    options?: { mode?: "draft" | "snapshot" },
+  ) =>
+    api<{
+      resume: {
+        id: string;
+        content: { _markdown?: string; [k: string]: unknown };
+        version: number;
+        is_base?: boolean;
+      };
+      mode: "draft" | "snapshot";
+    }>(`/api/resumes/${id}${options?.mode === "draft" ? "?mode=draft" : ""}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
 
   // The AI suggestion stack for a résumé (proposed by default). Read-only —
   // accept/reject goes through decideSuggestion.
@@ -445,6 +488,81 @@ export const resumes = {
       method: "POST",
       body: JSON.stringify({ bulletStableId, instruction }),
     }),
+
+  // ─── Export ─────────────────────────────────────────────────────────────
+  // The export endpoint streams a download, so we don't go through api() —
+  // it would try to res.json() the bytes. The drawer calls .download() which
+  // attaches the Bearer token, parses Content-Disposition, and synthesises
+  // an <a download> click. exportUrl() exists for legacy `window.location`
+  // openers that don't need auth (none in the app today — public surfaces use
+  // /api/public/r — but the helper is here for completeness).
+  exportUrl: (resumeId: string, format: "md" | "json" | "pdf" | "docx") =>
+    `${API_BASE}/api/resumes/${resumeId}/export?format=${format}`,
+
+  download: async (
+    resumeId: string,
+    format: "md" | "json" | "pdf" | "docx",
+  ): Promise<void> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(
+      `${API_BASE}/api/resumes/${resumeId}/export?format=${format}`,
+      { headers },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(
+        res.status,
+        extractErrorMessage(body),
+        extractErrorMeta(body),
+      );
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("content-disposition") ?? "";
+    // RFC 6266: filename* (UTF-8) takes precedence; fall back to plain filename.
+    const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    const ascii = /filename="?([^";]+)"?/i.exec(cd);
+    const filename = utf8
+      ? decodeURIComponent(utf8[1])
+      : ascii
+        ? ascii[1]
+        : `resume.${format}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
+  // ─── Publish (read-only short link) ─────────────────────────────────────
+  // POST → rotate token (old links 404 immediately).
+  // DELETE → revoke (publish_token NULL, link 404s).
+  publish: (resumeId: string) =>
+    api<{ publishToken: string; publishedAt: string; publicUrl: string }>(
+      `/api/resumes/${resumeId}/publish`,
+      { method: "POST" },
+    ),
+
+  revokePublish: (resumeId: string) =>
+    api<{ ok: boolean }>(`/api/resumes/${resumeId}/publish`, {
+      method: "DELETE",
+    }),
+};
+
+// Public résumé delivery (no auth — the token IS the capability).
+export const publicResume = {
+  fetch: (token: string) =>
+    api<{
+      basics: { name: string | null; label: string | null };
+      parsed: object;
+      markdown: string;
+      version: number;
+      publishedAt: string;
+    }>(`/api/public/r/${encodeURIComponent(token)}`),
 };
 
 export interface UploadResult {

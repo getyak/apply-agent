@@ -49,6 +49,26 @@
     "resetsIn": "Resets in {days} days",
     "upgrade": "Upgrade"
   },
+  "sidebar": {
+    "quota": {
+      "label": "Auto-applies",
+      "remaining": "{n} left",
+      "resetsIn": "resets in {days} days",
+      "paceDays": "~{days} days at your current pace",
+      "paceRunOut": "at this rate you'll run out {weekday}",
+      "fullTitle": "You're out for this cycle.",
+      "fullBody": "Manual applies still work — or upgrade for unlimited agent runs.",
+      "seeActivity": "See activity",
+      "upgrade": "Upgrade",
+      "upgradeNow": "Upgrade now",
+      "upgradeUnlimited": "Upgrade — unlimited",
+      "thisCycle": "This cycle",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "daysAgo": "{n} days ago",
+      "mostEfficient": "Most efficient day: {day} ({applies} → {replies} reply)"
+    }
+  },
   "settings": {
     "language": {
       "title": "Language",
@@ -617,7 +637,8 @@
     "agentCard": {
       "collapse": "Collapse thinking",
       "expand": "Expand thinking",
-      "thinkingElapsed": "Thinking · {elapsed}"
+      "thinkingElapsed": "Thinking · {elapsed}",
+      "waitingForModel": "Waiting for the model · {elapsed} — no tools or narration yet."
     },
     "meta": {
       "agent": "agent",
@@ -824,6 +845,59 @@
       "previewUnsupported": "PREVIEW NOT SUPPORTED",
       "previewUnsupportedBody": "Inline preview only works for PDFs. Use the download button above to open the original in your editor."
     },
+    "presentation": {
+      "tablistAria": "Presentation tab",
+      "optimized": "Optimized",
+      "original": "Original",
+      "compare": "Compare"
+    },
+    "editor": {
+      "dirtyCount": "{n, plural, one {# unsaved edit} other {# unsaved edits}}",
+      "pendingSuggestion": "Suggestion pending in dock",
+      "section": {
+        "summary": "Summary",
+        "experience": "Experience"
+      },
+      "placeholder": {
+        "name": "Your full name",
+        "label": "Your headline · e.g. Senior Backend Engineer",
+        "email": "you@example.com",
+        "phone": "+1 555 0100",
+        "location": "City, Region",
+        "summary": "A short summary in your own voice — three lines max.",
+        "company": "Company",
+        "role": "Role",
+        "dateEnd": "Present",
+        "roleSummary": "(optional) one line on what this role was about",
+        "bullet": "Type a bullet — start with an action verb."
+      },
+      "action": {
+        "addRole": "Add role",
+        "addBullet": "Add bullet",
+        "saveSnapshot": "Save snapshot",
+        "discard": "Discard draft"
+      },
+      "status": {
+        "saved": "Saved",
+        "savedJust": "Saved",
+        "savedAs": "Saved as v{v}",
+        "draft": "Draft · autosaving…",
+        "saving": "Saving…",
+        "offline": "Offline · will retry",
+        "error": "Couldn't save"
+      },
+      "empty": {
+        "experience": "No roles yet — click \"Add role\" to start your timeline."
+      },
+      "conflict": {
+        "title": "This résumé moved while you were editing.",
+        "body": "Another tab saved v{theirs} after your edit started at v{attempted}. Your draft is kept locally.",
+        "bodyLoading": "Pulling the newer version so you can compare…",
+        "viewTheirs": "View their version",
+        "branch": "Keep my draft & branch from theirs",
+        "discard": "Discard my draft"
+      }
+    },
     "viewMode": {
       "tablistAria": "Document view mode",
       "document": "Document",
@@ -889,6 +963,59 @@
       "targetLead": "Targeting lead and staff design roles — leading with scope, ownership, and team impact.",
       "targetSenior": "Targeting senior IC roles — leading with craft depth, project ownership, and measurable outcomes.",
       "targetDefault": "Open to senior IC and lead roles — positioning for both depth and breadth."
+    },
+    "delivery": {
+      "back": "Back",
+      "open": "Open in studio",
+      "operations": "Operations",
+      "openOps": "Open operations panel",
+      "publishedBadge": "Published",
+      "notPublishedBadge": "Draft",
+      "loading": "Loading…"
+    },
+    "public": {
+      "loading": "Loading…",
+      "notFound": {
+        "title": "This résumé is not available",
+        "body": "The link may have been revoked, or never existed."
+      },
+      "publishedOn": "Published on {date}",
+      "madeWith": "Made with Vantage"
+    },
+    "operations": {
+      "title": "Operations",
+      "eyebrow": "OPERATIONS",
+      "close": "Close",
+      "exportFailed": "Export couldn't finish. Please try again.",
+      "publishFailed": "Publishing didn't finish — try again, or contact support.",
+      "revokeFailed": "Couldn't revoke the link — try again.",
+      "export": {
+        "title": "Export",
+        "markdown": "Markdown",
+        "markdownSub": "Portable .md — paste into Notion, GitHub, anywhere.",
+        "pdf": "PDF",
+        "pdfSub": "Recruiter-ready, fixed layout.",
+        "docx": "DOCX",
+        "docxSub": "Editable Word document.",
+        "beta": "Beta",
+        "json": "JSON Resume",
+        "jsonSub": "The structured data file — for backup or import.",
+        "downloading": "Downloading…"
+      },
+      "share": {
+        "title": "Share",
+        "notPublishedBody": "Generate a read-only link a recruiter can open without an account. You can revoke it anytime.",
+        "publish": "Publish read-only link",
+        "publishing": "Publishing…",
+        "published": "Published",
+        "copy": "Copy link",
+        "copied": "Copied!",
+        "revoke": "Revoke"
+      },
+      "print": {
+        "title": "Print",
+        "cta": "Open print dialog"
+      }
     }
   },
   "today": {

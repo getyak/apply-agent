@@ -21,6 +21,7 @@ import { useVantage } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
 import { initialsOf } from "@/lib/dates";
 import { statusVisual } from "@/lib/status";
+import { QuotaPanel } from "./quota-panel";
 
 // Ask Vantage is intentionally NOT in this nav anymore — the persistent dock
 // (mounted by AppLayout) is its sole surface, per vantage-ui-mapping.md §1.
@@ -319,28 +320,8 @@ export function Sidebar() {
         </Link>
       </nav>
 
-      {!collapsed && (
-        <div className="bg-[#FBF8F3] border border-border rounded-xl p-[14px] mb-3">
-          <div className="flex items-center justify-between mb-[9px]">
-            <span className="font-mono text-[10px] tracking-[0.6px] uppercase text-ink-light">
-              {t("autoApplies")}
-            </span>
-            <span className="font-mono text-[10px] tracking-[0.6px] text-brown">
-              14 / 40
-            </span>
-          </div>
-          <div className="bar-track h-[6px] rounded-full bg-border overflow-hidden">
-            <div
-              className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#7A3F00,#A66A00)]"
-              style={{ width: "35%" }}
-            />
-          </div>
-          <div className="font-body text-[11px] text-ink-muted mt-[9px]">
-            {t("resetsIn", { days: 14 })} ·{" "}
-            <span className="link-pull text-brown font-semibold cursor-pointer">{t("upgrade")}</span>
-          </div>
-        </div>
-      )}
+      <QuotaPanel collapsed={collapsed} />
+
 
       <div
         className={`flex items-center ${

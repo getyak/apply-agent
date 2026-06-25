@@ -247,13 +247,12 @@ function CheckBadge() {
 function AgentCardRow({ id }: { id: string }) {
   const t = useTranslations("dock");
   const ev = useDock((s) => s.agentEvents[id]);
-  // Default collapsed in both states. The header alone (spinner + agent
-  // label + status chip) already tells the user "this agent is working /
-  // done"; the agent / started-at / status metadata inside the body is
-  // debug-grade and is only useful when they actively dig in. Earlier
-  // versions force-expanded while running, which produced a wall of
-  // mono-spaced metadata under every turn.
-  const [open, setOpen] = useState<boolean>(false);
+  // Default open while running so the user sees the narrator / tool
+  // activity-signal as it arrives. Done-state cards auto-collapse via
+  // the running→done effect below; failed cards stay open so the user
+  // doesn't have to dig for the reason. Manual toggle still wins on
+  // any state.
+  const [open, setOpen] = useState<boolean>(true);
   // Step 2: hooks must be called before any conditional return so React's
   // hook-order invariant holds. We resolve the running flag with a safe
   // default — when `ev` is briefly undefined (transient store eviction)
@@ -271,6 +270,18 @@ function AgentCardRow({ id }: { id: string }) {
       setOpen((cur) => cur || true);
     }
   }, [running, elapsedMs]);
+  // Auto-collapse the card once the agent settles to "done". Failed
+  // cards stay open so the reason is the first thing the user sees.
+  // Track previous running so we only fire the transition once.
+  const [prevRunning, setPrevRunning] = useState<boolean>(running);
+  if (prevRunning !== running) {
+    setPrevRunning(running);
+    if (prevRunning && !running) {
+      // running → settled. Honour done vs failed separately so the user
+      // doesn't have to click into a red row to learn what blew up.
+      setOpen(ev?.state === "failed");
+    }
+  }
   if (!ev) return null;
   const statusColor =
     ev.state === "done"
@@ -344,21 +355,155 @@ function AgentCardRow({ id }: { id: string }) {
         <div
           style={{
             borderTop: "1px solid #F0E8DA",
-            padding: "8px 14px 12px 38px",
+            padding: "10px 14px 12px 38px",
             display: "flex",
             flexDirection: "column",
-            gap: 4,
+            gap: 8,
             background: "#FBF8F3",
           }}
         >
-          <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-            {t("meta.agent")} · <span style={{ color: "#5D3000" }}>{ev.agent}</span>
-          </div>
-          <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-            {t("meta.started")} · <span style={{ color: "#5D3000" }}>{startedAt}</span>
-          </div>
-          <div className="ds-mono-9" style={{ color: "#A39F99" }}>
-            {t("meta.status")} · <span style={{ color: statusColor }}>{ev.state}</span>
+          {/* Activity signal — what the agent is *doing*, surfaced from
+              narrator chips + tool_trace + reasoning_delta. We pick the
+              strongest available signal so the user never sees a wall of
+              empty status metadata while the model is mid-thought. */}
+          {ev.lastNarrator ? (
+            <div
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 12.5,
+                lineHeight: 1.5,
+                color: "#2B2822",
+                fontStyle: "italic",
+              }}
+            >
+              {ev.lastNarrator}
+            </div>
+          ) : null}
+          {ev.lastTool ? (
+            <div
+              style={{
+                background: "#FFFFFF",
+                border: "1px solid #F0E8DA",
+                borderRadius: 8,
+                padding: "8px 10px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    display: "inline-block",
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    background: ev.lastTool.status === "error" ? "#A23A2E" : "#4C7A3F",
+                    flexShrink: 0,
+                  }}
+                />
+                <span
+                  className="ds-mono-10"
+                  style={{ color: "#5D3000", letterSpacing: 0.2 }}
+                >
+                  {ev.lastTool.name}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "Inter, system-ui, sans-serif",
+                    fontSize: 12,
+                    color: "#5D3000",
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {ev.lastTool.summary}
+                </span>
+              </div>
+              {ev.lastTool.args !== undefined &&
+              ev.lastTool.args !== null &&
+              typeof ev.lastTool.args === "object" &&
+              Object.keys(ev.lastTool.args as Record<string, unknown>).length >
+                0 ? (
+                <pre
+                  style={{
+                    margin: 0,
+                    fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                    fontSize: 10.5,
+                    lineHeight: 1.5,
+                    color: "#5D3000",
+                    background: "#FBF8F3",
+                    border: "1px solid #F0E8DA",
+                    borderRadius: 6,
+                    padding: "6px 8px",
+                    maxHeight: 84,
+                    overflow: "auto",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {(() => {
+                    try {
+                      const s = JSON.stringify(ev.lastTool.args, null, 2);
+                      return s.length > 320 ? s.slice(0, 320) + "…" : s;
+                    } catch {
+                      return String(ev.lastTool.args);
+                    }
+                  })()}
+                </pre>
+              ) : null}
+            </div>
+          ) : null}
+          {/* When the agent has neither narrated nor run a tool yet, give
+              the user a real "still working" signal instead of the old
+              agent/started/status debug stack. */}
+          {!ev.lastNarrator && !ev.lastTool ? (
+            <div
+              style={{
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 12.5,
+                lineHeight: 1.5,
+                color: "#7C7367",
+              }}
+            >
+              {running
+                ? t("agentCard.waitingForModel", { elapsed: formatElapsed(elapsedMs) })
+                : ev.statusText}
+            </div>
+          ) : null}
+          {/* Compact metadata footer — kept for power users who want the
+              raw tuple, but visually demoted to a single line of mono
+              text rather than three stacked rows. */}
+          <div
+            className="ds-mono-9"
+            style={{
+              color: "#A39F99",
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              marginTop: 2,
+            }}
+          >
+            <span>
+              {t("meta.agent")} · <span style={{ color: "#5D3000" }}>{ev.agent}</span>
+            </span>
+            <span>
+              {t("meta.started")} · <span style={{ color: "#5D3000" }}>{startedAt}</span>
+            </span>
+            <span>
+              {t("meta.status")} · <span style={{ color: statusColor }}>{ev.state}</span>
+            </span>
           </div>
         </div>
       ) : null}
@@ -381,6 +526,40 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
   const summary =
     m.toolSummary || (status === "error" ? t("tool.failed") : t("tool.ok"));
   const startedAt = m.toolStartedAt || 0;
+  // Cheap, structured one-line badge derived from the tool's structured
+  // result. Renders to the right of `tool` when present: "3 matches" /
+  // "0 items" / "stub" — so the user gets the count without expanding.
+  const resultBadge = (() => {
+    const r = m.toolResult as Record<string, unknown> | undefined;
+    if (!r || typeof r !== "object") return null;
+    const rs = (r as { status?: unknown }).status;
+    if (rs === "not_implemented" || rs === "not_implemented_yet") {
+      return { text: "stub", fg: "#8A6A12", bg: "#FBEFD0" };
+    }
+    if (rs === "unavailable") {
+      return { text: "unavailable", fg: "#7A2A1F", bg: "#F4D7D2" };
+    }
+    if (rs === "needs_args" || rs === "needs_clarification") {
+      return { text: "needs args", fg: "#5D3000", bg: "#FBEFD8" };
+    }
+    if (Array.isArray((r as { items?: unknown }).items)) {
+      const n = ((r as { items: unknown[] }).items).length;
+      return {
+        text: n === 0 ? "0 items" : `${n} item${n === 1 ? "" : "s"}`,
+        fg: n > 0 ? "#2F5722" : "#A39F99",
+        bg: n > 0 ? "#E2EED9" : "#F4F0E8",
+      };
+    }
+    if (typeof (r as { count?: unknown }).count === "number") {
+      const n = (r as { count: number }).count;
+      return {
+        text: `${n} · ${rs ?? "ok"}`,
+        fg: n > 0 ? "#2F5722" : "#A39F99",
+        bg: n > 0 ? "#E2EED9" : "#F4F0E8",
+      };
+    }
+    return null;
+  })();
   // Pure display only — the tool has *already finished* by the time this
   // message exists in the store (dock_agent only emits tool_trace on
   // tool_end / tool_error). So `running=false` and the chip shows the
@@ -467,10 +646,31 @@ function ToolTraceRow({ m }: { m: DockMessage }) {
           >
             {summary}
           </span>
+          {resultBadge ? (
+            <span
+              className="ds-mono-9"
+              style={{
+                marginLeft: "auto",
+                flexShrink: 0,
+                color: resultBadge.fg,
+                background: resultBadge.bg,
+                padding: "2px 7px",
+                borderRadius: 999,
+                letterSpacing: 0.4,
+                textTransform: "lowercase",
+              }}
+            >
+              {resultBadge.text}
+            </span>
+          ) : null}
           <span
             className="ds-mono-9"
             data-testid="dock-tool-trace-duration"
-            style={{ color: "#A39F99", marginLeft: "auto", flexShrink: 0 }}
+            style={{
+              color: "#A39F99",
+              flexShrink: 0,
+              marginLeft: resultBadge ? 6 : "auto",
+            }}
           >
             {formatElapsed(elapsedMs)}
           </span>
@@ -1540,38 +1740,169 @@ function TaskGraphCard({ m }: { m: DockMessage }) {
             {m.userGoal}
           </div>
         ) : null}
-        <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        <ol
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
           {m.steps.map((s, i) => (
             <li
               key={s.step}
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 9,
+                alignItems: "flex-start",
+                gap: 10,
                 fontFamily: "Inter, system-ui, sans-serif",
                 fontSize: 12.5,
+                lineHeight: 1.5,
+                padding: "3px 0",
                 color: s.status === "pending" ? "#A39F99" : "#2B2822",
               }}
             >
-              <span
-                aria-hidden
+              <div style={{ marginTop: 2 }}>
+                <TaskGraphStepBullet
+                  index={i + 1}
+                  status={s.status}
+                  requiresReview={!!s.requires_review}
+                />
+              </div>
+              <div
                 style={{
-                  fontFamily: "JetBrains Mono, ui-monospace, monospace",
-                  fontSize: 10,
-                  width: 14,
-                  flexShrink: 0,
-                  color: "#A39F99",
+                  flex: 1,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
                 }}
               >
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>{s.label}</span>
-              <TaskGraphStepPill status={s.status} requiresReview={!!s.requires_review} />
+                <span
+                  style={{
+                    textDecoration: s.status === "done" ? "line-through" : "none",
+                    textDecorationColor: s.status === "done" ? "#C9C2B5" : undefined,
+                  }}
+                >
+                  {s.label}
+                </span>
+                {s.status === "failed" && s.errorText ? (
+                  <span
+                    className="ds-mono-9"
+                    style={{
+                      color: "#7A2A1F",
+                      lineHeight: 1.45,
+                      letterSpacing: 0.1,
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    {s.errorText}
+                  </span>
+                ) : null}
+              </div>
+              <TaskGraphStepPill
+                status={s.status}
+                requiresReview={!!s.requires_review}
+              />
             </li>
           ))}
         </ol>
       </div>
     </div>
+  );
+}
+
+// 16px circular bullet to the left of each plan-step row. Replaces the old
+// "01 / 02" monospace numbers — the visual rhythm is calmer and the running
+// dot can pulse to draw the eye to the in-flight step. Failed → red ring;
+// review → amber dot; done → muted check; pending → outline.
+function TaskGraphStepBullet({
+  index,
+  status,
+  requiresReview,
+}: {
+  index: number;
+  status: "pending" | "running" | "done" | "review" | "failed";
+  requiresReview: boolean;
+}) {
+  void requiresReview;
+  const baseSize = 16;
+  const common: React.CSSProperties = {
+    width: baseSize,
+    height: baseSize,
+    flexShrink: 0,
+    borderRadius: 999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "JetBrains Mono, ui-monospace, monospace",
+    fontSize: 9,
+    lineHeight: 1,
+  };
+  if (status === "done") {
+    return (
+      <span
+        aria-hidden
+        style={{ ...common, background: "#E2EED9", color: "#2F5722" }}
+      >
+        <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      </span>
+    );
+  }
+  if (status === "running") {
+    return (
+      <span
+        aria-hidden
+        className="animate-pulse"
+        style={{ ...common, background: "#FBEFD8", color: "#5D3000" }}
+      >
+        <span
+          style={{ width: 6, height: 6, borderRadius: 999, background: "#5D3000" }}
+        />
+      </span>
+    );
+  }
+  if (status === "review") {
+    return (
+      <span
+        aria-hidden
+        style={{ ...common, background: "#FBEFD0", color: "#8A6A12" }}
+      >
+        <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+          <circle cx={12} cy={12} r={9} />
+        </svg>
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span
+        aria-hidden
+        style={{ ...common, background: "#F4D7D2", color: "#7A2A1F" }}
+      >
+        <svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+          <line x1={18} y1={6} x2={6} y2={18} />
+          <line x1={6} y1={6} x2={18} y2={18} />
+        </svg>
+      </span>
+    );
+  }
+  // pending — outlined circle with the step number inside for orientation.
+  return (
+    <span
+      aria-hidden
+      style={{
+        ...common,
+        border: "1px solid #D6CFC0",
+        color: "#A39F99",
+      }}
+    >
+      {index}
+    </span>
   );
 }
 

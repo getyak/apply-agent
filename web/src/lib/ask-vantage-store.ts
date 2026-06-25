@@ -41,6 +41,18 @@ export interface AgentEvent {
   // "this tier doesn't reason out loud" and the dock's Thinking body
   // just shows the spinner header without a transcript.
   reasoningText?: string;
+  // Activity-signal upgrade — populated from the most recent narrator /
+  // tool_trace tied to this event. Lets the AgentCardRow show "what the
+  // agent just did" instead of empty agent/started/status metadata when
+  // the cheap-tier model doesn't emit reasoning_delta.
+  lastNarrator?: string;
+  lastTool?: {
+    name: string;
+    summary: string;
+    status: "ok" | "error";
+    args?: unknown;
+    at: number;
+  };
 }
 
 export type DockMsgKind =
@@ -163,6 +175,10 @@ export interface TaskGraphMsgStep {
   label: string;
   requires_review?: boolean;
   status: TaskGraphStepStatus;
+  // When a tool failed, the short summary from the tool_trace error frame
+  // is hoisted onto the step so the TaskGraph card can show *what went
+  // wrong* in-line instead of forcing the user to open the console.
+  errorText?: string;
 }
 
 export interface DockMessage {
@@ -277,6 +293,14 @@ interface DockStateShape {
     stepId: string,
     status: TaskGraphStepStatus,
   ) => void;
+  // Tag the matching step as failed AND hoist the upstream tool error
+  // summary onto the step. Resolved by either plan_step id (preferred)
+  // or agent name (legacy fallback). Quiet no-op if neither matches.
+  failTaskGraphStep: (
+    messageId: string,
+    by: { stepId?: string; agent?: string },
+    errorText: string,
+  ) => void;
   updateAgentEvent: (e: AgentEvent) => void;
   // Append a reasoning_delta chunk to the most recent *running* agent
   // event. The dock_agent SSE protocol guarantees these arrive between
@@ -287,6 +311,12 @@ interface DockStateShape {
   // to attach it to yet, and we'd rather lose a few words than create
   // a phantom "coordinator" event the user has no way to interpret.
   appendReasoning: (text: string) => void;
+  // Stamp the latest narrator chip / tool_trace onto whichever agent
+  // event is currently running. These become the activity signal the
+  // AgentCardRow renders inside its expanded body when the model
+  // doesn't emit reasoning_delta. Quiet no-op when no event is running.
+  noteAgentNarrator: (text: string) => void;
+  noteAgentTool: (entry: NonNullable<AgentEvent["lastTool"]>) => void;
   // Step 5: merge-or-push for a partial_artifact snapshot. Matches by
   // partialArtifactId; if a row with the same id exists in messages, we
   // patch it in place (so the user sees the live card update); otherwise
@@ -427,6 +457,30 @@ export const useDock = create<DockStateShape>((set, get) => ({
         return touched ? { ...m, steps: next } : m;
       }),
     })),
+  failTaskGraphStep: (messageId, by, errorText) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.id !== messageId || m.kind !== "task_graph" || !m.steps) return m;
+        let touched = false;
+        const next = m.steps.map((st) => {
+          if (touched) return st;
+          // Prefer matching by step id (deterministic from the planner);
+          // fall back to agent name when only a tool_trace error frame
+          // hit us without a plan_step id.
+          const match = by.stepId
+            ? st.step === by.stepId
+            : by.agent
+              ? st.agent === by.agent
+              : false;
+          if (!match) return st;
+          if (st.status === "done") return st;
+          touched = true;
+          const next: TaskGraphMsgStep = { ...st, status: "failed", errorText };
+          return next;
+        });
+        return touched ? { ...m, steps: next } : m;
+      }),
+    })),
   updateAgentEvent: (e) =>
     set((s) => ({ agentEvents: { ...s.agentEvents, [e.id]: e } })),
   appendReasoning: (text) => {
@@ -446,6 +500,41 @@ export const useDock = create<DockStateShape>((set, get) => ({
         ...target,
         reasoningText: (target.reasoningText ?? "") + text,
       };
+      return { agentEvents: { ...s.agentEvents, [target.id]: updated } };
+    });
+  },
+  noteAgentNarrator: (text) => {
+    const clean = text?.trim();
+    if (!clean) return;
+    set((s) => {
+      let target: AgentEvent | null = null;
+      for (const ev of Object.values(s.agentEvents)) {
+        if (ev.state !== "running") continue;
+        if (!target || ev.ts > target.ts) target = ev;
+      }
+      if (!target) return s;
+      const updated: AgentEvent = { ...target, lastNarrator: clean };
+      return { agentEvents: { ...s.agentEvents, [target.id]: updated } };
+    });
+  },
+  noteAgentTool: (entry) => {
+    set((s) => {
+      let target: AgentEvent | null = null;
+      // Tool traces arrive after the matching agent_done in some flows
+      // (legacy router); to be defensive, also accept a "done" event if
+      // there's no running event left.
+      for (const ev of Object.values(s.agentEvents)) {
+        if (ev.state === "running") {
+          if (!target || ev.ts > target.ts) target = ev;
+        }
+      }
+      if (!target) {
+        for (const ev of Object.values(s.agentEvents)) {
+          if (!target || ev.ts > target.ts) target = ev;
+        }
+      }
+      if (!target) return s;
+      const updated: AgentEvent = { ...target, lastTool: entry };
       return { agentEvents: { ...s.agentEvents, [target.id]: updated } };
     });
   },

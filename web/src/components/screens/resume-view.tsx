@@ -15,12 +15,15 @@
 // chat-driven "build from scratch" flow) remains separately reachable.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import { resumes as resumesApi, files as filesApi } from "@/lib/api";
 import { useDock } from "@/lib/ask-vantage-store";
 import { useVantage } from "@/lib/store";
 import { ResumeChangeLogPanel } from "@/components/studio/resume-change-log-panel";
+import { ResumeMarkdown } from "@/components/studio/resume-markdown";
+import { EditableDocumentPane } from "@/components/studio/editable-document-pane";
 
 type ResumeTrack = "original" | "optimized" | "tailored";
 
@@ -99,6 +102,11 @@ interface JsonResume {
   // structure these bits — would you like help filling them in?" via the banner.
   _warnings?: string[];
   _raw?: string;
+  // Canonical GFM main track produced by api/src/resume-markdown.ts (design
+  // §11.3). The Optimized tab defaults to rendering this string through
+  // <ResumeMarkdown>; older rows have this undefined and we fall back to the
+  // structured pane render path.
+  _markdown?: string;
   _parsedAt?: string | null;
   // Points back at the original uploaded file (PDF/DOCX) when the résumé came
   // from /api/files → /api/resumes/parse-async. Drives the "Source" chip in
@@ -157,6 +165,7 @@ function VantageMark({ size = 14 }: { size?: number }) {
 
 export function ResumeView() {
   const t = useTranslations("resume");
+  const router = useRouter();
   const currentResumeId = useVantage((s) => s.currentResumeId);
   // currentUser is no longer needed here — the dock now owns the
   // resume_studio thread derivation (user_id × résumé_id), so this view
@@ -185,6 +194,17 @@ export function ResumeView() {
   // user a way to spot a bad LLM extraction without leaving the page (see
   // vantage-ui-mapping.md §2.7).
   const [viewMode, setViewMode] = useState<"document" | "extracted">("document");
+  // Presentation tab (design §11.2 — replaces the old single-pane render).
+  //   "optimized" — default: renders the canonical Markdown via <ResumeMarkdown>.
+  //                 This is the user's first impression: AI already cleaned it up.
+  //   "original"  — the uploaded version, structured pane only (no overlays).
+  //   "compare"   — side-by-side diff (lives inside the existing DocumentPane
+  //                 compareOn path, which we still wire below).
+  // The old "Extracted" tab (LLM raw text) is now an advanced toggle inside
+  // Compare; it was never a first-class user surface.
+  const [presentation, setPresentation] = useState<"optimized" | "original" | "compare">(
+    "optimized",
+  );
   // Diff base: the master résumé content. We lazy-load it on first
   // compare-mode entry against a tailored variant; the master itself
   // has nothing to diff against, so we leave this null otherwise.
@@ -453,19 +473,14 @@ export function ResumeView() {
     await parseFile(f);
   }
 
-  function exportResume() {
-    if (!doc) return;
-    const blob = new Blob([JSON.stringify(doc, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `resume-v${currentVersion?.version ?? "current"}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  // Studio's [Export] button → the dedicated delivery page (/app/resume/[id]).
+  // Studio owns *editing*; the delivery page owns *export / publish / print*.
+  // We keep the button's slot here as the entry-point so a user who lands in
+  // Studio still discovers all outbound actions through one click.
+  function openDeliveryPage() {
+    const id = currentResumeId ?? currentVersion?.id;
+    if (!id) return;
+    router.push(`/app/resume/${id}`);
   }
 
   // ─── Vibe chat removed (vantage-ui-mapping.md §2.6, rev. 2026-06-18) ───
@@ -651,7 +666,23 @@ export function ResumeView() {
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 11 }}>
-          {doc?._raw && doc._raw.trim().length > 0 ? (
+          {/* Presentation tabs (design §11.2): primary surface chooser.
+              "优化版" is the default — renders the AI-cleaned Markdown via
+              ResumeMarkdown. "原版" anchors on the uploaded file. "对照"
+              maps to the existing compare-on diff path so the user can keep
+              swiping between AI-edits and what they uploaded. */}
+          <PresentationTabs
+            value={presentation}
+            onChange={(next) => {
+              setPresentation(next);
+              setCompareOn(next === "compare");
+              // The "Extracted" advanced toggle still lives inside Compare;
+              // outside of Compare we always render the rich pane.
+              if (next !== "compare") setViewMode("document");
+            }}
+            t={t}
+          />
+          {doc?._raw && doc._raw.trim().length > 0 && presentation === "compare" ? (
             <ViewModeTabs value={viewMode} onChange={setViewMode} />
           ) : null}
           {doc?._source ? (
@@ -698,7 +729,7 @@ export function ResumeView() {
             </svg>
             {t("header.uploadNew")}
           </button>
-          <button onClick={exportResume} style={chromeBtnStyle(false)}>
+          <button onClick={openDeliveryPage} style={chromeBtnStyle(false)}>
             <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <path d="M7 10l5 5 5-5M12 15V3" />
@@ -723,47 +754,102 @@ export function ResumeView() {
           onSelect={(id) => setSelectedId(id)}
           onTailorPrompt={askToTailor}
         />
-        {/* Original Pane (left) — the immutable upload, always present (§5.1).
-            It renders the real uploaded file (PDF iframe / DOCX→PDF / raw
-            markdown), not the JSON-Resume reflow, so the user's first
-            impression is "my résumé, untouched". */}
-        <OriginalPane
-          original={originalVersion}
-          originalDoc={originalVersion?.id === selectedId ? doc : baseDoc}
-        />
-        {/* Derived Pane (right) — the selected optimized/tailored version with
-            diff highlights vs the original, plus the AI suggestion panel.
-            Hidden only when the user is looking at the original itself. */}
-        {currentVersion && currentVersion.track !== "original" ? (
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #EDE8DF" }}>
-            <SuggestionsPanel suggestions={suggestions} onDecide={decideSuggestion} />
-            <DocumentPane
-              basics={basics}
-              contact={contact}
-              work={doc.work ?? []}
-              skills={doc.skills ?? []}
-              education={doc.education ?? []}
-              rawText={doc._raw ?? null}
-              viewMode={viewMode}
-              showAITouchedLabel={true}
-              compareOn={compareOn}
-              baseDoc={tailoredAgainstBase ? baseDoc : null}
-              baseDocLoading={tailoredAgainstBase && baseDocLoading}
-              baseVersionLabel={
-                tailoredAgainstBase && originalVersion
-                  ? `v${originalVersion.version}`
-                  : null
-              }
+        {/* Design §11.2: the presentation tab controls the main-pane layout.
+            ─ optimized → single-pane DocumentPane (renders the Markdown main
+              track through <ResumeMarkdown> — the user's first impression is
+              an AI-cleaned printed document, not a JSON template reflow).
+            ─ original  → single-pane OriginalPane (PDF iframe / DOCX preview).
+            ─ compare   → side-by-side Original ↔ Derived with diff highlights,
+              the historical §5.1 dual layout, preserved verbatim. */}
+        {presentation === "original" ? (
+          <OriginalPane
+            original={originalVersion}
+            originalDoc={originalVersion?.id === selectedId ? doc : baseDoc}
+          />
+        ) : presentation === "compare" ? (
+          <>
+            <OriginalPane
+              original={originalVersion}
+              originalDoc={originalVersion?.id === selectedId ? doc : baseDoc}
             />
-          </div>
-        ) : (
-          // Original selected → show the suggestion panel beside the original
-          // so the user can act on AI proposals without leaving the upload.
-          suggestions.length > 0 ? (
-            <div style={{ width: 380, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #EDE8DF" }}>
-              <SuggestionsPanel suggestions={suggestions} onDecide={decideSuggestion} />
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", borderLeft: "1px solid #EDE8DF" }}>
+              {suggestions.length > 0 ? (
+                <SuggestionsPanel suggestions={suggestions} onDecide={decideSuggestion} />
+              ) : null}
+              <DocumentPane
+                basics={basics}
+                contact={contact}
+                work={doc.work ?? []}
+                skills={doc.skills ?? []}
+                education={doc.education ?? []}
+                rawText={doc._raw ?? null}
+                markdown={doc._markdown ?? null}
+                presentation={presentation}
+                suggestions={suggestions}
+                viewMode={viewMode}
+                showAITouchedLabel={true}
+                compareOn={true}
+                baseDoc={tailoredAgainstBase ? baseDoc : null}
+                baseDocLoading={tailoredAgainstBase && baseDocLoading}
+                baseVersionLabel={
+                  tailoredAgainstBase && originalVersion
+                    ? `v${originalVersion.version}`
+                    : null
+                }
+              />
             </div>
-          ) : null
+          </>
+        ) : (
+          /* presentation === "optimized" — single-pane render.
+             - For an optimized version: inline editor (R-4). Original (PDF
+               bytes) and Tailored (per-JD branches) are not editable through
+               this surface; they fall back to the read-only Markdown render.
+             - The editor calls back to the parent on every save so the rail
+               and the source-of-truth doc stay in sync without a refresh. */
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {suggestions.length > 0 ? (
+              <SuggestionsPanel suggestions={suggestions} onDecide={decideSuggestion} />
+            ) : null}
+            {currentVersion?.track === "optimized" && selectedId ? (
+              <EditableDocumentPane
+                resumeId={selectedId}
+                baseVersion={currentVersion.version}
+                initialDoc={doc as unknown as Record<string, unknown>}
+                onSaved={(next, version, mode) => {
+                  // Authoritative content lands back here. We adopt it as
+                  // the new render source so the rest of the studio (Compare
+                  // tab, source chip, suggestions panel) reflects what the
+                  // server just stored. On a snapshot bump we also nudge the
+                  // version rail to refetch — the new vN+1 needs a row.
+                  setDoc(next as unknown as JsonResume);
+                  if (mode === "snapshot") {
+                    setVersionsRefresh((n) => n + 1);
+                  }
+                  // Suppress an unused-var warning if the hook switches its
+                  // version forwarding mechanism later.
+                  void version;
+                }}
+              />
+            ) : (
+              <DocumentPane
+                basics={basics}
+                contact={contact}
+                work={doc.work ?? []}
+                skills={doc.skills ?? []}
+                education={doc.education ?? []}
+                rawText={doc._raw ?? null}
+                markdown={doc._markdown ?? null}
+                presentation={presentation}
+                suggestions={suggestions}
+                viewMode={viewMode}
+                showAITouchedLabel={true}
+                compareOn={false}
+                baseDoc={null}
+                baseDocLoading={false}
+                baseVersionLabel={null}
+              />
+            )}
+          </div>
         )}
       </div>
       <ResumeChangeLogSection currentVersion={currentVersion} />
@@ -1279,6 +1365,9 @@ function DocumentPane({
   skills,
   education,
   rawText,
+  markdown,
+  presentation,
+  suggestions,
   viewMode,
   showAITouchedLabel,
   compareOn,
@@ -1295,6 +1384,15 @@ function DocumentPane({
   // path when the LLM couldn't produce any structured fields — see §2.7 of
   // vantage-ui-mapping.md (Source/Extracted/Document tri-view).
   rawText: string | null;
+  // Canonical GFM main track (design §11.3). When `presentation === "optimized"`
+  // (the default) we render this through <ResumeMarkdown> instead of the
+  // structured pane below. Older rows (pre-§11.3) have markdown=null and
+  // gracefully fall back to the structured render.
+  markdown: string | null;
+  presentation: "optimized" | "original" | "compare";
+  // Proposed AI suggestions — overlaid as bullet highlights on the Optimized
+  // view (gold = safe, coral = needs_review).
+  suggestions: ResumeSuggestion[];
   // Active document tab. "extracted" shows rawText as Markdown so the user
   // can spot a bad LLM extraction without leaving the page.
   viewMode: "document" | "extracted";
@@ -1385,7 +1483,25 @@ function DocumentPane({
         )}
 
         <div className="ds-card" style={{ padding: "44px 48px", minHeight: 560 }}>
-          {viewMode === "extracted" && rawText && rawText.trim().length > 0 ? (
+          {/* Design §11.2 — when the user is on the Optimized tab and we have
+              a canonical Markdown main track, render through <ResumeMarkdown>
+              instead of the structured JSON pane. This is the 10/10 surface:
+              printed-document type, .resume-prose theme, AI-touched bullets
+              overlaid by risk_level (gold safe, coral needs_review). The
+              structured pane below still backs the Compare/Original/Extracted
+              paths and remains the renderer when no markdown is available. */}
+          {presentation === "optimized" && markdown && markdown.trim().length > 0 ? (
+            <ResumeMarkdown
+              markdown={markdown}
+              suggestions={suggestions.map((s) => ({
+                bullet_stable_id: s.bullet_stable_id ?? undefined,
+                after_text: s.after_text,
+                before_text: s.before_text,
+                risk_level: s.risk_level,
+              }))}
+              showAIOverlay={showAITouchedLabel}
+            />
+          ) : viewMode === "extracted" && rawText && rawText.trim().length > 0 ? (
             <ExtractedView text={rawText} />
           ) : showRawFallback ? (
             <RawTextFallback text={rawText!} />
@@ -2263,6 +2379,71 @@ function SourceDrawer({
           )}
         </div>
       </aside>
+    </div>
+  );
+}
+
+// ── Presentation tabs (优化版 / 原版 / 对照) — design §11.2 ──────────────────
+
+function PresentationTabs({
+  value,
+  onChange,
+  t,
+}: {
+  value: "optimized" | "original" | "compare";
+  onChange: (v: "optimized" | "original" | "compare") => void;
+  t: Translate;
+}) {
+  // Three-state segmented control. Default selection is "optimized" so the
+  // user's first impression of the document area is the AI-cleaned résumé
+  // (design §11.2 — "AI 先做"). "Compare" hooks into the existing diff path
+  // by side-effect in the parent (setCompareOn). "Original" anchors on the
+  // upload contract — never AI-touched.
+  const modes: Array<{ key: "optimized" | "original" | "compare"; labelKey: string }> = [
+    { key: "optimized", labelKey: "presentation.optimized" },
+    { key: "original", labelKey: "presentation.original" },
+    { key: "compare", labelKey: "presentation.compare" },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label={t("presentation.tablistAria")}
+      style={{
+        display: "inline-flex",
+        background: "#F3F0EB",
+        border: "1px solid #E8DCCA",
+        borderRadius: 9,
+        padding: 2,
+        gap: 2,
+      }}
+    >
+      {modes.map(({ key, labelKey }) => {
+        const active = value === key;
+        return (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(key)}
+            style={{
+              cursor: "pointer",
+              border: "none",
+              background: active ? "#FFFFFF" : "transparent",
+              color: active ? "#2B2822" : "#6B6560",
+              fontFamily: "Inter",
+              fontWeight: active ? 600 : 500,
+              fontSize: 12.5,
+              padding: "6px 12px",
+              borderRadius: 7,
+              boxShadow: active ? "0 1px 2px rgba(43,40,34,0.06)" : "none",
+              transition: "background .14s, color .14s",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t(labelKey)}
+          </button>
+        );
+      })}
     </div>
   );
 }

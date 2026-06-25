@@ -49,6 +49,26 @@
     "resetsIn": "{days} 天后重置",
     "upgrade": "升级"
   },
+  "sidebar": {
+    "quota": {
+      "label": "自动投递",
+      "remaining": "剩 {n} 次",
+      "resetsIn": "{days} 天后重置",
+      "paceDays": "按当前节奏还能用 ~{days} 天",
+      "paceRunOut": "照这个节奏,{weekday}就用完了",
+      "fullTitle": "这周期的额度已用完。",
+      "fullBody": "手动投递不受影响 — 或升级解锁无限额度。",
+      "seeActivity": "查看明细",
+      "upgrade": "升级",
+      "upgradeNow": "立即升级",
+      "upgradeUnlimited": "升级 — 无限额度",
+      "thisCycle": "本周期",
+      "today": "今天",
+      "yesterday": "昨天",
+      "daysAgo": "{n} 天前",
+      "mostEfficient": "最高效的一天:{day}({applies} → 收到 {replies} 个回应)"
+    }
+  },
   "settings": {
     "language": {
       "title": "语言",
@@ -617,7 +637,8 @@
     "agentCard": {
       "collapse": "收起思考过程",
       "expand": "展开思考过程",
-      "thinkingElapsed": "思考中 · {elapsed}"
+      "thinkingElapsed": "思考中 · {elapsed}",
+      "waitingForModel": "正在等待模型 · {elapsed} — 还没有工具调用或叙述。"
     },
     "meta": {
       "agent": "智能体",
@@ -824,6 +845,59 @@
       "previewUnsupported": "不支持预览",
       "previewUnsupportedBody": "内嵌预览仅支持 PDF。请用上方的下载按钮在你的编辑器中打开原稿。"
     },
+    "presentation": {
+      "tablistAria": "展示模式",
+      "optimized": "优化版",
+      "original": "原版",
+      "compare": "对照"
+    },
+    "editor": {
+      "dirtyCount": "{n, plural, one {# 项未保存} other {# 项未保存}}",
+      "pendingSuggestion": "Dock 里有一条待处理建议",
+      "section": {
+        "summary": "概览",
+        "experience": "工作经历"
+      },
+      "placeholder": {
+        "name": "你的全名",
+        "label": "一句话头衔 · 例如：资深后端工程师",
+        "email": "you@example.com",
+        "phone": "+86 138 0000 0000",
+        "location": "城市，地区",
+        "summary": "用你自己的语气写一段简短概览 —— 三行以内。",
+        "company": "公司",
+        "role": "职位",
+        "dateEnd": "至今",
+        "roleSummary": "（可选）这段经历的一行总结",
+        "bullet": "写一条要点 —— 用动词开头。"
+      },
+      "action": {
+        "addRole": "添加一段经历",
+        "addBullet": "添加要点",
+        "saveSnapshot": "保存为版本",
+        "discard": "放弃草稿"
+      },
+      "status": {
+        "saved": "已保存",
+        "savedJust": "已保存",
+        "savedAs": "已保存为 v{v}",
+        "draft": "草稿 · 正在自动保存…",
+        "saving": "保存中…",
+        "offline": "离线 · 稍后重试",
+        "error": "保存失败"
+      },
+      "empty": {
+        "experience": "还没有任何经历 —— 点 “添加一段经历” 开始你的时间轴。"
+      },
+      "conflict": {
+        "title": "你在编辑期间这份简历被改动了。",
+        "body": "另一个标签页在你从 v{attempted} 开始编辑后保存到了 v{theirs}。你的草稿已留在本地。",
+        "bodyLoading": "正在拉取最新版本以便对比…",
+        "viewTheirs": "查看对方版本",
+        "branch": "保留我的改动并从对方版本分叉",
+        "discard": "放弃我的草稿"
+      }
+    },
     "viewMode": {
       "tablistAria": "文档查看模式",
       "document": "文档",
@@ -889,6 +963,59 @@
       "targetLead": "瞄准 Lead / Staff 设计岗 —— 以职责范围、主导力与团队影响力为核心。",
       "targetSenior": "瞄准高级 IC 岗 —— 以专业深度、项目主导与可量化成果为核心。",
       "targetDefault": "对高级 IC 与 Lead 岗均开放 —— 兼顾深度与广度的定位。"
+    },
+    "delivery": {
+      "back": "返回",
+      "open": "在 Studio 中打开",
+      "operations": "操作",
+      "openOps": "打开操作面板",
+      "publishedBadge": "已发布",
+      "notPublishedBadge": "草稿",
+      "loading": "加载中…"
+    },
+    "public": {
+      "loading": "加载中…",
+      "notFound": {
+        "title": "该简历不可访问",
+        "body": "链接可能已被撤销,或从未存在。"
+      },
+      "publishedOn": "发布于 {date}",
+      "madeWith": "由 Vantage 制作"
+    },
+    "operations": {
+      "title": "操作",
+      "eyebrow": "操作",
+      "close": "关闭",
+      "exportFailed": "导出未能完成,请重试。",
+      "publishFailed": "发布未能完成 —— 请重试,或联系支持。",
+      "revokeFailed": "撤销链接失败,请重试。",
+      "export": {
+        "title": "导出",
+        "markdown": "Markdown",
+        "markdownSub": "便携 .md —— 可粘贴到 Notion、GitHub 等任意位置。",
+        "pdf": "PDF",
+        "pdfSub": "为招聘者准备的固定排版。",
+        "docx": "DOCX",
+        "docxSub": "可编辑的 Word 文档。",
+        "beta": "测试版",
+        "json": "JSON Resume",
+        "jsonSub": "结构化数据文件 —— 用于备份或导入。",
+        "downloading": "下载中…"
+      },
+      "share": {
+        "title": "分享",
+        "notPublishedBody": "生成只读链接,招聘者无需账号即可打开。可随时撤销。",
+        "publish": "发布只读链接",
+        "publishing": "发布中…",
+        "published": "已发布",
+        "copy": "复制链接",
+        "copied": "已复制!",
+        "revoke": "撤销"
+      },
+      "print": {
+        "title": "打印",
+        "cta": "打开打印对话框"
+      }
     }
   },
   "today": {
