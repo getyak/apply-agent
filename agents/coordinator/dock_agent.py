@@ -44,6 +44,7 @@ from langgraph.prebuilt import create_react_agent
 
 from agents.coordinator.dock_tools import DOCK_TOOLS
 from agents.harness.checkpointer import get_checkpointer
+from agents.harness.context import dock_pre_model_hook
 from agents.harness.guards import post_model_hook
 from agents.harness.llm import pick_model
 
@@ -123,10 +124,16 @@ def build_dock_graph(tier: str = "general"):
         tools=DOCK_TOOLS,
         prompt=_load_dock_prompt(),
         checkpointer=checkpointer,
-        # post_model_hook gives us token + cost guards. pre_model_hook is
-        # intentionally not wired: dock prompts are small and the hook
-        # would otherwise need to know about contextvars too. The cheap
-        # regex fast-path keeps the LLM call count manageable.
+        # pre_model_hook: iteration / consecutive-error budget AND token-budget
+        # compaction. dock_pre_model_hook composes guards.pre_model_hook with
+        # harness.context.maybe_compact so a long lifetime dock thread auto-
+        # summarises older turns when it crosses the 80k token line set by
+        # post_model_hook. Without this, long Ask Vantage sessions would
+        # silently bloat their context window.
+        pre_model_hook=dock_pre_model_hook,
+        # post_model_hook gives us token + cost guards (see harness/guards.py).
+        # Cost gets sourced from the contextvar cost_tracker tally so direct
+        # model.ainvoke paths (resume_agent.customize etc.) also accumulate.
         post_model_hook=post_model_hook,
     )
     return graph

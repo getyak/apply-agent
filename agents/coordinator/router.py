@@ -22,6 +22,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from agents.harness.audit import redact_exception_text
 from agents.harness.llm import pick_model
+from agents.harness.locale import language_directive as build_language_directive
 
 log = structlog.get_logger("agents.coordinator.router")
 
@@ -142,6 +143,9 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     # lands on the write path.
     (re.compile(r"\b(analy[sz]e|critique|review)\s+(this\s+|my\s+)?r[eé]sum[eé]\b", re.I), "analyze_resume", 0.90),
     (re.compile(r"\b(weakest|weak)\s+(spots?|points?|parts?)\b", re.I), "analyze_resume", 0.90),
+    # zh — "(帮我)?分析(一下)?(我的|这份)?简历/履历"
+    (re.compile(r"(帮我)?\s*分析\s*(一下)?\s*(我的|这份|这个)?\s*(简历|履历)"), "analyze_resume", 0.92),
+    (re.compile(r"(给|帮)\s*(我)?\s*(看一下|评估|点评|审视)\s*(我的|这份)?\s*(简历|履历)"), "analyze_resume", 0.90),
     (re.compile(r"\b(optimi[sz]e|improve|sharpen|strengthen)\s+(this\s+|my\s+)?r[eé]sum[eé]\b(?!\s+for)", re.I), "optimize_resume", 0.88),
     (re.compile(r"\b(quick\s+wins?|best[- ]practice)\b", re.I), "optimize_resume", 0.80),
     (re.compile(r"\b(next|career)\s+(move|moves|step|steps)\b", re.I), "map_career_moves", 0.88),
@@ -186,8 +190,18 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
 ]
 
 
-_COMPANY_HINT = re.compile(r"\bfor\s+([A-Z][a-zA-Z0-9&\-]+(?:\s+[A-Z][a-zA-Z0-9&\-]+){0,2})\b")
-_MODE_HINT = re.compile(r"\b(scene\s+recreation|pressure\s+drill|warm[\s-]?up|rapid\s+fire)\b", re.I)
+# Accept "for / on / at / with / against" as the leading preposition so
+# natural phrasings like "mock me on Stripe" or "tailor for Linear" both
+# yield a captured company hint.
+_COMPANY_HINT = re.compile(
+    r"\b(?:for|on|at|with|against|to)\s+([A-Z][a-zA-Z0-9&\-]+(?:\s+[A-Z][a-zA-Z0-9&\-]+){0,2})\b"
+)
+# Accept both spaces and underscores between mode words, and the bare
+# slug form ("pressure_drill") that the dock + the modes catalogue use.
+_MODE_HINT = re.compile(
+    r"\b(scene[\s_]+recreation|pressure[\s_]+drill|warm[\s_-]?up|rapid[\s_]+fire)\b",
+    re.I,
+)
 # Word after "to <X>" or "as <X>" in the move/mark intents — used to derive
 # the target status. We canonicalise interviewing → interview etc. before
 # dispatch so the tool gets one of the values _ALLOWED_STATUSES (see
@@ -786,6 +800,32 @@ async def load_active_resume_brief(user_id: UUID, max_chars: int = 4000) -> str 
                 (str(user_id),),
             )
             row = await cur.fetchone()
+            # Fallback: if the master row is a fallback parse (empty
+            # basics/work) but a downstream optimize / customize produced a
+            # populated sibling, surface that one instead. analyze_resume
+            # would otherwise critique an empty document and tell the user
+            # to add their name + jobs even though the data is already in PG.
+            content = (row or {}).get("content") or {}
+            looks_empty = (
+                not (content.get("basics") or {})
+                or not (content.get("work") or [])
+            )
+            if looks_empty:
+                await cur.execute(
+                    """
+                    SELECT content
+                    FROM resumes
+                    WHERE user_id = %s
+                      AND content ? 'work'
+                      AND jsonb_array_length(content->'work') > 0
+                    ORDER BY version DESC
+                    LIMIT 1
+                    """,
+                    (str(user_id),),
+                )
+                better = await cur.fetchone()
+                if better and better.get("content"):
+                    row = better
     if not row:
         return None
 

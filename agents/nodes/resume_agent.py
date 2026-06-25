@@ -41,6 +41,19 @@ def _load_prompt(name: str) -> str:
     return (PROMPT_DIR / name).read_text(encoding="utf-8")
 
 
+def intake(base_resume_id: UUID, user_id: UUID):  # type: ignore[no-untyped-def]
+    """Re-export of the Resume Intake Agent action (design §12).
+
+    Lives in resume_intake.py to keep this file under the 800-line ceiling.
+    Imported lazily to avoid a circular import (resume_intake imports this
+    module for the shared fabrication / optimize helpers). Returns the
+    coroutine so callers ``await resume_agent.intake(...)`` unchanged.
+    """
+    from agents.nodes.resume_intake import intake as _intake
+
+    return _intake(base_resume_id, user_id)
+
+
 # ───────────────────────────────────────────────────────────────────────
 # parse — PDF text → JSON Resume
 # ───────────────────────────────────────────────────────────────────────
@@ -138,6 +151,20 @@ async def customize(
             "resume:updated",
             {"user_id": str(user_id), "version": new_version, "resume_id": str(new_id)},
         )
+        # P1-5: also emit resume:tailored so the dock-nudge consumer can
+        # plant a follow-up suggestion ("now prepare a submission packet?").
+        # Distinct topic from generic "updated" because we want this specific
+        # signal to trigger downstream actions only on tailoring (not on
+        # base edits or proofreader sweeps).
+        await publish(
+            "resume:tailored",
+            {
+                "user_id": str(user_id),
+                "version": new_version,
+                "resume_id": str(new_id),
+                "job_id": str(job_id),
+            },
+        )
 
         return {
             "ok": True,
@@ -225,26 +252,46 @@ _MONEY_RE = re.compile(r"[\$￥€]\s?\d[\d,]*(?:\.\d+)?[kKmMbB]?")
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 
+def _tokenize(text: str) -> set[str]:
+    """Lowercase + extract word tokens (≥ 3 chars) for set-overlap checks."""
+    return {w for w in re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{2,}", text.lower())}
+
+
 def fabrication_guard(base: dict[str, Any], tailored: dict[str, Any]) -> list[str]:
     """Return a list of entities present in `tailored` but not in `base`.
 
-    Entities checked: company names, titles, years, percentages, monetary values,
-    headcount numbers. Empty list = OK.
+    P2-2 upgrade: company/title checks switched from naive substring
+    membership (false-positive on "Stripe" vs "Stripe Capital", false-
+    negative on "Anthropic" vs "anthropic.com") to *token-set* overlap.
+    A company is considered grounded when ALL its content tokens are
+    present in the base's token set. Quantitative entities (year, %,
+    money, number > 100) still use exact substring as the conservative
+    fall-back — those need verbatim presence.
+
+    Entities checked: company names, titles, years, percentages, monetary
+    values, headcount numbers. Empty list = OK.
     """
     base_text = _flatten_text(base).lower()
+    base_tokens = _tokenize(base_text)
 
     fabricated: list[str] = []
 
-    # 1. Company names + titles — extract from tailored work[]
+    # 1. Company names + titles — token-set check.
     for work in tailored.get("work", []):
         name = (work.get("name") or work.get("company") or "").strip()
-        if name and name.lower() not in base_text:
-            fabricated.append(f"company:{name}")
+        if name:
+            name_tokens = _tokenize(name)
+            if name_tokens and not name_tokens.issubset(base_tokens):
+                fabricated.append(f"company:{name}")
         position = (work.get("position") or "").strip()
-        if position and position.lower() not in base_text:
-            fabricated.append(f"position:{position}")
+        if position:
+            pos_tokens = _tokenize(position)
+            if pos_tokens and not pos_tokens.issubset(base_tokens):
+                fabricated.append(f"position:{position}")
 
-    # 2. Quantitative entities anywhere in tailored
+    # 2. Quantitative entities anywhere in tailored — these MUST appear
+    #    verbatim in the base. Token overlap is too loose for numbers
+    #    (5% and 50% would both pass against "5").
     tailored_text = _flatten_text(tailored)
     for pattern, kind in [
         (_PERCENT_RE, "percent"),

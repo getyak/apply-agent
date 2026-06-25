@@ -48,7 +48,67 @@ RECENT_ROLE_HINT_CHIPS = [
 ]
 
 
+async def prefill_from_profile(state: BuildResumeState) -> dict[str, Any]:
+    """P2-1: pre-populate state from the user's existing profile so we can
+    skip questions whose answers are already known.
+
+    Reads users.preferences (target_roles, last_role) and the most recent
+    résumé (recent_role from work[0].position). Quietly skips when there's
+    nothing useful. Never blocks: any PG hiccup returns an empty update.
+    """
+    user_id = state["user_id"]
+    update: dict[str, Any] = {}
+    try:
+        from agents.tools.auto import pg_query
+
+        prefs_rows = await pg_query(
+            "SELECT preferences FROM users WHERE id = %s", (str(user_id),)
+        )
+        if prefs_rows:
+            prefs = prefs_rows[0].get("preferences") or {}
+            if isinstance(prefs, str):
+                import json as _json
+
+                try:
+                    prefs = _json.loads(prefs)
+                except (ValueError, TypeError):
+                    prefs = {}
+            if isinstance(prefs, dict):
+                target_roles = prefs.get("target_roles") or []
+                if target_roles and not state.get("target_role"):
+                    update["target_role"] = str(target_roles[0])
+
+        resume_rows = await pg_query(
+            """
+            SELECT content FROM resumes
+            WHERE user_id = %s AND deleted_at IS NULL
+            ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1
+            """,
+            (str(user_id),),
+        )
+        if resume_rows:
+            content = resume_rows[0].get("content") or {}
+            if isinstance(content, str):
+                import json as _json
+
+                try:
+                    content = _json.loads(content)
+                except (ValueError, TypeError):
+                    content = {}
+            work = (content.get("work") if isinstance(content, dict) else None) or []
+            if work and isinstance(work, list):
+                first = work[0] or {}
+                position = first.get("position") if isinstance(first, dict) else None
+                if position and not state.get("recent_role"):
+                    update["recent_role"] = str(position)
+    except Exception:  # noqa: BLE001 — pre-fill is purely advisory
+        return {}
+    return update
+
+
 async def ask_target_role(state: BuildResumeState) -> dict[str, Any]:
+    if state.get("target_role"):
+        return {}
     decision = interrupt(
         {
             "type": "guided_question",
@@ -62,6 +122,8 @@ async def ask_target_role(state: BuildResumeState) -> dict[str, Any]:
 
 
 async def ask_recent_role(state: BuildResumeState) -> dict[str, Any]:
+    if state.get("recent_role"):
+        return {}
     decision = interrupt(
         {
             "type": "guided_question",
@@ -106,53 +168,146 @@ async def draft_v1(state: BuildResumeState) -> dict[str, Any]:
 
 
 async def hitl_review(state: BuildResumeState) -> dict[str, Any]:
-    """Pause and let the user accept / edit the v1 draft."""
+    """Pause and let the user accept / edit the v1 draft.
+
+    P2-1: the decision dict can now carry an ``edit_step`` field with one of
+    {"target_role", "recent_role", "top_3_wins"} — if present, route back to
+    that ask_X node with the current value cleared so the user can re-answer.
+    Without that field, the workflow ends (default = approve).
+    """
     decision = interrupt(
         {
             "type": "review_draft",
             "resume_id": str(state.get("draft_resume_id") or ""),
             "message": (
-                "Here's v1 of your résumé. Look it over and approve, or tell me what to change."
+                "Here's v1 of your résumé. Look it over and approve, or tell me "
+                "what to change. To edit a specific answer, include "
+                "edit_step ∈ {target_role, recent_role, top_3_wins}."
             ),
         }
     )
     return {"_review_decision": decision}
 
 
+def _route_after_review(state: BuildResumeState) -> str:
+    """Decide whether the user wants to edit or ship.
+
+    The decision dict is set by hitl_review. ``edit_step`` (if present) names
+    which question to re-ask. We also clear that field on the state so the
+    skip-if-known guard at the top of ask_X actually re-prompts.
+    """
+    decision = state.get("_review_decision") or {}
+    if not isinstance(decision, dict):
+        return END
+    edit_step = decision.get("edit_step")
+    if edit_step in ("target_role", "recent_role", "top_3_wins"):
+        return f"clear_{edit_step}"
+    return END
+
+
+def _make_clear_node(field: str):
+    """Build a tiny node that erases ``field`` so ask_X re-prompts on the
+    next loop. Doing this in a separate node keeps the ask_X bodies pure
+    (they just check state.get and either skip or interrupt)."""
+
+    async def clear(state: BuildResumeState) -> dict[str, Any]:
+        # LangGraph dict reducer is replace-on-update — return field=None.
+        # Also wipe the stale _review_decision so the next hitl_review can
+        # accept a fresh choice.
+        return {field: None, "_review_decision": None}
+
+    clear.__name__ = f"clear_{field}"
+    return clear
+
+
 def build_from_scratch_graph():
     g: StateGraph = StateGraph(BuildResumeState)
+    # P2-1 nodes: prefill before any question, clear-nodes for the refine loop.
+    g.add_node("prefill", prefill_from_profile)
     g.add_node("ask_target_role", ask_target_role)
     g.add_node("ask_recent_role", ask_recent_role)
     g.add_node("ask_top_3_wins", ask_top_3_wins)
     g.add_node("draft_v1", draft_v1)
     g.add_node("hitl_review", hitl_review)
+    g.add_node("clear_target_role", _make_clear_node("target_role"))
+    g.add_node("clear_recent_role", _make_clear_node("recent_role"))
+    g.add_node("clear_top_3_wins", _make_clear_node("top_3_wins"))
 
-    g.set_entry_point("ask_target_role")
+    g.set_entry_point("prefill")
+    g.add_edge("prefill", "ask_target_role")
     g.add_edge("ask_target_role", "ask_recent_role")
     g.add_edge("ask_recent_role", "ask_top_3_wins")
     g.add_edge("ask_top_3_wins", "draft_v1")
     g.add_edge("draft_v1", "hitl_review")
-    g.add_edge("hitl_review", END)
+
+    # P2-1: refine loop — hitl_review can route back into a question instead
+    # of ending. Each clear_X node nukes one slot then loops to ask_X to
+    # collect a new value, then re-runs draft_v1 + hitl_review.
+    g.add_conditional_edges(
+        "hitl_review",
+        _route_after_review,
+        {
+            "clear_target_role": "clear_target_role",
+            "clear_recent_role": "clear_recent_role",
+            "clear_top_3_wins": "clear_top_3_wins",
+            END: END,
+        },
+    )
+    g.add_edge("clear_target_role", "ask_target_role")
+    g.add_edge("clear_recent_role", "ask_recent_role")
+    g.add_edge("clear_top_3_wins", "ask_top_3_wins")
 
     return g.compile(checkpointer=get_checkpointer())
 
 
 async def start_build_from_scratch(user_id: UUID) -> dict[str, Any]:
-    """Public entry called by router.dispatch() — kicks off a new build session."""
+    """Public entry called by router.dispatch() — kicks off a new build session.
+
+    Hits ``ask_target_role``'s ``interrupt()`` on first invoke. When this graph
+    is executed as a *nested* subgraph (e.g. from the dock_agent ReAct tool
+    ``build_resume_from_scratch``), LangGraph raises ``GraphInterrupt`` to the
+    caller instead of returning. We catch it and flatten the first question
+    into the response so the dock surfaces a real onboarding question instead
+    of an opaque tool_error.
+    """
     session_id = uuid4()
+    thread_id = build_resume_thread_id(str(user_id), str(session_id))
     graph = build_from_scratch_graph()
-    config = {"configurable": {"thread_id": build_resume_thread_id(str(user_id), str(session_id))}}
-    # First invoke pauses at ask_target_role's interrupt() — the API layer
-    # surfaces the question to the dock, the user replies, and the API calls
-    # graph.invoke(Command(resume=...)) to continue.
-    await graph.ainvoke({"user_id": user_id}, config=config)
-    return {
+    config = {"configurable": {"thread_id": thread_id}}
+    base: dict[str, Any] = {
         "agent": "coordinator",
         "action": "build_resume",
         "session_id": str(session_id),
-        "thread_id": build_resume_thread_id(str(user_id), str(session_id)),
+        "thread_id": thread_id,
         "status": "awaiting_user_input",
     }
+    # Imported locally so an aggressive import-sorter doesn't drop it as
+    # "unused" before this except clause is parsed.
+    from langgraph.errors import GraphInterrupt
+
+    try:
+        await graph.ainvoke({"user_id": user_id}, config=config)
+    except GraphInterrupt as gi:
+        # `gi.args[0]` is a Sequence[Interrupt]; the first entry holds the
+        # value the node passed to interrupt(). Surface it as the dock's
+        # next question so the user sees "What role are you going after?"
+        # plus chips, not a red ERROR row.
+        first = next(iter(gi.args[0]), None) if gi.args else None
+        if first is not None and isinstance(getattr(first, "value", None), dict):
+            base.update(
+                {
+                    "question": first.value.get("question"),
+                    "step": first.value.get("step"),
+                    "chips": first.value.get("chips") or [],
+                    "free_form": bool(first.value.get("free_form", True)),
+                    "summary": first.value.get("question") or "Starting résumé builder",
+                }
+            )
+        return base
+    # Path reached only when the graph completed without interrupting (rare —
+    # would mean the workflow finished synchronously). Still a valid response
+    # shape for the dock; just no question to ask.
+    return base
 
 
 # ────────────────────────────────────────────────────────────────────────

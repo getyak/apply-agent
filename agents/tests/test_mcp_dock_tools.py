@@ -114,12 +114,16 @@ async def test_tailor_resume_adapter_needs_args():
 
 
 @pytest.mark.asyncio
-async def test_find_jobs_adapter_stub():
+async def test_find_jobs_adapter_empty(monkeypatch):
+    """P2-3: find_jobs now hits the jobs table. Without RELAY_PG_DSN the
+    backing pg_query returns [], so the MCP adapter surfaces status=empty."""
+    monkeypatch.delenv("RELAY_PG_DSN", raising=False)
     uid = str(uuid4())
-    out = await tools.find_jobs(user_id=uid, role="staff engineer", remote_only=True, limit=999)
-    assert out["status"] == "not_implemented"
-    assert out["args"]["limit"] == 25
-    assert out["args"]["remote_only"] is True
+    out = await tools.find_jobs(
+        user_id=uid, role="staff engineer", remote_only=True, limit=999
+    )
+    assert out["status"] == "empty"
+    assert out["items"] == []
 
 
 def test_tool_catalog_shape():

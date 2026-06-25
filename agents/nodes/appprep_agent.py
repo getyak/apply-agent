@@ -155,6 +155,119 @@ async def generate_cover_letter(
         )
 
 
+async def refine_cover_letter(
+    *,
+    existing_body: str,
+    instruction: str,
+    base_resume: dict[str, Any],
+    company: str,
+    role_title: str,
+    user_id: UUID,
+) -> CoverLetter:
+    """P2-5: tweak an existing cover letter from a natural-language instruction.
+
+    Use this when the user has reviewed a draft and asks for ONE adjustment
+    ("make it warmer", "shorten by a paragraph", "cut the bit about Stripe").
+    Returns a CoverLetter with the same subject, refined body. Still gated by
+    fabrication_guard — the refinement can't introduce experience.
+
+    Falls back to the original body verbatim when the LLM is unavailable or
+    the refinement would fabricate.
+    """
+    async with audit(user_id, "appprep_agent", "refine_cover_letter") as record:
+        candidate_name = _candidate_name(base_resume) or "Candidate"
+
+        if not existing_body or not instruction:
+            return CoverLetter(
+                subject=f"Application for {role_title} — {candidate_name}",
+                body=existing_body or "",
+                tone="professional",
+                fallback=True,
+                fabricated_entities=[],
+            )
+
+        try:
+            model = pick_model("general", temperature=0.5, max_tokens=2048)
+        except RuntimeError as exc:
+            log.warning("appprep.refine_cover.no_llm_key", error=str(exc))
+            return CoverLetter(
+                subject=f"Application for {role_title} — {candidate_name}",
+                body=existing_body,
+                tone="professional",
+                fallback=True,
+                fabricated_entities=[],
+            )
+
+        refine_prompt = (
+            "You are refining an existing cover letter. Apply the user's "
+            "instruction without introducing any new claims, companies, or "
+            "metrics. Reply ONLY with valid JSON: "
+            '{"subject": "...", "body": "...", "tone": "..."}. '
+            "Preserve the candidate's voice. Do not lengthen unless asked. "
+            "If the instruction would require inventing experience, return "
+            'the original body verbatim with a note in tone: "rejected_fabrication".'
+        )
+        payload = json.dumps(
+            {
+                "company": company,
+                "role_title": role_title,
+                "instruction": instruction,
+                "existing_body": existing_body,
+            },
+            default=str,
+        )
+        try:
+            resp = await model.ainvoke(
+                [SystemMessage(content=refine_prompt), HumanMessage(content=payload)]
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("appprep.refine_cover.llm_failed", error=str(exc))
+            return CoverLetter(
+                subject=f"Application for {role_title} — {candidate_name}",
+                body=existing_body,
+                tone="professional",
+                fallback=True,
+                fabricated_entities=[],
+            )
+
+        parsed = _safe_json(resp.content)
+        body = (parsed.get("body") or "").strip()
+        subject = (parsed.get("subject") or "").strip()
+        tone = (parsed.get("tone") or "professional").strip()
+
+        if not body or tone == "rejected_fabrication":
+            return CoverLetter(
+                subject=subject
+                or f"Application for {role_title} — {candidate_name}",
+                body=existing_body,
+                tone="professional",
+                fallback=True,
+                fabricated_entities=[],
+            )
+
+        fab = fabrication_guard(base_resume, {"basics": {"summary": body}, "work": []})
+        if fab:
+            log.warning("appprep.refine_cover.fabrication_detected", entities=fab[:5])
+            record.output_result = {"fabricated_entities": fab[:5]}
+            return CoverLetter(
+                subject=subject
+                or f"Application for {role_title} — {candidate_name}",
+                body=existing_body,
+                tone="professional",
+                fallback=True,
+                fabricated_entities=fab[:10],
+            )
+
+        record.output_result = {"length": len(body), "tone": tone, "refined": True}
+        return CoverLetter(
+            subject=subject or f"Application for {role_title} — {candidate_name}",
+            body=body,
+            tone=tone,
+            fallback=False,
+            fabricated_entities=[],
+        )
+
+
 def _template_cover_letter(
     role: str, company: str, name: str, *, fab: list[str] | None = None
 ) -> CoverLetter:

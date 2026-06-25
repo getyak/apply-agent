@@ -109,11 +109,14 @@ async def test_tailor_resume_returns_needs_args(bound_user):
 
 
 @pytest.mark.asyncio
-async def test_find_jobs_clamps_limit(bound_user):
+async def test_find_jobs_empty_when_no_jobs(bound_user, monkeypatch):
+    """P2-3: find_jobs now hits jobs table. Empty PG → status=empty."""
+    monkeypatch.delenv("RELAY_PG_DSN", raising=False)
     out = await dock_tools.find_jobs.ainvoke({"limit": 9999})
-    assert out["status"] == "not_implemented"
-    assert out["args"]["limit"] == 25
-    assert out["args"]["user_id"] == str(bound_user)
+    # Without RELAY_PG_DSN pg_query returns [], so find_jobs returns "empty".
+    assert out["status"] == "empty"
+    assert out["items"] == []
+    assert out["agent"] == "jobmatch_agent"
 
 
 @pytest.mark.asyncio

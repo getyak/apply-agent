@@ -52,7 +52,14 @@ def _token_count_of(msg: BaseMessage) -> int:
 
 
 def post_model_hook(state: dict[str, Any]) -> dict[str, Any]:
-    """Accumulate tokens + cost from the last AI message; degrade if over 80% of budget.
+    """Accumulate tokens + cost from the last AI message; raise if over budget.
+
+    Cost source priority:
+      1. ``CostTally.pending_cents`` (set by the cost_tracker callback after
+         every LLM call — works for both LangGraph create_react_agent and
+         direct ``model.ainvoke``)
+      2. ``state["_pending_cost_cents"]`` legacy path (kept for back-compat
+         with any caller still writing this field manually)
 
     Returns a state-update dict (LangGraph merges).
     """
@@ -69,16 +76,35 @@ def post_model_hook(state: dict[str, Any]) -> dict[str, Any]:
         "total_tokens": state.get("total_tokens", 0) + used_tokens,
     }
 
-    # If a per-call cost was stashed in state by the LLM wrapper, accumulate it.
-    new_cost_cents = state.get("_pending_cost_cents")
-    if new_cost_cents:
-        update["total_cost_cents"] = state.get("total_cost_cents", 0.0) + float(new_cost_cents)
+    # Drain the callback-tracked pending cost first. Lazy import to keep
+    # guards.py importable without langchain (early CI bootstrap).
+    try:
+        from agents.harness.cost_tracker import get_tally
+    except ImportError:
+        tally = None
+    else:
+        tally = get_tally()
+
+    pending_cents = 0.0
+    if tally is not None:
+        pending_cents = tally.drain_pending()
+
+    # Back-compat: a caller may have stashed cost on state directly.
+    legacy_pending = state.get("_pending_cost_cents")
+    if legacy_pending:
+        pending_cents += float(legacy_pending)
+
+    if pending_cents:
+        update["total_cost_cents"] = round(
+            state.get("total_cost_cents", 0.0) + pending_cents, 4
+        )
         update["_pending_cost_cents"] = 0.0
 
     budget = state.get("_budget", DEFAULT_BUDGET)
-    if update.get("total_cost_cents", state.get("total_cost_cents", 0.0)) > budget.cost_limit_cents:
+    running_cost = update.get("total_cost_cents", state.get("total_cost_cents", 0.0))
+    if running_cost > budget.cost_limit_cents:
         raise BudgetExhausted(
-            f"session cost {update['total_cost_cents']:.4f}c > {budget.cost_limit_cents}c"
+            f"session cost {running_cost:.4f}c > {budget.cost_limit_cents}c"
         )
     if update["total_tokens"] > budget.token_budget:
         # context.py picks this up and compacts; for now signal a soft cap.
