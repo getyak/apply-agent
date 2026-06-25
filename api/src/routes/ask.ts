@@ -624,6 +624,22 @@ function toNdjson(
       out.push(JSON.stringify({ kind: "text", delta: payload.text }));
     }
     const action = payload.action as string | undefined;
+    // System-utility tools (recall / narrate / propose_plan) already have
+    // their own dedicated dock surfaces (narrator chip, task-graph card,
+    // collapsible console row). Stamping a second "coordinator → recall_user_memory"
+    // result card is duplicate chrome and clutters the conversation. Skip
+    // them here; the user still sees the underlying activity in the
+    // collapsible console row.
+    const UTILITY_ACTIONS = new Set([
+      "recall_user_memory",
+      "recall_past_applications",
+      "recall_weak_points",
+      "narrate",
+      "propose_plan",
+    ]);
+    if (action && UTILITY_ACTIONS.has(action)) {
+      return out;
+    }
     if (action && action !== "reply") {
       const route = routeFor(agent, action);
       const artifact = buildArtifact(agent, action, payload, route ?? undefined);
@@ -634,13 +650,19 @@ function toNdjson(
         // artifact template for this (agent, action) — keeps strange or
         // not-yet-categorised actions visible instead of silently
         // dropping them.
+        const status =
+          typeof payload.status === "string" ? (payload.status as string) : "";
+        const stub =
+          status === "not_implemented" || status === "not_implemented_yet";
         out.push(
           JSON.stringify({
             kind: "result",
-            title: humanizeAction(agent, action),
+            title: humanizeAction(agent, action, payload),
             sub: describeAction(payload),
-            action: ctaFor(agent, action),
-            ...(route ? { route } : {}),
+            // Stub agents shouldn't ship a primary CTA — without an `action`
+            // string the dock renders an info-only card.
+            ...(stub ? {} : { action: ctaFor(agent, action, payload) }),
+            ...(route && !stub ? { route } : {}),
           }),
         );
       }
@@ -673,7 +695,26 @@ function toNdjson(
   return [];
 }
 
-function humanizeAction(agent: string, action: string): string {
+function humanizeAction(
+  agent: string,
+  action: string,
+  payload?: Record<string, unknown>,
+): string {
+  const status =
+    typeof payload?.status === "string" ? (payload.status as string) : "";
+  // Honest titles when a tool route is wired but the backend can't deliver yet.
+  // Avoids claiming "Matching roles found" on an empty stub result.
+  if (status === "not_implemented" || status === "not_implemented_yet") {
+    if (agent === "jobmatch_agent") return "Job matcher — coming online";
+    if (agent === "trend_agent") return "Market snapshot — coming online";
+    if (agent === "appprep_agent") return "Application prep — coming online";
+    return "Wired up · not generating yet";
+  }
+  if (status === "needs_args" || status === "needs_clarification") {
+    if (agent === "resume_agent") return "Résumé tweak — needs a detail";
+    if (agent === "appprep_agent") return "Cover letter — needs a detail";
+    return "Almost there — one more detail";
+  }
   if (agent === "resume_agent" && action === "customize") return "Tailored résumé ready";
   if (agent === "resume_agent" && action === "optimize_general") return "Résumé suggestions ready";
   if (agent === "resume_agent" && action === "update_field") return "Résumé update queued";
@@ -681,17 +722,62 @@ function humanizeAction(agent: string, action: string): string {
   if (agent === "trend_agent" && action === "daily_snapshot") return "Today's market snapshot";
   if (agent === "jobmatch_agent" && action === "find_matches") return "Matching roles found";
   if (agent === "appprep_agent" && action === "draft_cover_letter") return "Cover letter drafted";
+  if (agent === "applications" && action === "list") {
+    const count =
+      typeof payload?.count === "number"
+        ? (payload?.count as number)
+        : Array.isArray((payload as { items?: unknown[] })?.items)
+          ? ((payload as { items: unknown[] }).items.length)
+          : null;
+    if (count === 0) return "No applications yet";
+    if (count != null) return `${count} application${count === 1 ? "" : "s"}`;
+    return "Your application pipeline";
+  }
   return `${agent.replace(/_/g, " ")} → ${action}`;
 }
 
 function describeAction(payload: Record<string, unknown>): string {
   const status = payload.status as string | undefined;
-  if (status === "not_implemented_yet") return "Coming soon — wired up but not generating yet.";
-  if (status === "needs_clarification") return "Tell me which field to update.";
+  if (status === "not_implemented" || status === "not_implemented_yet") {
+    const summary =
+      typeof payload.summary === "string" ? (payload.summary as string) : "";
+    // Prefer the agent's own honest summary; never claim "Open it to keep going"
+    // when the destination has nothing to show.
+    return summary || "Wired up — generation is on the roadmap.";
+  }
+  if (status === "needs_args" || status === "needs_clarification") {
+    return "Tell me the missing detail and I'll continue.";
+  }
+  // applications → list — surface the count + an encouraging next step
+  // instead of the generic CTA. Empty pipeline gets a friendly nudge.
+  if (payload.agent === "applications" && payload.action === "list") {
+    const count =
+      typeof payload.count === "number"
+        ? (payload.count as number)
+        : Array.isArray((payload as { items?: unknown[] }).items)
+          ? (payload as { items: unknown[] }).items.length
+          : null;
+    if (count === 0) {
+      return "Drop a job link in here and I'll start the first one.";
+    }
+    if (count != null) {
+      return `${count} active. Open the kanban to track outcomes.`;
+    }
+  }
   return "Open it to keep going.";
 }
 
-function ctaFor(agent: string, action: string): string {
+function ctaFor(
+  agent: string,
+  action: string,
+  payload?: Record<string, unknown>,
+): string {
+  const status =
+    typeof payload?.status === "string" ? (payload.status as string) : "";
+  // Stubbed agents shouldn't promise a destination — say so up front.
+  if (status === "not_implemented" || status === "not_implemented_yet") {
+    return "Notify me when ready";
+  }
   if (agent === "resume_agent") return "Open résumé";
   if (agent === "interview_agent") return "Open mock";
   if (agent === "trend_agent") return "View trends";
@@ -770,7 +856,7 @@ export function buildArtifact(
   const id =
     (payload.artifact_id as string) ??
     `art-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const title = humanizeAction(agent, action);
+  const title = humanizeAction(agent, action, payload);
   const sub = describeAction(payload);
   const confidence =
     typeof payload.confidence === "number" ? (payload.confidence as number) : undefined;
@@ -886,6 +972,9 @@ export function buildArtifact(
     };
   }
   if (agent === "jobmatch_agent") {
+    const stub =
+      payload.status === "not_implemented" ||
+      payload.status === "not_implemented_yet";
     return {
       artifact_type: "job_match_set",
       id,
@@ -893,9 +982,14 @@ export function buildArtifact(
       sub,
       confidence,
       source_evidence: evidenceFromPayload,
-      next_actions: [
-        { kind: "open", label: "See matches", route: route ?? "/app/applications" },
-      ],
+      // Don't promise a destination when the matcher is still a stub —
+      // dropping next_actions makes the dock render an info-only card
+      // instead of a misleading "See matches" CTA.
+      next_actions: stub
+        ? []
+        : [
+            { kind: "open", label: "See matches", route: route ?? "/app/applications" },
+          ],
     };
   }
   if (agent === "interview_agent") {
@@ -912,6 +1006,9 @@ export function buildArtifact(
     };
   }
   if (agent === "trend_agent") {
+    const stub =
+      payload.status === "not_implemented" ||
+      payload.status === "not_implemented_yet";
     return {
       artifact_type: "market_snapshot",
       id,
@@ -919,9 +1016,11 @@ export function buildArtifact(
       sub,
       confidence,
       source_evidence: evidenceFromPayload,
-      next_actions: [
-        { kind: "open", label: "View trends", route: route ?? "/app/today" },
-      ],
+      next_actions: stub
+        ? []
+        : [
+            { kind: "open", label: "View trends", route: route ?? "/app/today" },
+          ],
     };
   }
   return null;

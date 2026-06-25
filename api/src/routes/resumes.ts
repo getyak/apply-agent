@@ -15,9 +15,26 @@ import { parsePagination, paginated } from "../pagination";
 import { cache } from "../cache";
 import { llm, LLMUnavailableError } from "../llm";
 import { parseResumeText } from "../resume-parse";
+import { jsonResumeToMarkdown } from "../resume-markdown";
+import {
+  EXPORT_MIME,
+  exportFilename,
+  exportJson,
+  exportMarkdown,
+  isExportFormat,
+  type ExportFormat,
+} from "../resume-export";
+import { pdfRenderAvailable, renderResumePdf } from "../pdf-render";
+import { docxExportAvailable, renderResumeDocx } from "../docx-export";
 import { createJob, getJob, runJob } from "../jobs";
 import { config } from "../config";
-import { ConflictError, NotFoundError, UpstreamError } from "../errors";
+import {
+  ConflictError,
+  NotFoundError,
+  UpstreamError,
+  ValidationError,
+} from "../errors";
+import { randomBytes } from "node:crypto";
 import type {
   CreateResume,
   UpdateResume,
@@ -69,15 +86,27 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const { content, isBase } = c.get("validatedBody") as CreateResume;
 
+  // Wrap the incoming JSON Resume in the envelope shape (design §11.3) so the
+  // row carries a Markdown main track from the very first write. Without this
+  // the row would be opaque to the Optimized tab and the unwrapResumeRow
+  // legacy-fallback would have to regenerate markdown on every read — wasteful
+  // and inconsistent across writers.
+  const wrapped = {
+    raw: "",
+    parsed: content,
+    markdown: jsonResumeToMarkdown(content),
+    warnings: [] as string[],
+    parsedAt: new Date().toISOString(),
+  };
   // version=0 → migration 016's BEFORE INSERT trigger assigns the next
   // per-user version under an advisory lock. No app-level MAX+1 race.
   const result = await query(
     `INSERT INTO resumes (user_id, content, version, is_base, created_at)
      VALUES ($1, $2, 0, $3, NOW())
      RETURNING id, user_id, content, version, is_base, created_at`,
-    [userId, JSON.stringify(content), isBase ?? true],
+    [userId, JSON.stringify(wrapped), isBase ?? true],
   );
-  return c.json({ resume: result.rows[0] }, 201);
+  return c.json({ resume: unwrapResumeRow(result.rows[0]) }, 201);
 });
 
 // POST /api/resumes/parse — raw resume text → structured JSON Resume. This is
@@ -171,9 +200,20 @@ async function saveBaseResume(
     }
   }
 
+  // Dual-format storage (design §11.3): we keep three views of the same résumé.
+  //   - raw       — the extracted text (what the LLM saw). Debug + re-parse path.
+  //   - parsed    — JSON Resume (the structured side-index for matching/skills).
+  //   - markdown  — canonical GFM (the human-readable main track that the
+  //                 .resume-prose theme renders, the LLM edits, and diffs cleanly).
+  // markdown is generated deterministically from `parsed` here so a re-render
+  // always matches the JSON. The "Markdown main, JSON side" contract holds as
+  // long as both come from the same parse. Future writers (optimize_general,
+  // customize) keep the contract by updating both on every write.
+  const markdown = jsonResumeToMarkdown(parsed.resume);
   const content = {
     raw: parsed.raw,
     parsed: parsed.resume,
+    markdown,
     warnings: parsed.warnings,
     parsedAt: new Date().toISOString(),
     ...(source ? { source } : {}),
@@ -340,6 +380,12 @@ app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id")!; // present by route definition
   const { content, expectedVersion } = c.get("validatedBody") as UpdateResume;
+  // ?mode=draft → overwrite content at the same version (autosave path,
+  // edit/save design §1 R-1). Snapshot path (omitted / ?mode=snapshot) keeps
+  // historical behaviour: bump version on every write so the timeline grows.
+  // Either way we keep the expectedVersion guard so a parallel writer still
+  // wins a race and we 409 here cleanly (§5 reconcile UX hangs on this).
+  const mode = c.req.query("mode") === "draft" ? "draft" : "snapshot";
 
   // Hand-edits flow through this route. Preserve the wrapper shape if the row
   // already has one (raw text + warnings shouldn't be silently dropped when a
@@ -348,32 +394,46 @@ app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
     "SELECT content FROM resumes WHERE id = $1 AND user_id = $2",
     [id, userId],
   );
+  // When the row already uses the envelope shape, keep raw/source/warnings
+  // intact but regenerate `markdown` from the new `parsed` so the main track
+  // stays in sync (design §11.3 — both come from the same parse on every write).
   const wrapped = isWrappedResume(existing.rows[0]?.content)
     ? {
         ...(existing.rows[0].content as Record<string, unknown>),
         parsed: content,
+        markdown: jsonResumeToMarkdown(content),
         parsedAt: new Date().toISOString(),
       }
     : content;
 
-  const result = await query(
-    `UPDATE resumes SET content = $1, version = version + 1
-     WHERE id = $2 AND user_id = $3 AND version = $4
-     RETURNING id, content, version, is_base, created_at`,
-    [JSON.stringify(wrapped), id, userId, expectedVersion],
-  );
+  const sql =
+    mode === "draft"
+      ? `UPDATE resumes SET content = $1
+         WHERE id = $2 AND user_id = $3 AND version = $4
+         RETURNING id, content, version, is_base, created_at`
+      : `UPDATE resumes SET content = $1, version = version + 1
+         WHERE id = $2 AND user_id = $3 AND version = $4
+         RETURNING id, content, version, is_base, created_at`;
+  const result = await query(sql, [JSON.stringify(wrapped), id, userId, expectedVersion]);
   if (result.rows.length === 0) {
     // Either the row isn't ours/absent, or the version moved under us.
     await requireOwnership("resumes", id, userId, "id"); // throws NotFound if not owned
     throw new ConflictError("Resume version conflict — reload and retry");
   }
-  return c.json({ resume: unwrapResumeRow(result.rows[0]) });
+  // Echo `mode` so the client status chip can say "Draft saved" vs "Saved as
+  // v4" without comparing version numbers — that's brittle when other tabs
+  // race the same row.
+  return c.json({ resume: unwrapResumeRow(result.rows[0]), mode });
 });
 
 /** True when `content` is the new wrapper shape (parse output + raw text). */
 function isWrappedResume(content: unknown): content is {
   raw: string;
   parsed: JsonResume;
+  // Optional Markdown main track (design §11.3). Older rows predate this and
+  // get a fallback render at unwrap time so the front-end never sees an
+  // undefined field on a wrapped résumé.
+  markdown?: string;
   warnings?: string[];
   parsedAt?: string;
   source?: {
@@ -393,15 +453,20 @@ function isWrappedResume(content: unknown): content is {
 
 /** Flatten the wrapper shape back to a backward-compatible row: the client still
  *  reads `content.basics / content.work / ...` like before, with the new
- *  metadata available as `_raw / _warnings / _parsedAt / _source`. */
+ *  metadata available as `_raw / _markdown / _warnings / _parsedAt / _source`.
+ *  `_markdown` is the canonical GFM main track (§11.3) the front-end renders
+ *  by default; if a legacy row pre-dates the dual-format envelope we re-render
+ *  it on read so the client never has to do JSON-to-MD itself. */
 function unwrapResumeRow(row: Record<string, unknown>): Record<string, unknown> {
   if (!isWrappedResume(row.content)) return row;
-  const { raw, parsed, warnings, parsedAt, source } = row.content;
+  const { raw, parsed, markdown, warnings, parsedAt, source } = row.content;
+  const md = markdown && markdown.length > 0 ? markdown : jsonResumeToMarkdown(parsed);
   return {
     ...row,
     content: {
       ...parsed,
       _raw: raw,
+      _markdown: md,
       _warnings: warnings ?? [],
       _parsedAt: parsedAt ?? null,
       ...(source ? { _source: source } : {}),
@@ -414,6 +479,205 @@ app.delete("/:id", async (c) => {
   const id = c.req.param("id");
   await requireOwnership("resumes", id, userId, "id"); // 404 if not owned
   await query("DELETE FROM resumes WHERE id = $1 AND user_id = $2", [id, userId]);
+  return c.json({ ok: true });
+});
+
+// ─── Résumé export ────────────────────────────────────────────────────────
+//
+// GET /:id/export?format=md|json|pdf|docx
+//
+// One endpoint, four formats. The canonical Markdown (jsonResumeToMarkdown)
+// is the source of truth for every output: pdf and docx are downstream of
+// the same string. That equivalence is the "what you see = what you get"
+// guarantee — the preview, the print, the PDF, the DOCX all share one body.
+//
+// Auth + ownership are required (caller must own the résumé). The endpoint
+// streams the bytes back with Content-Disposition: attachment so the browser
+// triggers its native download UX.
+app.get("/:id/export", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  const formatParam = c.req.query("format") ?? "md";
+  if (!isExportFormat(formatParam)) {
+    throw new ValidationError(
+      `Unsupported export format: ${formatParam}. Use md, json, pdf, or docx.`,
+    );
+  }
+  const format: ExportFormat = formatParam;
+
+  const row = await requireOwnership(
+    "resumes",
+    id,
+    userId,
+    "id, content, version",
+  );
+  const unwrapped = unwrapResumeRow(row);
+  // unwrapResumeRow flattens the envelope so content has _markdown/_raw/_source
+  // alongside the JSON Resume fields. We need the strict JSON Resume shape for
+  // export (no underscore-prefixed metadata sneaking into JSON output), and
+  // the canonical _markdown for downstream pdf/docx render — pull them both
+  // out cleanly here.
+  const content = (unwrapped.content ?? {}) as Record<string, unknown>;
+  const { _markdown, _raw, _warnings, _parsedAt, _source, ...parsed } = content as any;
+  void _raw;
+  void _warnings;
+  void _parsedAt;
+  void _source;
+
+  const version = unwrapped.version ?? row.version ?? 1;
+  const versionLabel = `v${version}`;
+  const filename = exportFilename(parsed, versionLabel, format);
+
+  switch (format) {
+    case "md": {
+      const md =
+        typeof _markdown === "string" && _markdown.length > 0
+          ? _markdown
+          : exportMarkdown(parsed);
+      return new Response(md, {
+        status: 200,
+        headers: {
+          "content-type": EXPORT_MIME.md,
+          "content-disposition": attachmentHeader(filename),
+        },
+      });
+    }
+    case "json": {
+      const body = exportJson(parsed);
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "content-type": EXPORT_MIME.json,
+          "content-disposition": attachmentHeader(filename),
+        },
+      });
+    }
+    case "pdf": {
+      if (!(await pdfRenderAvailable())) {
+        return c.json(
+          {
+            error: {
+              code: "UPSTREAM",
+              message:
+                "PDF export requires Chromium on the server — try Markdown or JSON, or contact support.",
+            },
+          },
+          501,
+        );
+      }
+      const md =
+        typeof _markdown === "string" && _markdown.length > 0
+          ? _markdown
+          : exportMarkdown(parsed);
+      const pdf = await renderResumePdf(md);
+      // pdf is a Node Buffer; copy into a fresh ArrayBuffer so it lands as
+      // a BodyInit lib.dom accepts. Cheap (a single allocation + memcpy).
+      const ab = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
+      return c.body(ab as ArrayBuffer, 200, {
+        "content-type": EXPORT_MIME.pdf,
+        "content-disposition": attachmentHeader(filename),
+        "content-length": String(ab.byteLength),
+      });
+    }
+    case "docx": {
+      if (!(await docxExportAvailable())) {
+        return c.json(
+          {
+            error: {
+              code: "UPSTREAM",
+              message:
+                "DOCX export requires Pandoc on the server — try PDF or Markdown, or contact support.",
+            },
+          },
+          501,
+        );
+      }
+      const md =
+        typeof _markdown === "string" && _markdown.length > 0
+          ? _markdown
+          : exportMarkdown(parsed);
+      const docx = await renderResumeDocx(md);
+      if (!docx) {
+        throw new UpstreamError(
+          "DOCX conversion failed",
+          "pandoc returned a non-zero exit",
+        );
+      }
+      const docxAb = docx.buffer.slice(
+        docx.byteOffset,
+        docx.byteOffset + docx.byteLength,
+      );
+      return c.body(docxAb as ArrayBuffer, 200, {
+        "content-type": EXPORT_MIME.docx,
+        "content-disposition": attachmentHeader(filename),
+        "content-length": String(docxAb.byteLength),
+      });
+    }
+  }
+});
+
+/**
+ * RFC 6266 attachment header that supports non-ASCII filenames. We supply
+ * BOTH an ASCII fallback (`filename=…`) and a UTF-8 form (`filename*=…`) so
+ * a name like "Iris Park" survives transit while a user with CJK characters
+ * still gets a usable native filename in supporting browsers.
+ */
+function attachmentHeader(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7E]/g, "_");
+  const encoded = encodeURIComponent(filename);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+// ─── Résumé publish (read-only short link) ────────────────────────────────
+//
+// POST   /:id/publish    create/refresh a publish_token (rate-limited)
+// DELETE /:id/publish    revoke (publish_token → NULL, link 404s immediately)
+//
+// The token is generated server-side (crypto.randomBytes(16).toString('hex'))
+// so the client can't pick a vanity URL. Re-publishing rotates the token —
+// old links die, the freshly-issued link replaces them. published_at is
+// only ever advanced forward, kept for the audit trail.
+//
+// Public read path lives in routes/public-resumes.ts (no auth, no PII leak —
+// just the JSON Resume content for the published version).
+const publishLimiter = rateLimit({
+  scope: "resume_publish",
+  limit: 5,
+  windowSeconds: 60,
+});
+
+app.post("/:id/publish", publishLimiter, async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id")!; // present by route definition
+  await requireOwnership("resumes", id, userId, "id"); // 404 if not owned
+  const token = randomBytes(16).toString("hex");
+  const result = await query<{
+    publish_token: string;
+    published_at: string;
+  }>(
+    `UPDATE resumes
+       SET publish_token = $1, published_at = now()
+       WHERE id = $2 AND user_id = $3
+       RETURNING publish_token, published_at`,
+    [token, id, userId],
+  );
+  if (result.rows.length === 0) throw new NotFoundError("Resume not found");
+  const { publish_token, published_at } = result.rows[0];
+  return c.json({
+    publishToken: publish_token,
+    publishedAt: published_at,
+    publicUrl: `/r/${publish_token}`,
+  });
+});
+
+app.delete("/:id/publish", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id");
+  await requireOwnership("resumes", id, userId, "id"); // 404 if not owned
+  await query(
+    "UPDATE resumes SET publish_token = NULL WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
   return c.json({ ok: true });
 });
 

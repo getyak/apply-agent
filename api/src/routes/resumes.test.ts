@@ -76,3 +76,39 @@ describe("resumes.ts — migration 016 regression guards", () => {
     expect(SRC).not.toMatch(/const\s+ATTEMPTS\s*=/);
   });
 });
+
+// Static guard for the edit/save R-1 contract.
+//
+// Autosave uses ?mode=draft to overwrite content at the same row version
+// (no timeline bump per keystroke). The snapshot path bumps version — that's
+// the user-visible "Save" action. Both keep the optimistic-lock guard so a
+// concurrent writer surfaces as 409 for the §5 reconcile UX.
+describe("resumes.ts — edit/save draft-vs-snapshot guards", () => {
+  it("draft mode UPDATE keeps version unchanged", () => {
+    const draftSql = SRC.match(
+      /UPDATE resumes SET content = \$1\s*WHERE id = \$2 AND user_id = \$3 AND version = \$4/,
+    );
+    expect(draftSql, "draft-mode UPDATE not found").not.toBeNull();
+    expect(draftSql![0]).not.toMatch(/version\s*=\s*version\s*\+\s*1/);
+  });
+
+  it("snapshot mode UPDATE bumps version", () => {
+    const snapshotSql = SRC.match(
+      /UPDATE resumes SET content = \$1, version = version \+ 1\s*WHERE id = \$2 AND user_id = \$3 AND version = \$4/,
+    );
+    expect(snapshotSql, "snapshot-mode UPDATE not found").not.toBeNull();
+  });
+
+  it("mode is gated on the literal string 'draft'", () => {
+    // Anything looser (truthy check, includes-match) would let `?mode=anything`
+    // silently skip the version bump. The route is defensive — unknown values
+    // fall back to snapshot.
+    expect(SRC).toMatch(/c\.req\.query\("mode"\)\s*===\s*"draft"/);
+  });
+
+  it("response echoes mode so the client status chip can branch", () => {
+    // Without this, the client has to compare version numbers to know whether
+    // a save bumped — which is racy across tabs (§5).
+    expect(SRC).toMatch(/resume:\s*unwrapResumeRow[^,]+,\s*mode/);
+  });
+});

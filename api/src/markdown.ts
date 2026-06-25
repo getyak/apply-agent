@@ -127,6 +127,20 @@ export function textToMarkdownHeuristic(text: string): string {
 async function pdfToMarkdown(data: Uint8Array): Promise<string> {
   const { extractText, getDocumentProxy } = await import("unpdf");
   const pdf = await getDocumentProxy(new Uint8Array(data));
+
+  // Primary: layout-aware reconstruction from per-item geometry. Recovers
+  // headings, tables, nested lists and re-joins soft-wrapped words — language
+  // neutral, so it works on CJK résumés the ALL-CAPS heuristic can't read.
+  try {
+    const { pdfItemsToMarkdown } = await import("./pdf-layout");
+    const md = await pdfItemsToMarkdown(pdf);
+    // strip markdown punctuation before measuring (a page of "## " noise is empty)
+    if (md.replace(/[#\-*\s|]/g, "").length >= 20) return md;
+  } catch {
+    // any geometry failure falls through to the line heuristic below
+  }
+
+  // Fallback: flat text + cheap line heuristics. Always available.
   const { text } = await extractText(pdf, { mergePages: true });
   return textToMarkdownHeuristic(text);
 }
