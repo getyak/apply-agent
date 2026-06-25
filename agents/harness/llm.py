@@ -69,6 +69,11 @@ def pick_model(
         extra_body["reasoning"] = {"effort": reasoning_effort}
         extra_body["include_reasoning"] = True
 
+    # Cost tracking — every model call writes usage into the active
+    # CostTally via contextvar. Hooks (guards.post_model_hook) read pending
+    # cents; audit() reads totals on exit. See harness/cost_tracker.py.
+    from agents.harness.cost_tracker import COST_TRACKING_CALLBACK
+
     return ChatOpenAI(
         model=spec.openrouter_id,
         api_key=api_key,
@@ -86,6 +91,7 @@ def pick_model(
         max_retries=3,
         request_timeout=30,
         model_kwargs={"extra_body": extra_body},
+        callbacks=[COST_TRACKING_CALLBACK],
     )
 
 

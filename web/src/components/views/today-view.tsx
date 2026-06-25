@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useVantage, JOBS, type ApiJob } from "@/lib/store";
 import { firstNameOf, fullGreeting, formatToday } from "@/lib/dates";
 import {
@@ -14,6 +15,8 @@ import { today as todayApi, type TodayAction } from "@/lib/api";
 import { sendAsk } from "@/lib/ask-stream";
 import { useDock } from "@/lib/ask-vantage-store";
 
+type Translator = ReturnType<typeof useTranslations>;
+
 // H2 (round-1): turn the server's `priority` score (0–100) into a
 // human-readable "why is this the top of my queue" hint. The route
 // already ranks rows by score (api/src/routes/today.ts:43,84,129) but
@@ -21,31 +24,31 @@ import { useDock } from "@/lib/ask-vantage-store";
 // why one row beat another. Each rule maps the existing kind + priority
 // inputs into a short mono label rendered to the right of the row, so
 // scanning the queue tells you both *what* and *why*.
-function whyThisCard(a: TodayAction): string {
+function whyThisCard(a: TodayAction, t: Translator): string {
   if (a.kind === "interview") {
     // priority is max(80, 100 - days*3) on the route side, so anything
     // ≥97 is tomorrow-or-today and deserves the louder label.
-    return a.priority >= 97 ? "Interview imminent" : "Interview this week";
+    return a.priority >= 97 ? t("why.interviewImminent") : t("why.interviewThisWeek");
   }
   if (a.kind === "prepare") {
     // priority is 70 + min(20, age_days*2), so ≥85 means the draft has
     // been sitting ≥7 days (15 + age component). Call that out so the
     // user sees the queue is nudging them to unblock it.
-    return a.priority >= 85 ? "Draft aging" : "Open draft";
+    return a.priority >= 85 ? t("why.draftAging") : t("why.openDraft");
   }
-  if (a.kind === "follow_up") return "Awaiting reply";
-  return "Skill-gap signal";
+  if (a.kind === "follow_up") return t("why.awaitingReply");
+  return t("why.skillGap");
 }
 
 // Small status chip for action queue rows. Distinct color tracks let
 // the user scan "prep / interview / learn" at a glance without reading
 // titles — matches the dock's TaskGraphStepPill aesthetic.
-function ActionKindPill({ kind }: { kind: TodayAction["kind"] }) {
+function ActionKindPill({ kind, t }: { kind: TodayAction["kind"]; t: Translator }) {
   const spec = (() => {
-    if (kind === "interview") return { text: "INTERVIEW", fg: "#7A2A1F", bg: "#F4D7D2" };
-    if (kind === "prepare") return { text: "PREP", fg: "#5D3000", bg: "#FBEFD8" };
-    if (kind === "follow_up") return { text: "FOLLOW UP", fg: "#8A6A12", bg: "#FBEFD0" };
-    return { text: "LEARN", fg: "#2F5722", bg: "#E2EED9" };
+    if (kind === "interview") return { text: t("pill.interview"), fg: "#7A2A1F", bg: "#F4D7D2" };
+    if (kind === "prepare") return { text: t("pill.prep"), fg: "#5D3000", bg: "#FBEFD8" };
+    if (kind === "follow_up") return { text: t("pill.followUp"), fg: "#8A6A12", bg: "#FBEFD0" };
+    return { text: t("pill.learn"), fg: "#2F5722", bg: "#E2EED9" };
   })();
   return (
     <span
@@ -65,7 +68,7 @@ function ActionKindPill({ kind }: { kind: TodayAction["kind"] }) {
   );
 }
 
-function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => void }) {
+function ApiJobCard({ job, onApply, t }: { job: ApiJob; onApply: (id: string) => void; t: Translator }) {
   // `matchScore` may be undefined when the matcher hasn't scored this job yet
   // (server down, no résumé selected, etc.). Surface that honestly instead of
   // bucketing every row as "Fair" with a fake 50% bar (QA bug #2).
@@ -73,9 +76,10 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
   const scored = typeof match === "number";
   const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
   const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
-  const fitLabel = (m: number) => (m >= 95 ? "Excellent" : m >= 90 ? "Strong" : m >= 85 ? "Good" : "Fair");
+  const fitLabel = (m: number) =>
+    m >= 95 ? t("fit.excellent") : m >= 90 ? t("fit.strong") : m >= 85 ? t("fit.good") : t("fit.fair");
   const p = job.parsed;
-  const location = p?.locations?.join(", ") || (p?.remote ? "Remote" : "");
+  const location = p?.locations?.join(", ") || (p?.remote ? t("remote") : "");
   const salary = p?.salary_min && p?.salary_max ? `$${Math.round(p.salary_min / 1000)}–${Math.round(p.salary_max / 1000)}k` : "";
 
   return (
@@ -92,7 +96,7 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
             </span>
           ) : (
             <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px] bg-[#F3F0EB] text-ink-muted">
-              Not scored
+              {t("notScored")}
             </span>
           )}
         </div>
@@ -104,11 +108,11 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
             <div className="bar-track w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
               <div className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#4C7A3F,#5E9B4D)]" style={{ width: `${match}%` }} />
             </div>
-            <span className="font-mono text-[11px] font-medium text-green">{match}% match</span>
+            <span className="font-mono text-[11px] font-medium text-green">{t("percentMatch", { pct: match })}</span>
           </div>
         ) : (
           <div className="font-mono text-[11px] text-ink-muted mt-[11px]">
-            Add or refresh your résumé so Vantage can score this match.
+            {t("addResumeToScore")}
           </div>
         )}
         {job.matchedSkills && job.matchedSkills.length > 0 && (
@@ -117,7 +121,7 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
               <span key={s} className="font-mono text-[9px] tracking-[0.3px] uppercase bg-green-bg text-green px-[6px] py-[2px] rounded">{s}</span>
             ))}
             {job.missingSkills && job.missingSkills.length > 0 && (
-              <span className="font-mono text-[9px] tracking-[0.3px] uppercase bg-[#FFF3E0] text-amber px-[6px] py-[2px] rounded">+{job.missingSkills.length} gaps</span>
+              <span className="font-mono text-[9px] tracking-[0.3px] uppercase bg-[#FFF3E0] text-amber px-[6px] py-[2px] rounded">{t("skillGaps", { count: job.missingSkills.length })}</span>
             )}
           </div>
         )}
@@ -128,7 +132,7 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
           className="border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] transition-all duration-200 ease-out hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] active:scale-[0.97]"
         >
           <Zap className="w-[15px] h-[15px] transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110" strokeWidth={1.9} />
-          Review & apply
+          {t("reviewAndApply")}
         </button>
       </div>
     </div>
@@ -136,6 +140,7 @@ function ApiJobCard({ job, onApply }: { job: ApiJob; onApply: (id: string) => vo
 }
 
 export function TodayView() {
+  const t = useTranslations("today");
   const openReview = useVantage((s) => s.openReview);
   const openExtension = useVantage((s) => s.openExtension);
   const apiJobs = useVantage((s) => s.apiJobs);
@@ -196,7 +201,8 @@ export function TodayView() {
 
   const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
   const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
-  const fitLabel = (m: number) => (m >= 95 ? "Excellent" : m >= 90 ? "Strong" : m >= 85 ? "Good" : "Fair");
+  const fitLabel = (m: number) =>
+    m >= 95 ? t("fit.excellent") : m >= 90 ? t("fit.strong") : m >= 85 ? t("fit.good") : t("fit.fair");
 
   // Prefer the résumé's basics.name (what the user actually wrote) over their
   // auth display_name; both fall through to a friendly nameless greeting.
@@ -231,7 +237,7 @@ export function TodayView() {
         <div className="stat-cell flex-1 px-[22px] py-[18px]">
           <div key={totalJobs} className="num-rise font-display font-bold text-[26px] text-ink tabular-nums">{totalJobs}</div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
-            {totalJobs === 1 ? "role in database" : "roles in database"}
+            {t("rolesInDatabase", { count: totalJobs })}
           </div>
         </div>
         <div className="w-px bg-border" />
@@ -241,19 +247,17 @@ export function TodayView() {
           </div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
             {!anyScored
-              ? "no fits scored yet"
+              ? t("noFitsScored")
               : strongFits === 0
-                ? "no strong fits — try broader filters"
-                : strongFits === 1
-                  ? "strong fit, ready to send"
-                  : "strong fits, ready to send"}
+                ? t("noStrongFits")
+                : t("strongFitsReady", { count: strongFits })}
           </div>
         </div>
         <div className="w-px bg-border" />
         <div className="stat-cell flex-1 px-[22px] py-[18px]">
           <div key={trackedSkills} className="num-rise font-display font-bold text-[26px] text-amber tabular-nums" style={{ animationDelay: "0.14s" }}>{trackedSkills}</div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
-            {trackedSkills === 1 ? "trending skill tracked" : "trending skills tracked"}
+            {t("trendingSkillsTracked", { count: trackedSkills })}
           </div>
         </div>
       </div>
@@ -262,9 +266,9 @@ export function TodayView() {
         <div className="mb-[34px]">
           <div className="flex items-baseline justify-between mb-[14px]">
             <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
-              Today, {actionQueue.length} {actionQueue.length === 1 ? "thing" : "things"} move you forward
+              {t("queueHeading", { count: actionQueue.length })}
             </h2>
-            <span className="font-body text-[13px] text-ink-muted">Tap to start</span>
+            <span className="font-body text-[13px] text-ink-muted">{t("tapToStart")}</span>
           </div>
           <ol className="flex flex-col gap-[10px] list-none m-0 p-0">
             {actionQueue.map((a, i) => (
@@ -297,10 +301,10 @@ export function TodayView() {
                         color: "#A38A60",
                       }}
                     >
-                      Why this · {whyThisCard(a)}
+                      {t("whyThis", { reason: whyThisCard(a, t) })}
                     </span>
                   </span>
-                  <ActionKindPill kind={a.kind} />
+                  <ActionKindPill kind={a.kind} t={t} />
                 </button>
               </li>
             ))}
@@ -320,23 +324,20 @@ export function TodayView() {
         !parsedResume ? (
           <div className="mb-[34px] flex items-start gap-3 rounded-[14px] border border-cream-border bg-cream px-[18px] py-[14px]">
             <div className="font-body text-[13.5px] text-ink-dark flex-1">
-              <span className="font-semibold">Start with your résumé.</span>{" "}
-              Vantage builds the queue once it has something to match
-              against — upload or paste your résumé and matches, prep
-              actions, and skill signals start showing up here.
+              <span className="font-semibold">{t("emptyResumeTitle")}</span>{" "}
+              {t("emptyResumeBody")}
             </div>
             <button
               type="button"
               onClick={() => router.push("/app/studio/resume")}
               className="font-body text-[13px] font-semibold text-paper bg-brown rounded-[8px] px-3 py-2 hover:bg-brown-light transition-colors whitespace-nowrap"
             >
-              Upload résumé
+              {t("uploadResume")}
             </button>
           </div>
         ) : (
           <div className="mb-[34px] font-body text-[13px] text-ink-muted">
-            Nothing on the action queue yet — applications, interviews
-            and learn signals will surface here automatically.
+            {t("emptyQueuePassive")}
           </div>
         )
       )}
@@ -345,18 +346,18 @@ export function TodayView() {
         <>
           <div className="flex items-baseline justify-between mb-[14px]">
             <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
-              Live matches
+              {t("liveMatches")}
             </h2>
             {/* Only claim "sorted by fit" when the matcher has actually scored
                 something. Otherwise the label fights the uniform "Not scored"
                 tags below it (QA bug #2). */}
             <span className="font-body text-[13px] text-ink-muted">
-              {anyScored ? "From database · sorted by fit" : "From database · scoring pending"}
+              {anyScored ? t("fromDbSorted") : t("fromDbPending")}
             </span>
           </div>
           <div className="flex flex-col gap-[13px] mb-[34px]">
             {apiJobs.map((job) => (
-              <ApiJobCard key={job.id} job={job} onApply={(id) => openReview(id)} />
+              <ApiJobCard key={job.id} job={job} onApply={(id) => openReview(id)} t={t} />
             ))}
           </div>
         </>
@@ -388,10 +389,10 @@ export function TodayView() {
         <>
           <div className="flex items-baseline justify-between mb-[14px]">
             <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
-              While we look for matches
+              {t("whileWeLook")}
             </h2>
             <span className="font-body text-[13px] text-ink-muted flex items-center gap-1">
-              <Sparkles className="w-[13px] h-[13px] text-amber" strokeWidth={1.7} /> Sample of what we&apos;ll surface
+              <Sparkles className="w-[13px] h-[13px] text-amber" strokeWidth={1.7} /> {t("sampleSurface")}
             </span>
           </div>
 
@@ -428,7 +429,7 @@ export function TodayView() {
                   />
                 </div>
                 <span className="font-mono text-[11px] font-medium text-green">
-                  {job.match}% match
+                  {t("percentMatch", { pct: job.match })}
                 </span>
               </div>
             </div>
@@ -436,18 +437,18 @@ export function TodayView() {
               {job.ready ? (
                 <button
                   onClick={() => openReview(job.id)}
-                  className="border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:bg-brown-light transition-colors"
+                  className="tap border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] transition-[background-color,box-shadow,transform] duration-200 ease-out"
                 >
-                  <Zap className="w-[15px] h-[15px]" strokeWidth={1.9} />
-                  One-click apply
+                  <Zap className="w-[15px] h-[15px] transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110" strokeWidth={1.9} />
+                  {t("oneClickApply")}
                 </button>
               ) : (
                 <button
                   onClick={() => openExtension(job.id)}
-                  className="cursor-pointer bg-white text-ink border border-border-dark font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:border-brown transition-colors"
+                  className="tap group/site cursor-pointer bg-white text-ink border border-border-dark font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.28)] transition-[border-color,box-shadow,transform] duration-200 ease-out"
                 >
-                  Apply on site
-                  <ArrowUpRight className="w-[14px] h-[14px] text-ink-light" strokeWidth={1.9} />
+                  {t("applyOnSite")}
+                  <ArrowUpRight className="w-[14px] h-[14px] text-ink-light transition-transform duration-300 ease-out group-hover/site:translate-x-0.5 group-hover/site:-translate-y-0.5" strokeWidth={1.9} />
                 </button>
               )}
             </div>
@@ -457,8 +458,7 @@ export function TodayView() {
 
           <div className="mt-5 flex items-center gap-[9px] justify-center font-body text-[13px] text-ink-muted">
             <Clock className="w-[15px] h-[15px]" strokeWidth={1.7} />
-            Filled buttons mean everything&apos;s prepared. Outlined ones open the
-            company&apos;s own site.
+            {t("buttonsHint")}
           </div>
         </>
       )}

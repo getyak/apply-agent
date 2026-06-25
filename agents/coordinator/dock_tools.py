@@ -249,38 +249,94 @@ async def find_jobs(
     remote_only: bool = False,
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Surface job matches for the current user (uses jobmatch_agent).
+    """Surface job matches for the current user from the ingested jobs table.
+
+    P2-3: now backed by real data from the jobmatch ETL (agents/jobs/ingest.py
+    pulls Greenhouse / Lever / Ashby boards into the ``jobs`` PG table). When
+    no rows exist yet (cron not run), returns status="empty" so the dock can
+    say "no jobs in the index yet" instead of inventing.
 
     Args:
-      role: target role keyword (e.g. "senior backend engineer"). Optional.
-      location: location filter (e.g. "remote", "SF"). Optional.
-      remote_only: if true, restrict to remote-flagged jobs.
+      role: free-text keyword (e.g. "senior backend engineer"). Matched by
+        ILIKE against ``role_title``. Optional.
+      location: location filter (currently unused — schema doesn't expose
+        location yet). Optional.
+      remote_only: if true, prefer jobs whose title contains "remote".
       limit: 1..25, default 10.
 
     Returns:
-      ``{status, agent, action, items}`` — list of {id, company, role_title,
-      match_score} dicts. Today this is a stub that returns ``not_implemented``
-      with the request echoed; the dock surfaces the intent + a note so the
-      user knows we picked the right path.
+      ``{status, agent, action, count, items}`` — items are
+      ``{id, company, role_title, url, posted_date}``. Sorted by recency.
     """
     user_id = _require_user()
     limit = max(1, min(25, int(limit or 10)))
+
+    from agents.tools.auto import pg_query
+
+    sql_parts = [
+        "SELECT id, company, role_title, url, posted_date",
+        "FROM jobs",
+        "WHERE is_active = true",
+    ]
+    params: list[Any] = []
+    if role and role.strip():
+        sql_parts.append("AND role_title ILIKE %s")
+        params.append(f"%{role.strip()}%")
+    if remote_only:
+        sql_parts.append("AND role_title ILIKE %s")
+        params.append("%remote%")
+    sql_parts.append("ORDER BY posted_date DESC NULLS LAST, created_at DESC")
+    sql_parts.append("LIMIT %s")
+    params.append(limit)
+    sql = " ".join(sql_parts)
+
+    try:
+        rows = await pg_query(sql, tuple(params))
+    except Exception as exc:  # noqa: BLE001
+        log.error("dock_tools.find_jobs.pg_failed", error=str(exc))
+        return {
+            "status": "error",
+            "agent": "jobmatch_agent",
+            "action": "find_matches",
+            "items": [],
+            "summary": "Job lookup hit a DB error.",
+        }
+
+    if not rows:
+        return {
+            "status": "empty",
+            "agent": "jobmatch_agent",
+            "action": "find_matches",
+            "count": 0,
+            "items": [],
+            "summary": (
+                "No jobs in the index yet matching that query. "
+                "The board ETL may not have run, or the filter is too tight."
+            ),
+        }
+
+    items = [
+        {
+            "id": str(r.get("id")),
+            "company": r.get("company"),
+            "role_title": r.get("role_title"),
+            "url": r.get("url"),
+            "posted_date": (
+                r["posted_date"].isoformat()
+                if r.get("posted_date") and hasattr(r["posted_date"], "isoformat")
+                else None
+            ),
+        }
+        for r in rows
+    ]
     return {
-        "status": "not_implemented",
+        "status": "ok",
         "agent": "jobmatch_agent",
         "action": "find_matches",
-        "args": {
-            "role": role,
-            "location": location,
-            "remote_only": remote_only,
-            "limit": limit,
-            "user_id": str(user_id),
-        },
-        "items": [],
-        "summary": (
-            "Job matching is wired but not generating yet — surfaced the "
-            "request so we can prioritise it."
-        ),
+        "count": len(items),
+        "filters": {"role": role, "remote_only": remote_only, "location": location},
+        "items": items,
+        "user_id": str(user_id),
     }
 
 
@@ -576,6 +632,248 @@ async def recall_weak_points(limit: int = 5) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# polish_bullet — vibe edit on ONE bullet of a résumé (P2-2 / P2-6).
+# ---------------------------------------------------------------------------
+#
+# Lets the dock LLM act on "make the third bullet sharper" / "shorten the
+# Python one" requests stably instead of falling back to whole-section
+# rewrites. Wraps resume_agent.propose_bullet_edit, which already runs the
+# fabrication_guard + writes a row to resume_suggestions (status=proposed).
+# The frontend renders the proposal as an accept/reject card.
+#
+# The LLM must know the bullet_stable_id. Today that comes from one of:
+#   1. The user_brief block's active-résumé section (when we surface bullets there)
+#   2. A prior list_my_applications / surface-bullets call
+#   3. The frontend pre-binding ID into the dock turn when the user
+#      clicked a bullet to "vibe-edit" it.
+#
+# If the LLM doesn't have an ID, it should ask_clarification first
+# ("which bullet? quoting a few words helps").
+
+
+@tool
+async def polish_bullet(
+    resume_id: str,
+    bullet_stable_id: str,
+    instruction: str,
+) -> dict[str, Any]:
+    """Revise ONE bullet of a résumé in place from a natural-language instruction.
+
+    Use this when the user asks to refine a specific line ("make the third
+    bullet sharper", "drop the percentage from the Stripe one"). Do NOT use
+    this for whole-résumé changes — tailor_resume covers that.
+
+    Args:
+      resume_id: UUID of the résumé containing the bullet.
+      bullet_stable_id: stable ID of the bullet (read it from the active
+        résumé section of your user_brief, or from a prior list/select tool
+        result, or from frontend context). If you don't have one, call
+        ``ask_clarification`` first instead of guessing.
+      instruction: free-text guidance ("shorten to 12 words", "quantify the
+        impact", "remove the brand name"). Will NOT introduce fabricated
+        entities — the fabrication guard blocks that automatically.
+
+    Returns:
+      ``{status, agent, action, suggestion?, reason?}`` — on success the
+      suggestion dict has ``{id, before, after, change_type, explanation}``
+      and a row is written to ``resume_suggestions`` (status='proposed')
+      for the dock to render as an accept/reject card.
+    """
+    from uuid import UUID as _UUID
+
+    user_id = _require_user()
+    try:
+        resume_uuid = _UUID(str(resume_id))
+    except (ValueError, TypeError):
+        return {"status": "error", "message": "invalid resume_id"}
+
+    instruction = (instruction or "").strip()
+    bullet_stable_id = (bullet_stable_id or "").strip()
+    if not instruction:
+        return {"status": "error", "message": "instruction must be non-empty"}
+    if not bullet_stable_id:
+        return {"status": "error", "message": "bullet_stable_id required"}
+
+    from agents.nodes import resume_agent
+
+    try:
+        result = await resume_agent.propose_bullet_edit(
+            resume_id=resume_uuid,
+            bullet_stable_id=bullet_stable_id,
+            instruction=instruction,
+            user_id=user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("dock_tools.polish_bullet.failed", error=str(exc))
+        return {"status": "error", "message": str(exc)}
+
+    return {
+        "status": "ok" if result.get("ok") else "rejected",
+        "agent": "resume_agent",
+        "action": "polish_bullet",
+        "suggestion": result if result.get("ok") else None,
+        "reason": result.get("reason") if not result.get("ok") else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# ask_clarification — proactive HITL question when args are missing (P1-4).
+# ---------------------------------------------------------------------------
+#
+# Before this tool existed, an under-specified user request ("find me jobs")
+# returned ``status: needs_args`` and let the gateway pop a form. That broke
+# the conversational flow. With ask_clarification, the dock LLM can keep the
+# dialogue going: it raises a question via LangGraph ``interrupt()``, the
+# server emits an SSE ``hitl`` frame, the client renders inline options /
+# input box, the user answers, ``/ask/resume`` continues the same thread.
+#
+# Use it when:
+#   - find_jobs has no preferences (ask "what kind of role?")
+#   - tailor_resume has no job_id (ask "which job?", offer chips)
+#   - draft_cover_letter has no application context (same)
+#   - the user's request is genuinely ambiguous (offer 2-3 interpretations)
+#
+# Don't use it when:
+#   - you can answer from context already (use the answer, don't re-ask)
+#   - the answer is obvious or trivial
+
+
+@tool
+def ask_clarification(
+    question: str,
+    options: list[str] | None = None,
+    placeholder: str | None = None,
+    intent_hint: str | None = None,
+) -> dict[str, Any]:
+    """Pause and ask the user a focused question before proceeding.
+
+    Use this when you genuinely need ONE piece of info to act and the user
+    hasn't given it. Show 2-4 ``options`` chips when there's a small
+    discrete answer set ("which job?", "remote or onsite?"); leave
+    ``options`` empty when free-text is the only reasonable input ("paste
+    the JD URL"). After the user responds, the dock continues this same
+    turn — you'll receive their answer as the next message.
+
+    Args:
+      question: one short, specific question (≤ 200 chars). Phrase as a
+        question. Don't apologise; don't say "I need to know …" — just ask.
+      options: 2-4 short chip labels (≤ 60 chars each). Omit for free text.
+      placeholder: optional placeholder for the free-text input box.
+      intent_hint: optional one-word tag the gateway can use to render the
+        clarification card (e.g. "job_pick", "preferences", "url_paste").
+
+    Returns: the user's reply as a string. The LLM should immediately use
+    that reply as input to the next tool — do NOT re-ask the same thing.
+
+    Examples (good):
+      ask_clarification("Which job should I tailor against?",
+                        options=["Stripe Staff", "Linear PM", "Anthropic MTS"])
+      ask_clarification("What kind of role are you most interested in today?",
+                        placeholder="e.g. senior backend engineer, remote")
+      ask_clarification("Did you mean the one in SF or remote?",
+                        options=["SF", "Remote", "Both"])
+    """
+    from langgraph.types import interrupt
+
+    _require_user()  # cheap auth boundary; refuses outside a dock turn
+    cleaned_q = (question or "").strip()
+    if not cleaned_q:
+        return {
+            "status": "error",
+            "message": "ask_clarification requires a non-empty question",
+        }
+    cleaned_options: list[str] = []
+    if options:
+        for opt in options[:4]:
+            text = str(opt).strip()
+            if text:
+                cleaned_options.append(text[:60])
+
+    payload = {
+        "kind": "clarification",
+        "question": cleaned_q[:200],
+        "options": cleaned_options,
+        "placeholder": (placeholder or "")[:120] or None,
+        "intent_hint": (intent_hint or "")[:40] or None,
+    }
+    # interrupt() returns whatever value /ask/resume's payload had —
+    # typically the user's plain-text answer. Coerce to str.
+    answer = interrupt(payload)
+    if isinstance(answer, dict):
+        answer = answer.get("text") or answer.get("value") or ""
+    return str(answer or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# web_search / web_fetch — open-web sensing tools (P1-1).
+# ---------------------------------------------------------------------------
+#
+# These give the Dock LLM the ability to look things up that aren't in our
+# DB: company interview process write-ups (Glassdoor / Reddit / blog posts),
+# layoff news, technology trends, recruiter background, anything else the
+# user might reasonably ask about. Without these the "search the web for
+# Anthropic's interview process" / "is this company hiring?" / "what does
+# their CEO say about hiring philosophy?" paths are all blank.
+#
+# Behaviour:
+#   - web_search uses Tavily when TAVILY_API_KEY is set, else falls back
+#     to DuckDuckGo lite scraping (no key needed).
+#   - web_fetch is a stripped-down readability — text only, 8k char cap.
+#
+# Both are auto-permission (no HITL). They make outbound HTTP only; no
+# credentials, no writes. Cost is the LLM tokens it takes to digest the
+# result (capped by the dock's regular budget).
+
+
+@tool
+async def web_search(query: str, max_results: int = 5) -> dict[str, Any]:
+    """Search the open web. Use this when the user asks about something that
+    isn't in their own data — company background, interview formats, market
+    news, technical references, recruiter info.
+
+    Args:
+      query: a focused natural-language query (1-12 words works best).
+      max_results: how many hits to return, capped at 10. Default 5.
+
+    Returns:
+      ``{status, source, query, results: [{title, url, snippet}]}``.
+      ``source`` is "tavily" or "duckduckgo" depending on which backend
+      answered. On failure ``status="error"`` with a ``message`` and
+      empty ``results``.
+
+    Tip: pass the *result urls* into ``web_fetch`` if you need the full
+    body of a specific hit. Don't ``web_fetch`` blindly — read the
+    snippets first, the search results are usually enough.
+    """
+    _require_user()  # cheap auth boundary, no PII in result
+    from agents.tools.web import web_search as _do_search
+
+    return await _do_search(query, max_results=max_results)
+
+
+@tool
+async def web_fetch(url: str) -> dict[str, Any]:
+    """Fetch a URL and return its extracted text body (8k chars max).
+
+    Use this to read the full content of a specific page — typically a URL
+    you got from ``web_search``. Returns ``{status, url, title, text, length}``;
+    on failure ``{status: 'error', url, message}``.
+
+    Args:
+      url: must start with http:// or https://. Internal URLs and file://
+        are rejected.
+
+    Beware: SPAs that require JavaScript to render will return empty text.
+    For those, rely on the search snippet instead. Don't fetch more than
+    ~3 URLs per turn — each is a network round-trip.
+    """
+    _require_user()
+    from agents.tools.web import web_fetch as _do_fetch
+
+    return await _do_fetch(url)
+
+
+# ---------------------------------------------------------------------------
 # DOCK_TOOLS — registered with ``create_react_agent(tools=DOCK_TOOLS)``.
 # ---------------------------------------------------------------------------
 #
@@ -587,14 +885,18 @@ async def recall_weak_points(limit: int = 5) -> dict[str, Any]:
 DOCK_TOOLS = [
     propose_plan,
     narrate,
+    ask_clarification,
     recall_user_memory,
     recall_past_applications,
     recall_weak_points,
     list_my_applications,
     tailor_resume,
+    polish_bullet,
     find_jobs,
     start_mock_interview,
     draft_cover_letter,
     build_resume_from_scratch,
     trends_today,
+    web_search,
+    web_fetch,
 ]

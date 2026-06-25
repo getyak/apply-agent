@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -30,7 +30,7 @@ async def publish(topic: str, payload: dict[str, Any]) -> str | None:
     client = redis.from_url(_redis_url(), decode_responses=True)
     try:
         enriched = {
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "occurred_at": datetime.now(UTC).isoformat(),
             "data": json.dumps(payload, default=_serialize),
         }
         return await client.xadd(f"relay:events:{topic}", enriched, maxlen=10_000, approximate=True)
@@ -47,13 +47,28 @@ async def subscribe(topic: str, last_id: str = "$"):
     """
     try:
         import redis.asyncio as redis
+        from redis.exceptions import TimeoutError as RedisTimeoutError
     except ImportError:
         return
-    client = redis.from_url(_redis_url(), decode_responses=True)
+    # socket_timeout must exceed the XREAD BLOCK window, otherwise the client-side
+    # read times out before the server returns and the pump dies. Give it headroom.
+    block_ms = 5000
+    client = redis.from_url(
+        _redis_url(),
+        decode_responses=True,
+        socket_timeout=block_ms / 1000 + 5,
+    )
     cursor = last_id
     try:
         while True:
-            entries = await client.xread({f"relay:events:{topic}": cursor}, block=5000, count=10)
+            try:
+                entries = await client.xread(
+                    {f"relay:events:{topic}": cursor}, block=block_ms, count=10
+                )
+            except RedisTimeoutError:
+                # No new events within the block window — idle, not an error.
+                # Keep polling instead of letting the exception kill the pump.
+                continue
             for _stream, items in entries:
                 for entry_id, fields in items:
                     cursor = entry_id

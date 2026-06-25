@@ -117,17 +117,27 @@ export class StorageClient {
    * server-generated, never user-controlled, so it's already safe
    * to embed in the header).
    */
-  presign(key: string, expiresInSeconds = 300): string | null {
+  presign(
+    key: string,
+    expiresInSeconds = 300,
+    disposition: "attachment" | "inline" = "attachment",
+  ): string | null {
     if (!this.client) return null;
     const segments = key.split("/");
     const lastSegment = segments[segments.length - 1] || "download";
     const safeName = lastSegment.replace(/[^\w.\-]/g, "_");
+    // `attachment` (default) forces a save dialog — used for downloads and for
+    // any untrusted type (an HTML/SVG polyglot inlined at the storage origin
+    // would dodge the API's nosniff/CSP). `inline` is opt-in and MUST only be
+    // used for trusted, non-executable types (PDF) so the Resume Studio's
+    // Original Pane can render the upload in an <iframe> instead of downloading
+    // it (design §5.1). The caller is responsible for that type check.
     return this.client.presign(key, {
       expiresIn: expiresInSeconds,
       method: "GET",
       // Bun's S3Client maps this to the S3
       // `response-content-disposition` query parameter under the hood.
-      contentDisposition: `attachment; filename="${safeName}"`,
+      contentDisposition: `${disposition}; filename="${safeName}"`,
     });
   }
 }

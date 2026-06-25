@@ -1,0 +1,1287 @@
+{
+  "meta": {
+    "title": "Vantage — 由智能体为你跑通求职",
+    "description": "把简历交给它。AI 智能体帮你找到合适的岗位、为每次投递量身定制、起草你的回答、准备你的面试 —— 你只需审阅，然后点提交。"
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭",
+    "open": "打开",
+    "continue": "继续",
+    "back": "返回",
+    "next": "下一步",
+    "loading": "加载中…",
+    "retry": "重试",
+    "upload": "上传",
+    "export": "导出",
+    "compare": "对比",
+    "confirm": "确认",
+    "submit": "提交",
+    "welcome": "欢迎",
+    "signOut": "退出登录"
+  },
+  "language": {
+    "label": "语言",
+    "switchTo": "切换到{language}",
+    "english": "English",
+    "chinese": "中文"
+  },
+  "nav": {
+    "today": "今日",
+    "applications": "投递",
+    "interviews": "面试",
+    "resume": "简历",
+    "mock": "模拟面试",
+    "settings": "设置",
+    "chat": "对话",
+    "backToToday": "返回今日",
+    "backToTodayLong": "Vantage — 返回今日",
+    "expandSidebar": "展开侧边栏",
+    "collapseSidebar": "收起侧边栏",
+    "workspace": "工作区",
+    "aiStudio": "AI 工作室",
+    "account": "账户",
+    "resumeStudio": "简历工作室",
+    "autoApplies": "自动投递额度",
+    "resetsIn": "{days} 天后重置",
+    "upgrade": "升级"
+  },
+  "sidebar": {
+    "quota": {
+      "label": "自动投递",
+      "remaining": "剩 {n} 次",
+      "resetsIn": "{days} 天后重置",
+      "paceDays": "按当前节奏还能用 ~{days} 天",
+      "paceRunOut": "照这个节奏,{weekday}就用完了",
+      "fullTitle": "这周期的额度已用完。",
+      "fullBody": "手动投递不受影响 — 或升级解锁无限额度。",
+      "seeActivity": "查看明细",
+      "upgrade": "升级",
+      "upgradeNow": "立即升级",
+      "upgradeUnlimited": "升级 — 无限额度",
+      "thisCycle": "本周期",
+      "today": "今天",
+      "yesterday": "昨天",
+      "daysAgo": "{n} 天前",
+      "mostEfficient": "最高效的一天:{day}({applies} → 收到 {replies} 个回应)"
+    }
+  },
+  "settings": {
+    "language": {
+      "title": "语言",
+      "desc": "选择 Vantage 与你交流时使用的语言。你的简历和求职信仍会跟随你所投递岗位的语言。"
+    },
+    "account": "账户",
+    "title": "设置",
+    "errors": {
+      "load": "无法加载你的资料。",
+      "salaryInteger": "请输入一个非负整数。",
+      "salaryMax": "薪资不能超过 10,000,000。",
+      "save": "无法保存你的偏好设置。",
+      "delete": "无法删除你的账户。",
+      "export": "无法导出你的数据。"
+    },
+    "profile": {
+      "title": "个人资料",
+      "desc": "你的账户信息。目前为只读。",
+      "email": "邮箱",
+      "displayName": "显示名称",
+      "memberSince": "注册于"
+    },
+    "jobPrefs": {
+      "title": "求职偏好",
+      "desc": "Vantage 据此为你匹配。越贴近真实情况，你的每日简报就越精准。",
+      "targetRoles": "目标职位",
+      "targetRolesPlaceholder": "例如：高级产品设计师 — 按回车添加",
+      "skills": "技能",
+      "skillsPlaceholder": "例如：Figma、设计系统 — 按回车添加",
+      "locations": "地点",
+      "locationsPlaceholder": "例如：远程、纽约 — 按回车添加",
+      "removeTag": "移除 {value}",
+      "minSalary": "最低薪资（美元）",
+      "workArrangement": "工作方式",
+      "remoteAny": "不限",
+      "remoteRemote": "远程",
+      "remoteHybrid": "混合办公",
+      "remoteOnsite": "现场办公",
+      "save": "保存偏好",
+      "saving": "保存中…",
+      "saved": "已保存"
+    },
+    "privacy": {
+      "title": "隐私",
+      "desc": "在不暴露自己的前提下帮助未来的求职者。默认关闭。",
+      "donateTitle": "向共享题库贡献匿名化的面试题",
+      "donateBody": "当你记录一次真实面试时，Vantage 会去除公司和个人标识信息，并把题目文本贡献到一个题库，帮助其他用户准备同一轮面试。你的简历、回答和结果绝不会离开你的账户。你可以随时关闭此功能，已贡献的题目会保留在题库中 — 由于过往贡献已匿名化，我们无法单独撤回某一条。",
+      "readMore": "了解我们收集哪些信息 →",
+      "toggleOn": "已开启 — 切换题目贡献",
+      "toggleOff": "已关闭 — 切换题目贡献"
+    },
+    "data": {
+      "title": "数据",
+      "desc": "导出或永久删除 Vantage 持有的你的全部数据。",
+      "export": "导出我的数据",
+      "exporting": "正在准备导出…",
+      "exportDesc": "下载一个 JSON 文件，包含你的资料、所有简历版本，以及 Vantage 为你保存的每一份投递。无服务端排队 — 即时生成。",
+      "deleteTitle": "删除账户",
+      "deleteDesc": "永久删除你的简历、投递、面试和资料。此操作无法撤销。",
+      "deleteButton": "删除我的账户"
+    },
+    "deleteModal": {
+      "title": "确定删除账户？",
+      "body": "此操作将永久删除你的全部数据。输入 <token>DELETE</token> 以确认。",
+      "inputLabel": "输入 DELETE 以确认",
+      "cancel": "取消",
+      "confirm": "永久删除",
+      "deleting": "删除中…"
+    }
+  },
+  "mock": {
+    "back": "返回",
+    "forLine": "面向",
+    "recruiterScreen": "招聘官初筛",
+    "soon": "即将到来",
+    "modes": {
+      "scene_recreation": {
+        "name": "实景重现",
+        "tagline": "众包情报加一记犀利追问，最接近真实回合。"
+      },
+      "pressure_drill": {
+        "name": "压力演练",
+        "tagline": "基于 JD 出题，连环追问直到你稳稳落地。"
+      },
+      "warm_up": {
+        "name": "热身",
+        "tagline": "不带情报，节奏温和。真实回合前找找手感正合适。"
+      },
+      "rapid_fire": {
+        "name": "快问快答",
+        "tagline": "不带情报、不追问——每题一句话点评。练习量最大。"
+      }
+    },
+    "badges": {
+      "anchor": "情报",
+      "pressure": "压力",
+      "feedback": "反馈",
+      "loop": "闭环",
+      "intel": {
+        "none": "无情报",
+        "jd": "JD 情报",
+        "crowd": "众包情报",
+        "recruiter": "招聘官情报"
+      },
+      "pressureLevel": {
+        "low": "低",
+        "med": "中",
+        "high": "高"
+      },
+      "feedbackStyle": {
+        "rating": "1–5 评分",
+        "oneLine": "一句话",
+        "threePerspective": "三视角"
+      },
+      "loopBehavior": {
+        "standalone": "独立",
+        "saveCard": "存卡片",
+        "replayReal": "复盘真实"
+      }
+    },
+    "gallery": {
+      "title": "挑一种你想演练的方式。",
+      "subtitle": "每种模式都是一条不同的备战真实回合的路径。",
+      "start": "开始",
+      "startWithMode": "开始 · {mode}"
+    },
+    "intel": {
+      "modesBack": "模式",
+      "briefLabel": "情报简报",
+      "title": "这一轮真正会问什么。",
+      "subtitle": "源自众包题库与公开信号，先攻最可能出现的题。",
+      "mostLikely": "最可能的问题",
+      "trap": "陷阱题",
+      "imReady": "准备好了——开始",
+      "duration": "30 分钟",
+      "style": "偏对话式。Stripe 很看重手艺与书面表达——预期会有一个跟进的带回家任务，而非现场实操。",
+      "q1": "讲讲一个你引以为傲的项目。",
+      "q2": "为什么偏偏选 Stripe？",
+      "q3": "你怎么处理和工程团队的意见分歧？",
+      "trapQ": "说说一次你的设计失败的经历。",
+      "trapNote": "这里很容易过度遮掩。坦然认下，再用一个数字说明你是怎么纠正的。"
+    },
+    "live": {
+      "exitMock": "退出模拟",
+      "answerPlaceholder": "输入你的回答…   ⌘↵ 发送",
+      "sendAnswer": "发送回答",
+      "labelOpening": "开场",
+      "labelFollowUp": "追问",
+      "sampleHeard": "听起来很自信，但他们想听的是你做了哪个决策——而不只是结果。",
+      "sampleStuck": "卡在了影响力上——下次开口第一句就把关键数字亮出来。"
+    },
+    "feedback": {
+      "interviewerHeard": "面试官听到的",
+      "youSaid": "你说的",
+      "whatTheyHeard": "他们听到的",
+      "tryInstead": "不妨这样说",
+      "stuck": "卡点",
+      "coach": "教练"
+    },
+    "debrief": {
+      "sessionComplete": "本次练习结束",
+      "title": "你的面试卡片。",
+      "subtitle": "每个回答在桌子另一头听起来如何——以及哪些要带进真实回合。",
+      "heard": {
+        "0": "立意很自信，但他们在听的是你做了哪个决策——而不是结果。",
+        "1": "事情讲清楚了。你权衡放弃的那个取舍，可以更早点出来。",
+        "2": "对其中的张力很坦诚。点明你当时优化的指标会更有分量。",
+        "3": "叙事很有力。追问会探你换作现在会怎么做——提前想好。",
+        "4": "收尾不错。第一句里给出一个具体数字，会更有锚点。"
+      },
+      "closeLoop": "闭环",
+      "closeLoopBody": "真实的 {company} 面试之后，回来记下他们实际问了什么。Vantage 会学到你真正的薄弱点——而不是泛泛的建议。",
+      "logReal": "记录真实面试",
+      "nextSessionOpensOn": "下次将从这里开始",
+      "focusNext": "把影响力说清楚，尽早点出关键数字",
+      "runAgain": "再来一次",
+      "done": "完成"
+    },
+    "confirm": {
+      "readyToStart": "准备好开始了吗？",
+      "heading": "{mode}——约 {mins} 分钟，{count} 道题。",
+      "timerNote": "一旦开始，计时就会启动。你随时可以退出——若中途取消，你的回答不会被保存。",
+      "notYet": "再等等",
+      "startSession": "开始这次练习"
+    },
+    "logReal": {
+      "privacyFirst": "隐私优先",
+      "title": "记录 {company} 实际问了什么",
+      "body": "我们会打开 Ask Vantage，趁记忆还新走一遍真实回合。选一个——之后可在设置里随时更改。",
+      "justForMeLabel": "只留给我自己",
+      "justForMeBody": "——问题仅保存在你的账户里。我们绝不分享或汇总。",
+      "helpPoolLabel": "贡献给题库",
+      "helpPoolBody": "——同上，并且我们会把问题匿名化（去掉姓名、公司、职位细节）后加入共享题库，让其他人下次能练到更贴近真实的模拟。你随时可以退出。",
+      "justForMe": "只留给我自己",
+      "helpPool": "好，贡献给题库",
+      "notNow": "暂不",
+      "handoffPrompt": "我刚结束了真实的 {company} 面试。我们来记录一下他们实际问的问题，好让 Vantage 把我下次的准备打磨得更准。"
+    }
+  },
+  "apply": {
+    "review": {
+      "back": "返回",
+      "reviewApplication": "审核投递",
+      "strongFit": "高度契合",
+      "goodFit": "比较契合",
+      "fairFit": "一般契合",
+      "skillsMatched": "{count} 项技能匹配",
+      "matchedSkills": "匹配的技能",
+      "skillGaps": "技能缺口",
+      "yourApplication": "你的投递",
+      "reviewDetails": "提交前再过一遍细节。",
+      "jobDetails": "职位详情",
+      "fromDatabase": "来自数据库",
+      "roleLabel": "职位",
+      "companyLabel": "公司",
+      "locationLabel": "地点",
+      "salaryLabel": "薪资",
+      "requiredSkillsLabel": "要求技能",
+      "matchPct": "匹配度：{pct}%",
+      "skillsAligned": "{count} 项技能契合",
+      "saveForLater": "稍后再投",
+      "submitApplication": "提交投递",
+      "externalRole": "该职位在外部站点。等你在那里打开时，我们会在扩展里帮你备好投递包。",
+      "backToToday": "返回今日",
+      "reasonsLineUp": "有 {count} 处契合",
+      "whyFit": "为什么你合适",
+      "amberBlocks": "琥珀色区块是为你写好的——发送前扫一眼。",
+      "tailoredResume": "定制简历",
+      "reorderedTag": "已为此职位重排",
+      "coverNote": "求职附言",
+      "draftTag": "草稿",
+      "coverNoteAria": "可编辑的求职附言草稿",
+      "coverNoteHint": "点击即可编辑——这是你的声音，随意调整。",
+      "screeningQuestions": "筛选问题",
+      "draftedTag": "已起草",
+      "blocksReady": "{count} 个区块已就绪",
+      "writtenByAi": "由 AI 撰写——发送前扫一眼",
+      "looksRightSubmit": "没问题——提交"
+    },
+    "prep": {
+      "tag": "备战 · 随时可以开始",
+      "likelyQuestions": "可能的问题——附上你的切入角度",
+      "knowTheRoom": "了解面试现场",
+      "close": "关闭",
+      "runMock": "来一场模拟面试"
+    }
+  },
+  "landing": {
+    "nav": {
+      "howItWorks": "工作原理",
+      "theAgents": "智能体团队",
+      "features": "功能",
+      "pricing": "价格",
+      "signIn": "登录",
+      "startFree": "免费开始",
+      "openWorkspace": "进入工作台"
+    },
+    "redirectNotice": {
+      "text": "请先登录以进入你的工作台。"
+    },
+    "hero": {
+      "badge": "客户端智能体 · 零封号风险",
+      "headline": {
+        "line1": "你的求职，",
+        "line2Pre": "交给",
+        "line2Highlight": "智能体",
+        "line2Post": "。",
+        "line3": "由你过目。"
+      },
+      "subhead": "只需告诉 Vantage 你想要什么。它的智能体会为你找到合适的职位、为每一次投递量身定制、起草你的回答、备好面试——你只需过目，再点提交。",
+      "secondaryCta": "看看它怎么工作",
+      "microcopy": "无需绑卡即可开始 · 你的数据可只留在本地设备"
+    },
+    "atsStrip": {
+      "label": "可自动填写"
+    },
+    "steps": {
+      "eyebrow": "完整闭环",
+      "title": "从「我得找份工作」到投递完成——只需轻点几下。",
+      "subtitle": "一条从容的闭环，越用越懂你。不再海投，不再重复填同一张表。",
+      "items": [
+        {
+          "title": "把自己带进来",
+          "body": "上传简历、粘贴文字、关联主页——或者直接聊。无需填表。"
+        },
+        {
+          "title": "精准匹配",
+          "body": "智能体扫描在招职位，筛出真正契合的机会。重质量，不靠成千上万次碰运气。"
+        },
+        {
+          "title": "审阅投递包",
+          "body": "定制简历、求职信与回答——AI 生成的部分已标出，扫一眼即可。"
+        },
+        {
+          "title": "由你亲手提交",
+          "body": "表单在你自己的浏览器里填好。提交由你点下——零账号风险。"
+        },
+        {
+          "title": "备战与追踪",
+          "body": "一切都汇入看板。拿到面试？模拟面试一键即来。"
+        }
+      ]
+    },
+    "chat": {
+      "eyebrow": "对话即界面",
+      "titleLine1": "别再在一堆工具间点来点去。",
+      "titleLine2": "开口问就好。",
+      "body": "Vantage 就是一段对话。在它背后，一支智能体团队悄悄把活干完——更新简历、定制投递、填写表单、开启模拟面试。你始终待在同一处，始终掌控全局。",
+      "asks": [
+        "「帮我找远程、年薪 20 万美元以下的产品设计岗。」",
+        "「重写我的简历，让影响力先行。」",
+        "「启动 Stripe 的投递，并起草答题。」",
+        "「为明天的 Stripe 面试来一场模拟。」"
+      ]
+    },
+    "chatMock": {
+      "title": "Ask Vantage",
+      "userMessage": "把我的简历定制到 Linear 的岗位，并启动投递。",
+      "reply": "这就办——正在运行两个智能体。",
+      "resumeAgent": "简历智能体",
+      "applicationAgent": "投递智能体",
+      "done": "完成",
+      "result": "你的 Linear 投递已就绪——<b>匹配度 94%</b>，AI 已起草 2 个字段。",
+      "open": "打开",
+      "composerPlaceholder": "随便问，或交派一个任务……"
+    },
+    "features": {
+      "eyebrow": "它能做什么",
+      "title": "六个智能体。一份不断生长的职业上下文。",
+      "items": [
+        {
+          "title": "简历工作室",
+          "body": "在对话中构建与打磨。每个版本都留存——写一次，处处可用。"
+        },
+        {
+          "title": "诚实的 AI 优化",
+          "body": "让你真实的成就更出彩——量化、收紧表达，绝不虚构。"
+        },
+        {
+          "title": "按 JD 定制投递",
+          "body": "一份职位描述进，一份定制简历 + 求职信 + 答题出。"
+        },
+        {
+          "title": "客户端自动填表",
+          "body": "在你的浏览器、你的登录态下填写 ATS 表单。提交始终由你亲手完成。"
+        },
+        {
+          "title": "模拟面试",
+          "body": "一位实时的 AI 面试官，会追问，并在每次作答后给你指导。"
+        },
+        {
+          "title": "市场与数据飞轮",
+          "body": "每日趋势，加上一座越用越丰富的个人面试题库。"
+        }
+      ]
+    },
+    "bets": {
+      "eyebrow": "我们押下的三个判断",
+      "title": "与每一个海投机器人，反着造。",
+      "items": [
+        {
+          "title": "质量胜过数量",
+          "body": "投 11–20 个岗位的转化率，是狂投 100+ 的 3 倍。我们帮你投得少而精——而非盲目海投。"
+        },
+        {
+          "title": "客户端执行 = 零封号",
+          "body": "填写与提交都发生在你的浏览器、你的登录态、你的 IP 下。平台无从分辨人工与辅助。你的账号始终安全。"
+        },
+        {
+          "title": "你的上下文才是护城河",
+          "body": "自动填表会被复制，但你的简历演进史、投递记录与面试回答不会——它们会沉淀成一个真正懂你的助手。"
+        }
+      ]
+    },
+    "pricing": {
+      "eyebrow": "价格",
+      "title": "免费开始。见到效果再升级。",
+      "toggleMonthly": "按月",
+      "toggleAnnual": "按年 · 省 20%",
+      "periodAnnual": "/月 · 按年结算",
+      "periodMonthly": "/ 月",
+      "free": {
+        "name": "Free",
+        "tagline": "体验完整闭环",
+        "period": "/ 永久",
+        "cta": "立即开始",
+        "features": [
+          "1 份简历 + 版本历史",
+          "每月 5 次定制投递",
+          "每日市场趋势",
+          "客户端自动填表"
+        ]
+      },
+      "pro": {
+        "badge": "最受欢迎",
+        "name": "Pro",
+        "tagline": "适合正在密集求职",
+        "cta": "开启 7 天试用",
+        "features": [
+          "无限次定制投递",
+          "每月 40 次智能体填表",
+          "无限次模拟面试",
+          "完整趋势 + 技能缺口分析",
+          "面试题库"
+        ]
+      },
+      "max": {
+        "name": "Max",
+        "tagline": "认真冲刺、限期求职",
+        "cta": "升级 Max",
+        "features": [
+          "包含 Pro 全部功能",
+          "无限次智能体填表",
+          "智能体优先运行",
+          "深度面试情报",
+          "1 对 1 上手辅导"
+        ]
+      },
+      "footnote": "每个套餐皆然：数据可只留在本地设备 · 投递始终由你亲手提交 · 随时可取消"
+    },
+    "heroConsole": {
+      "titleBar": "vantage · 从这里开始",
+      "live": "运行中",
+      "methods": {
+        "upload": "上传",
+        "chat": "对话",
+        "paste": "粘贴",
+        "link": "链接"
+      },
+      "upload": {
+        "title": "拖入简历即可开始",
+        "hint": "PDF、DOCX——或点击浏览"
+      },
+      "chat": {
+        "title": "没有简历？聊着聊着就写出来。",
+        "hint": "回答几个小问题，我们陪你一起写。",
+        "cta": "开始对话"
+      },
+      "paste": {
+        "placeholder": "把简历文字粘贴到这里——经历、技能、教育背景。我们会帮你整理成结构化档案。",
+        "cta": "解析简历"
+      },
+      "link": {
+        "title": "从链接导入",
+        "cta": "导入"
+      },
+      "run": {
+        "userMessage": "这是我的简历——帮我找职位，并备好一切。",
+        "scout": {
+          "name": "搜寻智能体",
+          "result": "已扫描 <count></count> 个在招职位 → 8 个高契合"
+        },
+        "resume": {
+          "name": "简历智能体",
+          "result": "已为每个职位定制你的简历"
+        },
+        "answer": {
+          "name": "答题智能体",
+          "result": "已根据你的经历起草初筛回答"
+        }
+      },
+      "ready": {
+        "title": "{count} 份投递已就绪",
+        "subtitle": "由你审阅并提交——在你自己的浏览器里",
+        "cta": "进入"
+      }
+    },
+    "footer": {
+      "tagline": "质量胜过数量。你的账号，永不冒险。",
+      "privacy": "隐私",
+      "security": "安全",
+      "docs": "文档"
+    },
+    "finalCta": {
+      "headlinePre": "把琐碎，交给",
+      "headlineHighlight": "智能体",
+      "headlinePost": "。",
+      "body": "上传一份简历，或者直接开口聊。几分钟内，就会有可供审阅的投递。"
+    },
+    "accountChip": {
+      "fallbackName": "你好",
+      "openWorkspace": "进入工作台",
+      "signOut": "退出登录"
+    }
+  },
+  "dock": {
+    "askVantage": "向 Vantage 提问",
+    "askVertical": "提问",
+    "openAskVantage": "打开 Ask Vantage",
+    "subtitleResume": "正在讨论这份简历",
+    "subtitleDefault": "你的智能体 · 随时在线",
+    "expandButton": "全屏",
+    "dockButton": "收起为侧栏",
+    "collapse": "收起",
+    "dragToResize": "拖动调整宽度",
+    "recentLabel": "最近",
+    "newChat": "新对话",
+    "agentTeamsLabel": "智能体团队",
+    "reviewAttachments": "请帮我看看附件。",
+    "greeting": {
+      "today": "今天 · {date}",
+      "headline": "{greeting}，{name}。",
+      "fallbackName": "你好",
+      "parseRunning": "正在后台解析你的简历——你先忙别的，准备好后我会第一时间给出薄弱点和匹配的岗位。",
+      "parseFailed": "这次解析没能完成——重新上传或直接粘贴文本，我再试一次。",
+      "parseIdle": "今天想从哪里入手？点一张卡片即可立即发送，也可以自己写。",
+      "timeOfDay": {
+        "morning": "早上好",
+        "afternoon": "下午好",
+        "evening": "晚上好"
+      }
+    },
+    "groups": {
+      "thisResume": "这份简历",
+      "thisResumeScope": "仅作用于当前版本",
+      "explore": "探索"
+    },
+    "chips": {
+      "scopedDisabledHint": "请先打开一份简历——这些操作需要有简历才能作用。",
+      "thisResume": {
+        "weakestSpots": "找出这份简历最薄弱的 3 处",
+        "tailorToJd": "针对某个 JD 定制这份简历",
+        "careerMoves": "规划我接下来的 1–2 步职业方向",
+        "surfaceRoles": "推荐与这份简历匹配的岗位"
+      },
+      "explore": {
+        "findRolesToday": "看看今天值得关注的岗位",
+        "sharpenForStripe": "为 Stripe 打磨我的简历",
+        "practiseStripeScreen": "模拟 Stripe 招聘官初筛",
+        "marketThisWeek": "本周市场有什么变化？",
+        "coverLetterLinear": "帮我写一封给 Linear 的求职信"
+      }
+    },
+    "agentTeams": {
+      "scout": "发现 / 匹配岗位",
+      "resume": "解析 · 优化 · 定制",
+      "interview": "模拟 · 反馈",
+      "apply": "求职信 · 表单准备",
+      "trend": "市场 · 技能动向"
+    },
+    "composer": {
+      "placeholder": "问我任何事",
+      "attachFile": "添加附件（PDF / DOCX / TXT）",
+      "mentionTeam": "提及某个智能体团队",
+      "voiceInput": "语音输入",
+      "stopVoice": "停止语音输入",
+      "agentTeamsListLabel": "智能体团队",
+      "uploading": "上传中…",
+      "uploadNoId": "上传已接收，但未返回文件 ID。",
+      "uploadFailed": "上传失败",
+      "remove": "移除",
+      "removeNamed": "移除 {name}",
+      "sendAria": "发送",
+      "sendAriaDisabled": "输入内容后即可发送",
+      "sendTitle": "发送（⌘↵）",
+      "sendTitleDisabled": "输入内容后即可发送"
+    },
+    "recent": {
+      "empty": "你的对话记录会显示在这里。向 Vantage 提问即可开始。",
+      "olderOpenThread": "更早 — 打开会话查看",
+      "justNow": "刚刚",
+      "minutesAgo": "{count} 分钟前",
+      "hoursAgo": "{count} 小时前",
+      "daysAgo": "{count} 天前"
+    },
+    "agentCard": {
+      "collapse": "收起思考过程",
+      "expand": "展开思考过程",
+      "thinkingElapsed": "思考中 · {elapsed}",
+      "waitingForModel": "正在等待模型 · {elapsed} — 还没有工具调用或叙述。"
+    },
+    "meta": {
+      "agent": "智能体",
+      "started": "开始于",
+      "status": "状态",
+      "tool": "工具"
+    },
+    "tool": {
+      "ok": "成功",
+      "failed": "失败",
+      "collapse": "收起工具日志",
+      "expand": "展开工具日志",
+      "input": "输入",
+      "output": "输出",
+      "moreLines": "还有 {count} 行",
+      "showLess": "收起",
+      "showAll": "全部显示"
+    },
+    "partial": {
+      "drafting": "草拟中…"
+    },
+    "message": {
+      "thinking": "思考中"
+    },
+    "artifact": {
+      "confident": "{pct}% 把握",
+      "review": "{pct}% — 需复核",
+      "evidence": "依据"
+    },
+    "suggestion": {
+      "needsReview": "需复核",
+      "accepted": "✓ 已采纳",
+      "rejected": "已拒绝",
+      "accept": "采纳",
+      "reject": "拒绝",
+      "discuss": "讨论",
+      "revise": "修改",
+      "discussPlaceholder": "例如：再精简一些，或去掉这个数字",
+      "discussSeed": "关于这条——“{bullet}”——我想"
+    },
+    "taskGraph": {
+      "planHeader": "计划 · {count} 步",
+      "running": "进行中",
+      "done": "完成",
+      "review": "待复核",
+      "failed": "失败",
+      "waiting": "等待中"
+    },
+    "reasoning": {
+      "thinking": "思考中 · {duration} · {count} 步",
+      "thought": "思考了 {duration} · {count} 步",
+      "thoughtPartial": "思考了 {duration} · {count} 步 · 部分完成",
+      "collapse": "收起推理过程",
+      "expand": "展开推理过程",
+      "transcriptLabel": "模型推理记录"
+    },
+    "hitl": {
+      "missingToken": "HITL 界面缺少 resume_token——智能体触发了中断，但没有可恢复的会话线程。这是接线缺陷，请重试或反馈。",
+      "youResponded": "你的回复：{summary}",
+      "titleAskUser": "Vantage 需要你的输入",
+      "titleDiff": "审阅这处改动",
+      "titleApproval": "批准下一步",
+      "statusAnswered": "已回复",
+      "statusSubmitting": "提交中…",
+      "statusCancelled": "已取消",
+      "statusAwaiting": "等待你处理",
+      "answerPlaceholder": "输入你的回答…",
+      "send": "发送",
+      "before": "改动前",
+      "after": "改动后",
+      "approve": "批准",
+      "askToTweak": "要求调整",
+      "discard": "丢弃",
+      "reject": "拒绝",
+      "summaryApproved": "已批准",
+      "summaryRejected": "已拒绝",
+      "summaryTweak": "已要求调整",
+      "summaryDiscarded": "已丢弃",
+      "wantsTo": "Vantage 想要<strong>{action}</strong>。",
+      "optionalNote": "给智能体的备注（可选）…",
+      "cancelWithout": "不回复直接取消"
+    }
+  },
+  "resume": {
+    "loading": "正在加载简历…",
+    "loadError": "无法加载简历",
+    "aiOutcomeLed": "AI · 突出成果",
+    "time": {
+      "justNow": "刚刚",
+      "minutesAgo": "{n} 分钟前",
+      "hoursAgo": "{n} 小时前",
+      "daysAgo": "{n} 天前"
+    },
+    "track": {
+      "originalSummary": "你的上传原稿，原封不动。",
+      "optimizedSummary": "由原稿经 AI 优化生成。",
+      "tailoredSummary": "为某个职位定制。"
+    },
+    "empty": {
+      "title": "尚无简历",
+      "body": "上传一份，或与 Vantage 对话从零搭建。",
+      "uploadCta": "上传文件",
+      "talkCta": "与 Vantage 边聊边建"
+    },
+    "header": {
+      "original": "原始简历",
+      "tailored": "定制版本",
+      "optimized": "AI 优化简历",
+      "version": "版本 {v}",
+      "saved": "已保存",
+      "compare": "对比",
+      "exitCompare": "退出对比",
+      "enterCompareAria": "进入对比模式",
+      "exitCompareAria": "退出对比模式",
+      "uploadNew": "上传新简历",
+      "export": "导出"
+    },
+    "prompt": {
+      "tailor": "为一个新职位定制这份简历 —— ",
+      "upload": "我想上传一份新简历。",
+      "fillGapsIntro": "我的简历解析后还有几处缺漏。请一次问我一个问题，帮我把它们补全：",
+      "fillGapsRawHeader": "这是我上传的简历文本："
+    },
+    "originalPane": {
+      "label": "原稿",
+      "uploadedFallback": "你上传的简历",
+      "none": "尚无原稿存档。",
+      "loading": "正在加载原稿…",
+      "iframeTitle": "原始简历",
+      "unavailable": "原稿预览不可用。你可以从来源标签下载它。"
+    },
+    "suggestions": {
+      "count": "{count, plural, other {# 条建议}}",
+      "subtitle": "AI 建议 —— 接受后并入你的优化版本。",
+      "needsReview": "需复核",
+      "accept": "接受",
+      "reject": "拒绝"
+    },
+    "rail": {
+      "original": {
+        "label": "原稿",
+        "caption": "你的上传原稿 —— 与提交时完全一致。",
+        "current": "v{v} · 当前"
+      },
+      "optimized": {
+        "label": "优化版",
+        "caption": "由原稿衍生的 AI 优化版本 —— 无需指定职位。",
+        "emptyHint": "上传后 Vantage 会自动生成这些版本。"
+      },
+      "tailored": {
+        "label": "定制版",
+        "caption": "为单一职位定制的分支。",
+        "rowLabel": "面向某职位 · v{v}"
+      },
+      "tailorCta": "为新职位定制",
+      "editWithVantage": "用 VANTAGE 编辑",
+      "editHint": "用 dock 来精修、定制或重写。你的原稿始终保持不变。"
+    },
+    "compare": {
+      "title": "对比模式",
+      "diffTitle": "对比模式 —— 与主版本 {v} 的差异",
+      "loadingTitle": "对比模式 —— 正在加载主版本…",
+      "body": "打开一个定制版本，查看 AI 相对主版本新增了什么。",
+      "diffBody": "AI 定制的内容以珊瑚色高亮，未变动的部分即你的主版本简历。",
+      "loadingBody": "正在拉取你的主版本简历，以便标出改动之处。"
+    },
+    "doc": {
+      "nameFallback": "你的简历",
+      "summary": "概述",
+      "experience": "工作经历",
+      "skills": "技能",
+      "education": "教育经历"
+    },
+    "rawFallback": {
+      "badge": "无法结构化 —— 以下是我们读到的内容",
+      "body": "Vantage 已保存你的上传，但 AI 无法将其映射为简历字段。下方是原始文本 —— 可用 Ask Vantage 逐段梳理，或上传一份更清晰的文件。",
+      "empty": "（空文件 —— 未能提取到任何文本。）"
+    },
+    "parse": {
+      "failed": "解析失败",
+      "complete": "解析完成",
+      "running": "正在解析简历…",
+      "doneDetail": "已保存为新版本。打开左侧时间轴即可查看。",
+      "tryAnother": "换一个文件",
+      "askVantage": "问 Vantage",
+      "dismiss": "关闭",
+      "dismissAria": "关闭"
+    },
+    "warnings": {
+      "title": "AI 未能完全结构化你的简历 —— 你的文本已保存为 v1。",
+      "more": "另有 {n} 项",
+      "fillCta": "帮我补全缺漏 →"
+    },
+    "source": {
+      "chip": "来源 · {name}",
+      "drawerAria": "来源文件",
+      "closeAria": "关闭",
+      "close": "关闭",
+      "download": "下载原稿",
+      "replace": "替换为新文件",
+      "fetching": "正在获取签名链接…",
+      "fetchError": "无法获取原稿 —— 文件可能已被删除，或存储服务离线。",
+      "previewError": "无法加载预览",
+      "previewUnsupported": "不支持预览",
+      "previewUnsupportedBody": "内嵌预览仅支持 PDF。请用上方的下载按钮在你的编辑器中打开原稿。"
+    },
+    "presentation": {
+      "tablistAria": "展示模式",
+      "optimized": "优化版",
+      "original": "原版",
+      "compare": "对照"
+    },
+    "editor": {
+      "dirtyCount": "{n, plural, one {# 项未保存} other {# 项未保存}}",
+      "pendingSuggestion": "Dock 里有一条待处理建议",
+      "section": {
+        "summary": "概览",
+        "experience": "工作经历"
+      },
+      "placeholder": {
+        "name": "你的全名",
+        "label": "一句话头衔 · 例如：资深后端工程师",
+        "email": "you@example.com",
+        "phone": "+86 138 0000 0000",
+        "location": "城市，地区",
+        "summary": "用你自己的语气写一段简短概览 —— 三行以内。",
+        "company": "公司",
+        "role": "职位",
+        "dateEnd": "至今",
+        "roleSummary": "（可选）这段经历的一行总结",
+        "bullet": "写一条要点 —— 用动词开头。"
+      },
+      "action": {
+        "addRole": "添加一段经历",
+        "addBullet": "添加要点",
+        "saveSnapshot": "保存为版本",
+        "discard": "放弃草稿"
+      },
+      "status": {
+        "saved": "已保存",
+        "savedJust": "已保存",
+        "savedAs": "已保存为 v{v}",
+        "draft": "草稿 · 正在自动保存…",
+        "saving": "保存中…",
+        "offline": "离线 · 稍后重试",
+        "error": "保存失败"
+      },
+      "empty": {
+        "experience": "还没有任何经历 —— 点 “添加一段经历” 开始你的时间轴。"
+      },
+      "conflict": {
+        "title": "你在编辑期间这份简历被改动了。",
+        "body": "另一个标签页在你从 v{attempted} 开始编辑后保存到了 v{theirs}。你的草稿已留在本地。",
+        "bodyLoading": "正在拉取最新版本以便对比…",
+        "viewTheirs": "查看对方版本",
+        "branch": "保留我的改动并从对方版本分叉",
+        "discard": "放弃我的草稿"
+      }
+    },
+    "viewMode": {
+      "tablistAria": "文档查看模式",
+      "document": "文档",
+      "extracted": "提取文本"
+    },
+    "extracted": {
+      "badge": "提取文本 · 解析器读到的内容",
+      "markdownHint": "由上传文件的 Markdown 中间态渲染。",
+      "plainHint": "纯文本 —— 未检测到 Markdown 结构。"
+    },
+    "changeLog": {
+      "empty": "此版本没有改动日志 —— 可能是 agent 未生成，或这是原始主版本。没有需要复核的内容。",
+      "header": "{count, plural, other {改动日志 · # 项}}",
+      "regenerate": "重新生成",
+      "approve": "批准",
+      "approveHint": "接受此定制版本",
+      "approveBlockedHint": "请先处理“需复核 / 不被支持”的条目",
+      "evidence": "依据：",
+      "before": "改前",
+      "after": "改后",
+      "noPriorBullet": "（无原条目）",
+      "empty2": "（空）",
+      "risk": {
+        "safe": "安全",
+        "needsReview": "需复核",
+        "unsupported": "不被支持",
+        "unknown": "未知"
+      },
+      "count": {
+        "safe": "安全",
+        "needsReview": "需复核",
+        "unsupported": "不被支持"
+      },
+      "type": {
+        "tighten": "精炼",
+        "quantifyExisting": "量化已有内容",
+        "reorder": "重新排序",
+        "inferWording": "推断措辞"
+      }
+    },
+    "builder": {
+      "title": "简历工作室",
+      "subtitle": "与你共建",
+      "backToHome": "返回首页",
+      "nameFallback": "你的姓名",
+      "locationFallback": "在设置中添加所在地",
+      "composerPlaceholder": "输入内容或选择一个建议…",
+      "profileReady": "你的档案已就绪",
+      "livePreview": "实时预览 · 随对话同步更新",
+      "profileLocked": "档案已锁定",
+      "autoSaved": "已自动保存",
+      "positioning": "定位",
+      "summary": "概述",
+      "summaryPlaceholder": "在对话中介绍一下你自己 —— 你的概述会随进度填到这里。",
+      "experienceRewritten": "工作经历 · 已重写",
+      "bulletPlaceholder": "带我了解一个你主导过的项目 —— 我会以成果为导向重写它，绝不编造细节。",
+      "lockedInTitle": "档案已锁定。",
+      "lockedInBody": "你的基础简历已就绪 —— 每次投递都会以它为基准定制。",
+      "seeMatches": "查看匹配职位",
+      "titleLead": "首席产品设计师",
+      "titleSenior": "高级产品设计师",
+      "titleDefault": "产品设计师",
+      "targetLead": "瞄准 Lead / Staff 设计岗 —— 以职责范围、主导力与团队影响力为核心。",
+      "targetSenior": "瞄准高级 IC 岗 —— 以专业深度、项目主导与可量化成果为核心。",
+      "targetDefault": "对高级 IC 与 Lead 岗均开放 —— 兼顾深度与广度的定位。"
+    },
+    "delivery": {
+      "back": "返回",
+      "open": "在 Studio 中打开",
+      "operations": "操作",
+      "openOps": "打开操作面板",
+      "publishedBadge": "已发布",
+      "notPublishedBadge": "草稿",
+      "loading": "加载中…"
+    },
+    "public": {
+      "loading": "加载中…",
+      "notFound": {
+        "title": "该简历不可访问",
+        "body": "链接可能已被撤销,或从未存在。"
+      },
+      "publishedOn": "发布于 {date}",
+      "madeWith": "由 Vantage 制作"
+    },
+    "operations": {
+      "title": "操作",
+      "eyebrow": "操作",
+      "close": "关闭",
+      "exportFailed": "导出未能完成,请重试。",
+      "publishFailed": "发布未能完成 —— 请重试,或联系支持。",
+      "revokeFailed": "撤销链接失败,请重试。",
+      "export": {
+        "title": "导出",
+        "markdown": "Markdown",
+        "markdownSub": "便携 .md —— 可粘贴到 Notion、GitHub 等任意位置。",
+        "pdf": "PDF",
+        "pdfSub": "为招聘者准备的固定排版。",
+        "docx": "DOCX",
+        "docxSub": "可编辑的 Word 文档。",
+        "beta": "测试版",
+        "json": "JSON Resume",
+        "jsonSub": "结构化数据文件 —— 用于备份或导入。",
+        "downloading": "下载中…"
+      },
+      "share": {
+        "title": "分享",
+        "notPublishedBody": "生成只读链接,招聘者无需账号即可打开。可随时撤销。",
+        "publish": "发布只读链接",
+        "publishing": "发布中…",
+        "published": "已发布",
+        "copy": "复制链接",
+        "copied": "已复制!",
+        "revoke": "撤销"
+      },
+      "print": {
+        "title": "打印",
+        "cta": "打开打印对话框"
+      }
+    }
+  },
+  "today": {
+    "remote": "远程",
+    "notScored": "未评分",
+    "percentMatch": "匹配度 {pct}%",
+    "addResumeToScore": "添加或更新你的简历，Vantage 才能为这个职位打分。",
+    "skillGaps": "+{count} 项缺口",
+    "reviewAndApply": "审核并投递",
+    "rolesInDatabase": "{count} 个职位入库",
+    "noFitsScored": "暂未评分匹配",
+    "noStrongFits": "暂无强匹配 — 试试放宽筛选条件",
+    "strongFitsReady": "{count} 个强匹配，可直接投递",
+    "trendingSkillsTracked": "{count} 项热门技能追踪中",
+    "queueHeading": "今天有 {count} 件事推动你前进",
+    "tapToStart": "点击开始",
+    "whyThis": "推荐理由 · {reason}",
+    "emptyResumeTitle": "先从你的简历开始。",
+    "emptyResumeBody": "有了可匹配的内容，Vantage 才会生成行动清单 — 上传或粘贴你的简历，匹配职位、准备动作和技能信号就会陆续出现在这里。",
+    "uploadResume": "上传简历",
+    "emptyQueuePassive": "行动清单暂时是空的 — 投递、面试和学习信号会自动出现在这里。",
+    "liveMatches": "实时匹配",
+    "fromDbSorted": "来自数据库 · 按匹配度排序",
+    "fromDbPending": "来自数据库 · 评分进行中",
+    "whileWeLook": "为你寻找匹配中",
+    "sampleSurface": "这是我们将为你呈现的示例",
+    "oneClickApply": "一键投递",
+    "applyOnSite": "前往官网投递",
+    "buttonsHint": "实心按钮表示一切已准备就绪；描边按钮会打开公司自己的招聘页面。",
+    "fit": {
+      "excellent": "极佳",
+      "strong": "很强",
+      "good": "良好",
+      "fair": "一般"
+    },
+    "why": {
+      "interviewImminent": "面试临近",
+      "interviewThisWeek": "本周有面试",
+      "draftAging": "草稿搁置已久",
+      "openDraft": "打开草稿",
+      "awaitingReply": "等待回复",
+      "skillGap": "技能缺口信号"
+    },
+    "pill": {
+      "interview": "面试",
+      "prep": "准备",
+      "followUp": "跟进",
+      "learn": "学习"
+    }
+  },
+  "tracker": {
+    "pipeline": "投递流程",
+    "title": "投递管理",
+    "syncing": "正在与数据库同步…",
+    "nothingSubmitted": "尚未投递 — 下方是你的示例流程。",
+    "tracked": "已追踪 {count} 份投递",
+    "unknownCompany": "未知公司",
+    "role": "职位",
+    "justSent": "刚刚投递",
+    "openCard": "打开 {company} 的 {role}",
+    "openPrep": "开始准备",
+    "browseMatches": "浏览匹配职位",
+    "firstEmptyTitle": "这里还是空的 — 从今日匹配中挑一个职位开始吧。",
+    "firstEmptyBody": "当你定制并投递第一份申请后，这个看板就会被真实进展填满。下方卡片仅为预览。",
+    "interviewingBanner": "你有 {count} 场进行中的面试。点击 <strong>准备这场面试</strong> 启动模拟练习。",
+    "dropError": "无法更新这张卡片，请重试。",
+    "dropErrorWithReason": "无法更新这张卡片：{reason}",
+    "dismiss": "关闭",
+    "dismissDropError": "关闭错误提示",
+    "columns": {
+      "applied": "已投递",
+      "interviewing": "面试中",
+      "outcome": "结果"
+    },
+    "empty": {
+      "applied": "投递一份申请，它就会出现在这里。",
+      "interviewing": "当招聘方回复后，对话会移动到这一栏。",
+      "outcome": "录用和已结束的流程会归档到这里。"
+    },
+    "time": {
+      "justNow": "刚刚",
+      "minutesAgo": "{n} 分钟前",
+      "hoursAgo": "{n} 小时前",
+      "daysAgo": "{n} 天前",
+      "weeksAgo": "{n} 周前"
+    },
+    "nextAction": {
+      "interview": "面试",
+      "followUp": "跟进",
+      "ready": "就绪",
+      "prep": "准备",
+      "wrapUp": "收尾"
+    },
+    "status": {
+      "draft": "草稿",
+      "review": "审核中",
+      "submitted": "已投递",
+      "interview": "面试中",
+      "offer": "已录用",
+      "rejected": "已拒绝",
+      "ghosted": "已失联"
+    },
+    "delivery": {
+      "title": "你来提交 · 我们来准备",
+      "body": "Vantage 会为你定制简历、撰写求职信并预填表单 — 但最后的 <strong>提交</strong> 动作发生在你自己的浏览器、登录态和 IP 下。零封号风险，绝不存储 ATS 密码。",
+      "dismissTitle": "知道了 — 不再显示",
+      "dismissLabel": "关闭说明"
+    },
+    "drawer": {
+      "application": "投递",
+      "submittedWhen": "{when}投递",
+      "createdWhen": "{when}创建",
+      "close": "关闭",
+      "statusLabel": "状态",
+      "statusHelp": "在各栏之间移动卡片。更改会立即保存；若失败，会恢复到之前的状态。",
+      "outcomeLabel": "结果（选填）",
+      "outcomePlaceholder": "例如：已签录用、止步于招聘官初筛…",
+      "outcomeHelp": "记录实际发生的过程。失去焦点时自动保存。",
+      "coverLabel": "求职信草稿",
+      "coverPlaceholder": "粘贴或撰写你发送的求职信…"
+    }
+  },
+  "chat": {
+    "loadingConversation": "正在加载你的对话…",
+    "intro": "我们来做点什么？随便问 — 或者发起一个任务，我来调度各个 agent。",
+    "thinking": "思考中...",
+    "composerPlaceholder": "随便问，或发起一个任务…",
+    "uploading": "上传中…",
+    "uploadFailed": "上传失败",
+    "remove": "移除",
+    "removeAttachment": "移除 {name}",
+    "attachLabel": "添加文件或图片",
+    "voiceStart": "语音输入",
+    "voiceStop": "停止语音输入",
+    "send": "发送",
+    "sendTitle": "发送（回车）",
+    "sendDisabledLabel": "输入内容后即可发送",
+    "sendDisabledTitle": "输入后发送",
+    "suggestions": {
+      "find": "为我找适合的新职位",
+      "tailor": "为某个职位定制我的简历",
+      "prep": "帮我准备面试",
+      "market": "看看今天的市场动态"
+    },
+    "demo": {
+      "userMsg": "为我找适合我背景的新职位",
+      "onIt": "好的 — 正在扫描招聘网站，并与你的技能和经历进行匹配。",
+      "jobScanner": "职位扫描",
+      "scanning": "扫描中…",
+      "done": "完成",
+      "rolesFound": "找到 5 个匹配职位",
+      "readyToApply": "其中 3 个已可投递 — 查看你的简报",
+      "viewMatches": "查看匹配"
+    }
+  },
+  "auth": {
+    "loading": "加载中…",
+    "verifying": "正在验证你的会话…",
+    "welcomeBack": "欢迎回来。",
+    "startHunt": "开启你的求职之旅。",
+    "signInSub": "登录进入你的工作区。",
+    "signUpSub": "不到一分钟即可完成。",
+    "displayName": "显示名称",
+    "displayNamePlaceholder": "我们该怎么称呼你",
+    "email": "邮箱",
+    "password": "密码",
+    "passwordHint": "至少 6 个字符。",
+    "signIn": "登录",
+    "signUp": "注册",
+    "createAccount": "创建账户",
+    "noAccount": "还没有账户？",
+    "haveAccount": "已经有账户了？",
+    "backToHome": "返回首页",
+    "notice": {
+      "sessionExpired": "你的会话已过期，请重新登录。",
+      "sessionTimeout": "无法连接服务器，请重新尝试登录。"
+    },
+    "plan": {
+      "pro": "继续，开启你的 7 天 Pro 试用。",
+      "max": "继续，升级到 Max。",
+      "free": "继续，免费开始。"
+    },
+    "error": {
+      "rateLimit": "尝试次数过多，请稍候再试。",
+      "rateLimitSeconds": "尝试次数过多，请等待 {seconds} 秒后再试。",
+      "generic": "出了点问题"
+    }
+  },
+  "onboarding": {
+    "heroTitle": "你的求职，我们包办。",
+    "heroSubtitle": "把简历交给我们。我们帮你找职位、为每次投递定制内容、为每场面试做准备 — 主动权始终在你手中。",
+    "privacyNote": "绝不存储密码 · 你的数据可全程留在本地设备",
+    "method": {
+      "upload": "上传",
+      "chat": "对话",
+      "paste": "粘贴",
+      "link": "链接"
+    },
+    "upload": {
+      "title": "拖入你的简历即可开始",
+      "hint": "PDF 或 DOCX · 或点击浏览"
+    },
+    "chat": {
+      "title": "没有简历？聊着聊着就写好。",
+      "desc": "回答几个问题，我们就能从零为你起草一份出色的简历。",
+      "cta": "开始对话"
+    },
+    "paste": {
+      "placeholder": "在此粘贴你的简历文本…",
+      "cta": "解析简历"
+    },
+    "link": {
+      "comingSoon": "链接导入即将上线 — 目前请上传文件或粘贴简历文本。"
+    },
+    "banner": {
+      "yourResume": "你的简历",
+      "running": "正在从 <strong>{file}</strong> 读取你的经历 — 尽管继续探索，这会在后台进行。",
+      "done": "<strong>简历已就绪{name}。</strong> 我们正在用它匹配在招职位。",
+      "nameSuffix": "，{name}",
+      "failed": "{reason} 你可以随时在引导页重新上传。",
+      "failedDefault": "解析未能完成。",
+      "dismiss": "关闭"
+    },
+    "tour": {
+      "stepCounter": "第 {current} / {total} 步",
+      "skip": "跳过",
+      "next": "下一步",
+      "gotIt": "知道了",
+      "dock": {
+        "title": "随时向 Vantage 提问",
+        "body": "右侧的助手栏始终在这里 — 找职位、定制简历、准备面试。点一个建议即刻执行，或自己输入。"
+      },
+      "today": {
+        "title": "今日匹配",
+        "body": "针对你的简历评分的新职位，最契合的排在最上方。我们每天早上刷新。"
+      },
+      "apps": {
+        "title": "追踪每一份投递",
+        "body": "草稿、投递、面试、结果 — 全都集中在一处。状态更新会自动落在这里。"
+      }
+    }
+  },
+  "extension": {
+    "closeDemo": "关闭演示",
+    "companyLogo": "{company} 标志",
+    "applyForJob": "申请该职位",
+    "whyInterested": "你为什么对 {company} 感兴趣？",
+    "whyPlaceholder": "告诉我们这个职位吸引你的地方…",
+    "atsSubmitDisabled": "ATS 提交（演示中已禁用）",
+    "submitApplication": "提交申请",
+    "assistant": "Vantage 助手",
+    "onThisPage": "在此页面",
+    "filling": "正在为你填写表单…",
+    "filledMessage": "我已从你的资料中填好 4 个字段 — 姓名、邮箱、电话，以及下方的定制回答。",
+    "aiDraftedAnswer": "AI 起草的回答",
+    "youPressSubmit": "提交由你点击，不是我们。",
+    "markSubmitted": "标记为已提交",
+    "notNow": "暂不",
+    "filledByVantage": "由 Vantage 填写",
+    "field": {
+      "yourName": "你的姓名",
+      "addPhone": "在设置中添加电话",
+      "fullName": "全名",
+      "fullNamePlaceholder": "你的全名",
+      "email": "邮箱",
+      "phone": "电话"
+    }
+  }
+}

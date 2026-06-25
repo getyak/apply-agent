@@ -30,6 +30,7 @@
 // minimal munging.
 
 import { getToken } from "./api";
+import { getClientLocale } from "@/i18n/locale-client";
 import { API_BASE } from "./api-base";
 import {
   useDock,
@@ -63,7 +64,21 @@ export type ArtifactType =
   | "application_package"
   | "interview_session"
   | "cover_letter"
-  | "market_snapshot";
+  | "market_snapshot"
+  // Dual-track suggestion stack (design §6.3) — accept/reject inline in dock.
+  | "suggestion_list";
+
+// One AI suggestion in a suggestion_list artifact.
+export interface ArtifactSuggestion {
+  id: string;
+  bullet_stable_id: string | null;
+  section: string | null;
+  change_type: string;
+  before_text: string;
+  after_text: string;
+  rationale: string | null;
+  risk_level: "safe" | "needs_review" | "unsupported";
+}
 
 export interface SourceEvidence {
   // Short, user-facing description (e.g. "Stripe JD · staff eng · 2026-04-12")
@@ -96,6 +111,9 @@ export interface Artifact {
   needs_user_review?: boolean;
   source_evidence?: SourceEvidence[];
   next_actions?: ArtifactAction[];
+  // Only present on suggestion_list artifacts.
+  suggestions?: ArtifactSuggestion[];
+  source_resume_id?: string;
 }
 
 // Inline-HITL frames (P1-C) — emitted when dock_agent hits
@@ -562,6 +580,9 @@ export async function runAskStream({
         prompt,
         thread_id: threadId,
         ...(surface ? { surface } : {}),
+        // UI locale (en/zh) so the agent pins its reply language to the
+        // user's chosen interface language instead of guessing from charset.
+        locale: getClientLocale(),
       }),
       signal: abortController.signal,
     });
@@ -790,6 +811,16 @@ export async function sendAsk(
   // "review" instead of "done" when the step is HITL-gated. Keyed by
   // agent string — same key the planner used.
   const stepReviewMap = new Map<string, boolean>();
+  // Whether this turn already produced something the user can act on
+  // (task graph, agent reasoning row, tool trace, result card, or
+  // artifact). Used by onError to downgrade an end-of-stream `frame`
+  // error into a small inline footnote when the visible outcome is
+  // already in the conversation — instead of stapling a loud
+  // "Something went wrong" bubble next to a successful task graph.
+  let hadAnyOutput = false;
+  const markOutput = () => {
+    hadAnyOutput = true;
+  };
 
   // Guard against late writes from a stream that was superseded by a
   // newer send: if our assistant bubble no longer exists (a new turn
@@ -853,12 +884,18 @@ export async function sendAsk(
         // the whole point of Step 1.
         if (!text || !text.trim()) return;
         dock.pushMessage({ kind: "narrator", text: text.trim() });
+        // Also stamp this narration onto the currently-running agent so
+        // the AgentCardRow can show "what the agent is doing right now"
+        // — the round-the-clock fix for empty thinking cards on cheap
+        // tiers that don't emit reasoning_delta.
+        dock.noteAgentNarrator(text.trim());
       },
       onPartialArtifact: (frame) => {
         // Step 5 — live snapshot. The dock store merges by artifact_id;
         // multiple deltas for the same artifact mutate the same row so
         // the user sees the bullet list / cover paragraph filling in.
         if (!frame.artifact_id) return;
+        markOutput();
         dock.upsertPartialArtifact({
           artifactId: frame.artifact_id,
           artifactKind: frame.artifact_kind,
@@ -874,6 +911,7 @@ export async function sendAsk(
         // back into the agent row because the user mental model is
         // "trace = what the LLM did", "agent row = which subsystem ran" —
         // those are two different lenses on the same execution.
+        markOutput();
         dock.pushMessage({
           kind: "tool_trace",
           toolName: frame.tool,
@@ -889,6 +927,28 @@ export async function sendAsk(
           toolArgs: frame.args,
           toolResult: frame.result,
         });
+        // Pin the latest tool onto the running agent event so the
+        // AgentCardRow shows "Just ran: <tool> · <summary>" even after
+        // the trace row gets buried under later messages.
+        dock.noteAgentTool({
+          name: frame.tool,
+          summary: frame.summary || (frame.status === "error" ? "failed" : "ok"),
+          status: frame.status,
+          args: frame.args,
+          at: Date.now(),
+        });
+        // A tool_error frame already carries the failure summary. The
+        // backend may not also emit an `agent_failed` for this tool
+        // (it doesn't for dock_agent ReAct tools), so we proactively
+        // tag the plan step here so the user sees a red row + the
+        // reason instead of a "running" spinner that never resolves.
+        if (frame.status === "error" && taskGraphMsgId) {
+          dock.failTaskGraphStep(
+            taskGraphMsgId,
+            { stepId: frame.planStep, agent: frame.agent },
+            frame.summary || "tool failed",
+          );
+        }
       },
       onTaskGraph: (graph) => {
         // Plan arrives once per turn, before any agent_start. Render it
@@ -908,6 +968,7 @@ export async function sendAsk(
           stepReviewMap.set(s.agent, !!s.requires_review);
           stepReviewMap.set(s.step, !!s.requires_review);
         });
+        markOutput();
         taskGraphMsgId = dock.pushMessage({
           kind: "task_graph",
           taskId: graph.task_id,
@@ -979,14 +1040,18 @@ export async function sendAsk(
           .find((e) => e.agent === agent && e.state === "running");
         if (target) dock.updateAgentEvent({ ...target, state: "failed", statusText });
         if (taskGraphMsgId) {
-          if (planStep) {
-            dock.updateTaskGraphStepById(taskGraphMsgId, planStep, "failed");
-          } else {
-            dock.updateTaskGraphStep(taskGraphMsgId, agent, "failed");
-          }
+          // Use the richer failTaskGraphStep so the step inherits the
+          // statusText as a one-liner; the previous status-only update
+          // left users staring at a red row with no caption.
+          dock.failTaskGraphStep(
+            taskGraphMsgId,
+            { stepId: planStep, agent },
+            statusText || "agent failed",
+          );
         }
       },
       onResult: ({ title, sub, action, route }) => {
+        markOutput();
         dock.pushMessage({
           kind: "result",
           title,
@@ -1005,6 +1070,7 @@ export async function sendAsk(
         // conventions). Storing it on the message lets every later
         // render derive button state, evidence list and confidence pill
         // from one source of truth.
+        markOutput();
         dock.pushMessage({
           kind: "artifact",
           artifact: {
@@ -1023,6 +1089,17 @@ export async function sendAsk(
               label: n.label,
               route: n.route,
             })),
+            suggestions: a.suggestions?.map((s) => ({
+              id: s.id,
+              bulletStableId: s.bullet_stable_id,
+              section: s.section,
+              changeType: s.change_type,
+              beforeText: s.before_text,
+              afterText: s.after_text,
+              rationale: s.rationale,
+              riskLevel: s.risk_level,
+            })),
+            sourceResumeId: a.source_resume_id,
           },
         });
       },
@@ -1085,9 +1162,25 @@ export async function sendAsk(
             `\n\n_${message} You may need to sign in again._${traceLine}`,
           );
         } else if (kind === "frame") {
-          updateAssistant(
-            `\n\n_Something went wrong: ${message}_${traceLine}`,
-          );
+          // Downgrade late-arriving frame errors when the turn already
+          // produced visible output (task graph / agent rows / tool
+          // trace / result / artifact). Splashing a loud "Something
+          // went wrong" bubble next to a successfully rendered task
+          // graph confuses users into thinking the whole turn failed.
+          // Render a one-line footnote with just the reference id —
+          // support can pull the full stack from the trace.
+          if (hadAnyOutput) {
+            const refOnly = meta?.trace_id
+              ? `ref ${String(meta.trace_id).slice(0, 8)}`
+              : "no trace id";
+            updateAssistant(
+              `\n\n_Note · upstream warning logged (${refOnly})._`,
+            );
+          } else {
+            updateAssistant(
+              `\n\n_Something went wrong: ${message}_${traceLine}`,
+            );
+          }
         } else if (kind === "timeout") {
           // DOCK_R3 (round-19): the round-19 audit found that partial
           // SSE responses froze in place without any sign they were
@@ -1184,6 +1277,17 @@ export async function respondToHitl(
               label: n.label,
               route: n.route,
             })),
+            suggestions: a.suggestions?.map((s) => ({
+              id: s.id,
+              bulletStableId: s.bullet_stable_id,
+              section: s.section,
+              changeType: s.change_type,
+              beforeText: s.before_text,
+              afterText: s.after_text,
+              rationale: s.rationale,
+              riskLevel: s.risk_level,
+            })),
+            sourceResumeId: a.source_resume_id,
           },
         });
       },

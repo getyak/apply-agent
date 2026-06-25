@@ -9,7 +9,6 @@ Schema reference: infra/postgres/migrations/010_agents.sql — agent_tasks.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import re
 import time
@@ -144,6 +143,24 @@ def psycopg_dumps(obj: Any) -> str:
     return json.dumps(obj, default=str)
 
 
+# Pending insert tasks — held to prevent GC of fire-and-forget create_task.
+# Drained on completion in a callback so the set doesn't grow without bound.
+# This closes the round-12 audit finding that asyncio.create_task without
+# holding a reference let rows silently drop when the loop closed.
+_PENDING_INSERTS: set[asyncio.Task[None]] = set()
+
+
+def _spawn_insert(record: AuditRecord) -> None:
+    """Schedule the insert and keep a strong reference until done."""
+    try:
+        task = asyncio.create_task(_insert(record))
+    except RuntimeError:
+        # No running loop (e.g. unit test outside asyncio.run). Skip silently.
+        return
+    _PENDING_INSERTS.add(task)
+    task.add_done_callback(_PENDING_INSERTS.discard)
+
+
 @asynccontextmanager
 async def audit(
     user_id: UUID,
@@ -152,7 +169,18 @@ async def audit(
     session_id: UUID | None = None,
     input_params: dict[str, Any] | None = None,
 ):
-    """Async context manager: records start, captures exceptions, logs end."""
+    """Async context manager: records start, captures exceptions, logs end.
+
+    Opens a fresh ``CostTally`` for the duration so any LLM calls made
+    inside the block (whether via dock graph or direct ``model.ainvoke``)
+    accumulate into ``record.total_tokens / total_cost_cents / model_used``
+    automatically. Caller can still overwrite these fields manually if
+    they have better data (e.g. cached responses).
+    """
+    # Lazy import to keep audit.py importable even when langchain isn't
+    # installed (e.g. early CI bootstrap).
+    from agents.harness.cost_tracker import open_tally
+
     record = AuditRecord(
         user_id=user_id,
         agent_type=agent_type,
@@ -161,26 +189,35 @@ async def audit(
         input_params=input_params or {},
     )
     start = time.perf_counter()
-    try:
-        yield record
-        record.status = "completed"
-    except Exception as exc:
-        record.status = "failed"
-        raw_error = f"{type(exc).__name__}: {exc}"
-        record.error_message = _redact_exception_text(raw_error)
-        # Keep the unredacted text in the structured log so support can
-        # correlate via trace_id without persisting raw paths / tokens
-        # into agent_tasks.error_message.
-        log.warning(
-            "audit.exception",
-            agent_type=record.agent_type,
-            action=record.action,
-            kind=type(exc).__name__,
-            raw=raw_error,
-        )
-        raise
-    finally:
-        record.latency_ms = int((time.perf_counter() - start) * 1000)
-        # Fire-and-forget (boundary insert, must never block agent return).
-        with contextlib.suppress(RuntimeError):
-            asyncio.create_task(_insert(record))
+    with open_tally() as tally:
+        try:
+            yield record
+            record.status = "completed"
+        except Exception as exc:
+            record.status = "failed"
+            raw_error = f"{type(exc).__name__}: {exc}"
+            record.error_message = _redact_exception_text(raw_error)
+            # Keep the unredacted text in the structured log so support can
+            # correlate via trace_id without persisting raw paths / tokens
+            # into agent_tasks.error_message.
+            log.warning(
+                "audit.exception",
+                agent_type=record.agent_type,
+                action=record.action,
+                kind=type(exc).__name__,
+                raw=raw_error,
+            )
+            raise
+        finally:
+            record.latency_ms = int((time.perf_counter() - start) * 1000)
+            # Pull totals from the cost tally if the caller didn't set them
+            # explicitly. Cached responses report cache_hit=True and may set
+            # their own totals (typically 0), so we only fill in what's
+            # missing.
+            if record.total_tokens == 0:
+                record.total_tokens = tally.total_tokens
+            if record.total_cost_cents == 0.0:
+                record.total_cost_cents = round(tally.total_cost_cents, 4)
+            if record.model_used is None:
+                record.model_used = tally.last_model
+            _spawn_insert(record)

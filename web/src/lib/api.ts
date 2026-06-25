@@ -254,6 +254,10 @@ export interface UserPreferences {
    *  §3.5). false / undefined means we never write to
    *  interview_question_pool from this user. */
   crowdsourceOptIn?: boolean;
+  /** Preferred UI language (en/zh). Persisted server-side so the choice
+   *  follows the user across devices; the local NEXT_LOCALE cookie is the
+   *  fast path, this is the durable source. */
+  language?: "en" | "zh";
 }
 
 export interface UserRecord {
@@ -375,14 +379,190 @@ export const resumes = {
     api<{ job: ParseJob }>(`/api/resumes/parse/${jobId}`),
 
   list: () =>
-    api<PaginatedEnvelope<{ id: string; version: number; is_base: boolean; created_at: string }>>(
-      "/api/resumes",
-    ),
+    api<
+      PaginatedEnvelope<{
+        id: string;
+        version: number;
+        is_base: boolean;
+        // Dual-track model (migration 017): track splits the timeline into
+        // Original / Optimized / Tailored rails; derived_from draws the chain.
+        track: "original" | "optimized" | "tailored";
+        derived_from: string | null;
+        tailored_for_job: string | null;
+        source_file_id: string | null;
+        created_at: string;
+      }>
+    >("/api/resumes"),
 
   get: (id: string) =>
-    api<{ resume: { id: string; content: object; version: number } }>(
-      `/api/resumes/${id}`,
+    api<{
+      resume: {
+        id: string;
+        content: { _markdown?: string; [k: string]: unknown };
+        version: number;
+        is_base?: boolean;
+        track?: "original" | "optimized" | "tailored";
+        tailored_for_job?: string | null;
+        // Publish state (migration 018). Both nullable: the résumé starts
+        // unpublished, revoke sets publish_token back to NULL but keeps
+        // published_at as an audit trail.
+        publish_token?: string | null;
+        published_at?: string | null;
+      };
+    }>(`/api/resumes/${id}`),
+
+  /**
+   * Hand-edit a résumé (inline studio writes go through this).
+   *
+   * - `mode: "draft"` overwrites content at the SAME row version — autosave
+   *   uses this so the timeline doesn't grow per keystroke.
+   * - `mode: "snapshot"` (default) bumps version — that's the user-visible
+   *   "Save snapshot" / Cmd+S action.
+   *
+   * Both paths still gate on `expectedVersion`; a concurrent tab racing the
+   * same row surfaces as 409 (`ConflictError`) for the §5 reconcile UX.
+   * The response echoes `mode` so the status chip can branch without
+   * comparing version numbers (racy across tabs).
+   */
+  update: (
+    id: string,
+    payload: { content: Record<string, unknown>; expectedVersion: number },
+    options?: { mode?: "draft" | "snapshot" },
+  ) =>
+    api<{
+      resume: {
+        id: string;
+        content: { _markdown?: string; [k: string]: unknown };
+        version: number;
+        is_base?: boolean;
+      };
+      mode: "draft" | "snapshot";
+    }>(`/api/resumes/${id}${options?.mode === "draft" ? "?mode=draft" : ""}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  // The AI suggestion stack for a résumé (proposed by default). Read-only —
+  // accept/reject goes through decideSuggestion.
+  suggestions: (id: string, status = "proposed") =>
+    api<{
+      suggestions: Array<{
+        id: string;
+        bullet_stable_id: string | null;
+        section: string | null;
+        change_type: string;
+        before_text: string;
+        after_text: string;
+        rationale: string | null;
+        risk_level: "safe" | "needs_review" | "unsupported";
+        status: string;
+        proposed_by: string;
+      }>;
+    }>(`/api/resumes/${id}/suggestions?status=${encodeURIComponent(status)}`),
+
+  // Accept or reject one suggestion. On accept the agent materializes it into
+  // a new optimized version under the fabrication guard.
+  decideSuggestion: (suggestionId: string, decision: "accept" | "reject", decidedVia = "studio_panel") =>
+    api<{ ok: boolean; status: string; resume_id?: string; version?: number }>(
+      `/api/resumes/suggestions/${suggestionId}/decision`,
+      { method: "POST", body: JSON.stringify({ decision, decidedVia }) },
     ),
+
+  // Vibe chat on ONE bullet (design §6.3 [Discuss]). Returns a single proposed
+  // suggestion (or ok:false with a note when the edit can't be honored).
+  bulletEdit: (resumeId: string, bulletStableId: string, instruction: string) =>
+    api<{
+      ok: boolean;
+      note?: string | null;
+      suggestion?: {
+        id: string;
+        bullet_stable_id: string | null;
+        section: string | null;
+        change_type: string;
+        before_text: string;
+        after_text: string;
+        rationale: string | null;
+        risk_level: "safe" | "needs_review" | "unsupported";
+      };
+    }>(`/api/resumes/${resumeId}/bullet-edit`, {
+      method: "POST",
+      body: JSON.stringify({ bulletStableId, instruction }),
+    }),
+
+  // ─── Export ─────────────────────────────────────────────────────────────
+  // The export endpoint streams a download, so we don't go through api() —
+  // it would try to res.json() the bytes. The drawer calls .download() which
+  // attaches the Bearer token, parses Content-Disposition, and synthesises
+  // an <a download> click. exportUrl() exists for legacy `window.location`
+  // openers that don't need auth (none in the app today — public surfaces use
+  // /api/public/r — but the helper is here for completeness).
+  exportUrl: (resumeId: string, format: "md" | "json" | "pdf" | "docx") =>
+    `${API_BASE}/api/resumes/${resumeId}/export?format=${format}`,
+
+  download: async (
+    resumeId: string,
+    format: "md" | "json" | "pdf" | "docx",
+  ): Promise<void> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(
+      `${API_BASE}/api/resumes/${resumeId}/export?format=${format}`,
+      { headers },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(
+        res.status,
+        extractErrorMessage(body),
+        extractErrorMeta(body),
+      );
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("content-disposition") ?? "";
+    // RFC 6266: filename* (UTF-8) takes precedence; fall back to plain filename.
+    const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    const ascii = /filename="?([^";]+)"?/i.exec(cd);
+    const filename = utf8
+      ? decodeURIComponent(utf8[1])
+      : ascii
+        ? ascii[1]
+        : `resume.${format}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
+  // ─── Publish (read-only short link) ─────────────────────────────────────
+  // POST → rotate token (old links 404 immediately).
+  // DELETE → revoke (publish_token NULL, link 404s).
+  publish: (resumeId: string) =>
+    api<{ publishToken: string; publishedAt: string; publicUrl: string }>(
+      `/api/resumes/${resumeId}/publish`,
+      { method: "POST" },
+    ),
+
+  revokePublish: (resumeId: string) =>
+    api<{ ok: boolean }>(`/api/resumes/${resumeId}/publish`, {
+      method: "DELETE",
+    }),
+};
+
+// Public résumé delivery (no auth — the token IS the capability).
+export const publicResume = {
+  fetch: (token: string) =>
+    api<{
+      basics: { name: string | null; label: string | null };
+      parsed: object;
+      markdown: string;
+      version: number;
+      publishedAt: string;
+    }>(`/api/public/r/${encodeURIComponent(token)}`),
 };
 
 export interface UploadResult {
@@ -393,6 +573,12 @@ export interface UploadResult {
   /** Extracted plain text, ready to hand to resumes.parse() (mirrors markdown). */
   text: string;
   kind: "pdf" | "docx" | "text";
+}
+
+export interface UploadAttachmentResult {
+  file: { id: string; filename: string; sizeBytes: number; kind: string };
+  stored: boolean;
+  kind: "pdf" | "docx" | "text" | "image";
 }
 
 export const files = {
@@ -419,10 +605,43 @@ export const files = {
     return res.json();
   },
 
+  // Generic chat attachment upload. Separate from upload() because the backend
+  // route is different (/api/files/attachment): it accepts images in addition
+  // to docs and does NOT run résumé extraction, so there's no markdown/text in
+  // the response — just a stored reference for the chat composer to chip.
+  uploadAttachment: async (file: File): Promise<UploadAttachmentResult> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/files/attachment`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(
+        res.status,
+        body.error?.message || body.error || "Upload failed",
+        extractErrorMeta(body),
+      );
+    }
+    return res.json();
+  },
+
   // Presigned URL for the stored original. Surface area is small on purpose —
   // the URL is short-lived and the link is consumed by an iframe preview /
   // direct download in the Source drawer.
   download: (id: string) => api<{ url: string }>(`/api/files/${id}/download`),
+
+  // INLINE-renderable preview URL for the Resume Studio Original Pane. PDFs
+  // return an inline URL directly; DOCX is converted to PDF (cached) when a
+  // converter is available, else `available:false` so the caller degrades to
+  // a download link.
+  preview: (id: string) =>
+    api<{ available: boolean; kind: string; url?: string }>(
+      `/api/files/${id}/preview`,
+    ),
 };
 
 export const jobs = {

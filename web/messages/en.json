@@ -1,0 +1,1287 @@
+{
+  "meta": {
+    "title": "Vantage — Your job hunt, run by agents",
+    "description": "Drop your résumé in. AI agents find the right roles, tailor every application, draft your answers, and prep your interviews — you review and hit submit."
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "open": "Open",
+    "continue": "Continue",
+    "back": "Back",
+    "next": "Next",
+    "loading": "Loading…",
+    "retry": "Retry",
+    "upload": "Upload",
+    "export": "Export",
+    "compare": "Compare",
+    "confirm": "Confirm",
+    "submit": "Submit",
+    "welcome": "Welcome",
+    "signOut": "Sign out"
+  },
+  "language": {
+    "label": "Language",
+    "switchTo": "Switch to {language}",
+    "english": "English",
+    "chinese": "中文"
+  },
+  "nav": {
+    "today": "Today",
+    "applications": "Applications",
+    "interviews": "Interviews",
+    "resume": "Résumé",
+    "mock": "Mock interview",
+    "settings": "Settings",
+    "chat": "Chat",
+    "backToToday": "Back to Today",
+    "backToTodayLong": "Vantage — back to Today",
+    "expandSidebar": "Expand sidebar",
+    "collapseSidebar": "Collapse sidebar",
+    "workspace": "Workspace",
+    "aiStudio": "AI Studio",
+    "account": "Account",
+    "resumeStudio": "Résumé studio",
+    "autoApplies": "Auto-applies",
+    "resetsIn": "Resets in {days} days",
+    "upgrade": "Upgrade"
+  },
+  "sidebar": {
+    "quota": {
+      "label": "Auto-applies",
+      "remaining": "{n} left",
+      "resetsIn": "resets in {days} days",
+      "paceDays": "~{days} days at your current pace",
+      "paceRunOut": "at this rate you'll run out {weekday}",
+      "fullTitle": "You're out for this cycle.",
+      "fullBody": "Manual applies still work — or upgrade for unlimited agent runs.",
+      "seeActivity": "See activity",
+      "upgrade": "Upgrade",
+      "upgradeNow": "Upgrade now",
+      "upgradeUnlimited": "Upgrade — unlimited",
+      "thisCycle": "This cycle",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "daysAgo": "{n} days ago",
+      "mostEfficient": "Most efficient day: {day} ({applies} → {replies} reply)"
+    }
+  },
+  "settings": {
+    "language": {
+      "title": "Language",
+      "desc": "Choose the language Vantage speaks to you in. Your résumé and cover letters still follow the language of the role you're applying to."
+    },
+    "account": "Account",
+    "title": "Settings",
+    "errors": {
+      "load": "Could not load your profile.",
+      "salaryInteger": "Enter a whole, non-negative number.",
+      "salaryMax": "Salary must be at most 10,000,000.",
+      "save": "Could not save your preferences.",
+      "delete": "Could not delete your account.",
+      "export": "Could not export your data."
+    },
+    "profile": {
+      "title": "Profile",
+      "desc": "Your account details. Read-only for now.",
+      "email": "Email",
+      "displayName": "Display name",
+      "memberSince": "Member since"
+    },
+    "jobPrefs": {
+      "title": "Job preferences",
+      "desc": "What Vantage matches against. The closer this is to reality, the better your daily briefing.",
+      "targetRoles": "Target roles",
+      "targetRolesPlaceholder": "e.g. Senior Product Designer — press Enter",
+      "skills": "Skills",
+      "skillsPlaceholder": "e.g. Figma, Design systems — press Enter",
+      "locations": "Locations",
+      "locationsPlaceholder": "e.g. Remote, New York — press Enter",
+      "removeTag": "Remove {value}",
+      "minSalary": "Minimum salary (USD)",
+      "workArrangement": "Work arrangement",
+      "remoteAny": "Any",
+      "remoteRemote": "Remote",
+      "remoteHybrid": "Hybrid",
+      "remoteOnsite": "On-site",
+      "save": "Save preferences",
+      "saving": "Saving…",
+      "saved": "Saved"
+    },
+    "privacy": {
+      "title": "Privacy",
+      "desc": "Help future job-seekers without exposing yourself. Off by default.",
+      "donateTitle": "Donate anonymised interview questions to the shared pool",
+      "donateBody": "When you log a real interview, Vantage strips company / personal identifiers and contributes the question text to a pool that helps other users prep for the same round. Your résumé, answers, and outcomes never leave your account. You can turn this off at any time and any previously donated questions stay in the pool — past contributions are anonymised, so we can't pull a specific one back.",
+      "readMore": "Read what we collect →",
+      "toggleOn": "On — toggle question donation",
+      "toggleOff": "Off — toggle question donation"
+    },
+    "data": {
+      "title": "Data",
+      "desc": "Export or permanently delete everything Vantage holds about you.",
+      "export": "Export my data",
+      "exporting": "Preparing export…",
+      "exportDesc": "Downloads a JSON file with your profile, all résumé versions, and every application Vantage holds for you. No server-side queue — generated on the spot.",
+      "deleteTitle": "Delete account",
+      "deleteDesc": "Permanently erases your résumés, applications, interviews, and profile. This cannot be undone.",
+      "deleteButton": "Delete my account"
+    },
+    "deleteModal": {
+      "title": "Delete your account?",
+      "body": "This permanently deletes all your data. Type <token>DELETE</token> to confirm.",
+      "inputLabel": "Type DELETE to confirm",
+      "cancel": "Cancel",
+      "confirm": "Delete forever",
+      "deleting": "Deleting…"
+    }
+  },
+  "mock": {
+    "back": "Back",
+    "forLine": "For",
+    "recruiterScreen": "Recruiter screen",
+    "soon": "soon",
+    "modes": {
+      "scene_recreation": {
+        "name": "Scene recreation",
+        "tagline": "Crowd-sourced intel and a single sharp follow-up. Closest to a real round."
+      },
+      "pressure_drill": {
+        "name": "Pressure drill",
+        "tagline": "JD-grounded questions, chained follow-ups until you stick a landing."
+      },
+      "warm_up": {
+        "name": "Warm-up",
+        "tagline": "No intel, gentle pacing. Use before a real round when you need momentum."
+      },
+      "rapid_fire": {
+        "name": "Rapid fire",
+        "tagline": "No intel, no follow-ups — single-line feedback per answer. Highest reps."
+      }
+    },
+    "badges": {
+      "anchor": "ANCHOR",
+      "pressure": "PRESSURE",
+      "feedback": "FEEDBACK",
+      "loop": "LOOP",
+      "intel": {
+        "none": "NO INTEL",
+        "jd": "JD INTEL",
+        "crowd": "CROWD INTEL",
+        "recruiter": "RECRUITER INTEL"
+      },
+      "pressureLevel": {
+        "low": "LOW",
+        "med": "MED",
+        "high": "HIGH"
+      },
+      "feedbackStyle": {
+        "rating": "1–5 RATING",
+        "oneLine": "ONE-LINE",
+        "threePerspective": "3 PERSPECTIVE"
+      },
+      "loopBehavior": {
+        "standalone": "STANDALONE",
+        "saveCard": "SAVE CARD",
+        "replayReal": "REPLAY REAL"
+      }
+    },
+    "gallery": {
+      "title": "Pick how you want to rehearse.",
+      "subtitle": "Each mode is a different way to practise for a real round.",
+      "start": "Start",
+      "startWithMode": "Start · {mode}"
+    },
+    "intel": {
+      "modesBack": "Modes",
+      "briefLabel": "Intel brief",
+      "title": "What this round actually asks.",
+      "subtitle": "Pulled from the crowd-sourced question bank and public signals. We drill the likely ones first.",
+      "mostLikely": "Most likely questions",
+      "trap": "THE TRAP",
+      "imReady": "I'm ready — start",
+      "duration": "30 MIN",
+      "style": "Conversational. Stripe weighs craft and written communication heavily — expect a follow-up take-home, not a live exercise.",
+      "q1": "Walk me through a project you're proud of.",
+      "q2": "Why Stripe, specifically?",
+      "q3": "How do you handle disagreement with engineering?",
+      "trapQ": "Tell me about a time a design of yours failed.",
+      "trapNote": "Easy to over-hedge here. Own it plainly, then show the correction with a number."
+    },
+    "live": {
+      "exitMock": "Exit mock",
+      "answerPlaceholder": "Type your answer…   ⌘↵ to send",
+      "sendAnswer": "Send answer",
+      "labelOpening": "OPENING",
+      "labelFollowUp": "FOLLOW-UP",
+      "sampleHeard": "Confident, but they're listening for the decision you made — not just the outcome.",
+      "sampleStuck": "Stuck on impact — next time, lead with the metric in one sentence."
+    },
+    "feedback": {
+      "interviewerHeard": "WHAT THE INTERVIEWER HEARD",
+      "youSaid": "YOU SAID",
+      "whatTheyHeard": "WHAT THEY HEARD",
+      "tryInstead": "TRY INSTEAD",
+      "stuck": "STUCK",
+      "coach": "COACH"
+    },
+    "debrief": {
+      "sessionComplete": "Session complete",
+      "title": "Your interview card.",
+      "subtitle": "How each answer read from the other side of the table — and what to carry into the real round.",
+      "heard": {
+        "0": "Confident framing, but they're listening for the decision you made — not the outcome.",
+        "1": "Clear on what happened. The trade-off you weighed against could be named earlier.",
+        "2": "Honest about the tension. Naming the metric you optimized for would land harder.",
+        "3": "Strong narrative. The follow-up will probe what you'd do differently — be ready.",
+        "4": "Closed well. One concrete number in the first sentence would have anchored it."
+      },
+      "closeLoop": "CLOSE THE LOOP",
+      "closeLoopBody": "After the real {company} screen, come back and log what they actually asked. Vantage learns your real weak spots — not generic advice.",
+      "logReal": "Log the real interview",
+      "nextSessionOpensOn": "NEXT SESSION OPENS ON",
+      "focusNext": "Owning impact, naming the metric early",
+      "runAgain": "Run it again",
+      "done": "Done"
+    },
+    "confirm": {
+      "readyToStart": "Ready to start?",
+      "heading": "{mode} — about {mins} min, {count} questions.",
+      "timerNote": "Once you start, the timer runs. You can exit at any time — your answers won't be saved if you cancel.",
+      "notYet": "Not yet",
+      "startSession": "Start the session"
+    },
+    "logReal": {
+      "privacyFirst": "Privacy first",
+      "title": "Log what {company} actually asked",
+      "body": "We'll open Ask Vantage so you can walk through the real round while it's fresh. Pick one — you can change it later in Settings.",
+      "justForMeLabel": "Just for me",
+      "justForMeBody": " — questions stay on your account. We never share or aggregate them.",
+      "helpPoolLabel": "Help the pool",
+      "helpPoolBody": " — same as above, plus we anonymise the questions (no name, no company, no role details) and add them to a shared bank so others get a closer mock next time. You can opt out any time.",
+      "justForMe": "Just for me",
+      "helpPool": "Yes, help the pool",
+      "notNow": "Not now",
+      "handoffPrompt": "I just finished the real {company} interview. Let's log the actual questions they asked so Vantage can sharpen my next prep."
+    }
+  },
+  "apply": {
+    "review": {
+      "back": "Back",
+      "reviewApplication": "Review application",
+      "strongFit": "Strong fit",
+      "goodFit": "Good fit",
+      "fairFit": "Fair fit",
+      "skillsMatched": "{count, plural, one {# skill} other {# skills}} matched",
+      "matchedSkills": "Matched skills",
+      "skillGaps": "Skill gaps",
+      "yourApplication": "Your application",
+      "reviewDetails": "Review the details before submitting.",
+      "jobDetails": "Job details",
+      "fromDatabase": "from database",
+      "roleLabel": "Role",
+      "companyLabel": "Company",
+      "locationLabel": "Location",
+      "salaryLabel": "Salary",
+      "requiredSkillsLabel": "Required skills",
+      "matchPct": "Match: {pct}%",
+      "skillsAligned": "{count, plural, one {# skill} other {# skills}} aligned",
+      "saveForLater": "Save for later",
+      "submitApplication": "Submit application",
+      "externalRole": "This role lives on an external site. We'll prep your package in the extension when you open it there.",
+      "backToToday": "Back to today",
+      "reasonsLineUp": "{count, plural, one {# reason} other {# reasons}} it lines up",
+      "whyFit": "Why you're a fit",
+      "amberBlocks": "The amber blocks were written for you — glance before you send.",
+      "tailoredResume": "Tailored résumé",
+      "reorderedTag": "reordered for this role",
+      "coverNote": "Cover note",
+      "draftTag": "draft",
+      "coverNoteAria": "Editable cover note draft",
+      "coverNoteHint": "Click to edit — this is your voice, adjust anything.",
+      "screeningQuestions": "Screening questions",
+      "draftedTag": "drafted",
+      "blocksReady": "{count, plural, one {# block ready} other {# blocks ready}}",
+      "writtenByAi": "written by AI — glance before you send",
+      "looksRightSubmit": "Looks right — submit"
+    },
+    "prep": {
+      "tag": "Prep · ready when you are",
+      "likelyQuestions": "Likely questions — with your angle",
+      "knowTheRoom": "Know the room",
+      "close": "Close",
+      "runMock": "Run a mock interview"
+    }
+  },
+  "landing": {
+    "nav": {
+      "howItWorks": "How it works",
+      "theAgents": "The agents",
+      "features": "Features",
+      "pricing": "Pricing",
+      "signIn": "Sign in",
+      "startFree": "Start free",
+      "openWorkspace": "Open workspace"
+    },
+    "redirectNotice": {
+      "text": "Please sign in to open your workspace."
+    },
+    "hero": {
+      "badge": "Client-side agents · zero account risk",
+      "headline": {
+        "line1": "Your job hunt,",
+        "line2Pre": "run by",
+        "line2Highlight": "agents",
+        "line2Post": ".",
+        "line3": "Reviewed by you."
+      },
+      "subhead": "Just tell Vantage what you want. Its agents find the right roles, tailor every application, draft your answers, and prep your interviews — you review and hit submit.",
+      "secondaryCta": "See how it works",
+      "microcopy": "No card to start · Your data can stay on your device"
+    },
+    "atsStrip": {
+      "label": "Fills forms on"
+    },
+    "steps": {
+      "eyebrow": "The loop",
+      "title": "From “I need a job” to submitted — in a handful of clicks.",
+      "subtitle": "One calm loop that gets smarter every time you use it. No spray-and-pray. No filling the same form twice.",
+      "items": [
+        {
+          "title": "Bring yourself in",
+          "body": "Drop a résumé, paste it, link a profile — or just chat. No forms to fill."
+        },
+        {
+          "title": "Get matched",
+          "body": "Agents scan live roles and rank real fits. Quality, not a thousand long-shots."
+        },
+        {
+          "title": "Review the package",
+          "body": "Tailored résumé, cover note, and answers — AI parts marked for a quick glance."
+        },
+        {
+          "title": "Submit it yourself",
+          "body": "The form fills in your own browser. You press submit — zero account risk."
+        },
+        {
+          "title": "Prep & track",
+          "body": "Everything lands on a board. Got an interview? A mock is one tap away."
+        }
+      ]
+    },
+    "chat": {
+      "eyebrow": "Chat is the interface",
+      "titleLine1": "Stop clicking through tools.",
+      "titleLine2": "Just ask.",
+      "body": "Vantage is one conversation. Behind it, a team of agents quietly does the work — updating your résumé, tailoring an application, filling a form, launching a mock interview. You stay in one place and stay in control.",
+      "asks": [
+        "\"Find me product design roles under $200k, remote.\"",
+        "\"Rewrite my résumé to lead with impact.\"",
+        "\"Start the Stripe application and draft the answers.\"",
+        "\"Run a mock interview for tomorrow's Stripe screen.\""
+      ]
+    },
+    "chatMock": {
+      "title": "Ask Vantage",
+      "userMessage": "Tailor my résumé to the Linear role and start the application.",
+      "reply": "On it — running two agents now.",
+      "resumeAgent": "Résumé agent",
+      "applicationAgent": "Application agent",
+      "done": "done",
+      "result": "Your Linear application is ready — <b>94% match</b>, 2 fields drafted by AI.",
+      "open": "Open",
+      "composerPlaceholder": "Ask anything, or launch a task…"
+    },
+    "features": {
+      "eyebrow": "What it does",
+      "title": "Six agents. One career context that keeps growing.",
+      "items": [
+        {
+          "title": "Résumé studio",
+          "body": "Build and refine by conversation. Every version saved — write once, map everywhere."
+        },
+        {
+          "title": "Honest AI optimize",
+          "body": "Sharpens how your real wins read — quantifies, tightens, never invents."
+        },
+        {
+          "title": "JD-tailored apply",
+          "body": "One job description in, one tailored résumé + cover note + answers out."
+        },
+        {
+          "title": "Client-side autofill",
+          "body": "Fills ATS forms in your browser, on your login. You always submit yourself."
+        },
+        {
+          "title": "Mock interviews",
+          "body": "A live AI interviewer that follows up and coaches you after each answer."
+        },
+        {
+          "title": "Market & flywheel",
+          "body": "Daily trends plus a personal interview vault that gets richer the more you use it."
+        }
+      ]
+    },
+    "bets": {
+      "eyebrow": "Three bets we made",
+      "title": "Built the opposite way to every mass-apply bot.",
+      "items": [
+        {
+          "title": "Quality over quantity",
+          "body": "Applying to 11–20 roles converts 3× better than blasting 100+. We help you go narrow and excellent — not spray and pray."
+        },
+        {
+          "title": "Client-side = zero ban",
+          "body": "Filling and submitting happen in your browser, your login, your IP. Platforms can't tell human from assisted. Your account stays safe."
+        },
+        {
+          "title": "Your context is the moat",
+          "body": "Autofill gets copied. Your résumé history, applications, and interview answers don't — they compound into an assistant that truly knows you."
+        }
+      ]
+    },
+    "pricing": {
+      "eyebrow": "Pricing",
+      "title": "Start free. Upgrade when it's working.",
+      "toggleMonthly": "Monthly",
+      "toggleAnnual": "Annual · save 20%",
+      "periodAnnual": "/mo · billed yearly",
+      "periodMonthly": "/ month",
+      "free": {
+        "name": "Free",
+        "tagline": "Try the full loop",
+        "period": "/ forever",
+        "cta": "Get started",
+        "features": [
+          "1 résumé + version history",
+          "5 tailored applications / mo",
+          "Daily market trends",
+          "Client-side autofill"
+        ]
+      },
+      "pro": {
+        "badge": "Most popular",
+        "name": "Pro",
+        "tagline": "For an active search",
+        "cta": "Start 7-day trial",
+        "features": [
+          "Unlimited tailored applications",
+          "40 agent autofills / mo",
+          "Unlimited mock interviews",
+          "Full trends + skill-gap analysis",
+          "Interview vault"
+        ]
+      },
+      "max": {
+        "name": "Max",
+        "tagline": "Serious, time-boxed hunt",
+        "cta": "Go Max",
+        "features": [
+          "Everything in Pro",
+          "Unlimited agent autofills",
+          "Priority agent runs",
+          "Deep interview intelligence",
+          "1:1 onboarding session"
+        ]
+      },
+      "footnote": "Every plan: your data can stay on your device · you always submit applications yourself · cancel anytime"
+    },
+    "heroConsole": {
+      "titleBar": "vantage · start here",
+      "live": "live",
+      "methods": {
+        "upload": "Upload",
+        "chat": "Chat",
+        "paste": "Paste",
+        "link": "Link"
+      },
+      "upload": {
+        "title": "Drop your résumé to begin",
+        "hint": "PDF, DOCX — or click to browse"
+      },
+      "chat": {
+        "title": "No résumé? Build it by talking.",
+        "hint": "Answer a few quick questions and we'll write it with you.",
+        "cta": "Start a conversation"
+      },
+      "paste": {
+        "placeholder": "Paste your résumé text here — experience, skills, education. We'll structure it into a profile for you.",
+        "cta": "Parse résumé"
+      },
+      "link": {
+        "title": "Import from a link",
+        "cta": "Import"
+      },
+      "run": {
+        "userMessage": "Here's my résumé — find roles and get me ready.",
+        "scout": {
+          "name": "Scout agent",
+          "result": "Scanned <count></count> live roles → 8 strong fits"
+        },
+        "resume": {
+          "name": "Résumé agent",
+          "result": "Tailored your résumé for each role"
+        },
+        "answer": {
+          "name": "Answer agent",
+          "result": "Drafted screening answers from your story"
+        }
+      },
+      "ready": {
+        "title": "{count} applications ready",
+        "subtitle": "You review and submit — in your own browser",
+        "cta": "Enter"
+      }
+    },
+    "footer": {
+      "tagline": "Quality over quantity. Your account, never at risk.",
+      "privacy": "Privacy",
+      "security": "Security",
+      "docs": "Docs"
+    },
+    "finalCta": {
+      "headlinePre": "Hand the busywork to the",
+      "headlineHighlight": "agents",
+      "headlinePost": ".",
+      "body": "Upload a résumé, or just start talking. You'll have applications ready to review in minutes."
+    },
+    "accountChip": {
+      "fallbackName": "there",
+      "openWorkspace": "Open workspace",
+      "signOut": "Sign out"
+    }
+  },
+  "dock": {
+    "askVantage": "Ask Vantage",
+    "askVertical": "Ask",
+    "openAskVantage": "Open Ask Vantage",
+    "subtitleResume": "TALKING ABOUT THIS RÉSUMÉ",
+    "subtitleDefault": "YOUR AGENT · ALWAYS HERE",
+    "expandButton": "Expand",
+    "dockButton": "Dock",
+    "collapse": "Collapse",
+    "dragToResize": "Drag to resize",
+    "recentLabel": "RECENT",
+    "newChat": "New chat",
+    "agentTeamsLabel": "AGENT TEAMS",
+    "reviewAttachments": "Please review the attached file(s).",
+    "greeting": {
+      "today": "TODAY · {date}",
+      "headline": "{greeting}, {name}.",
+      "fallbackName": "there",
+      "parseRunning": "Reading your résumé in the background — keep going, I'll surface weak spots and matches as soon as it's ready.",
+      "parseFailed": "That parse didn't finish — re-upload or paste the text and I'll try again.",
+      "parseIdle": "What should we work on? Tap a card to send it instantly — or write your own.",
+      "timeOfDay": {
+        "morning": "Good morning",
+        "afternoon": "Good afternoon",
+        "evening": "Good evening"
+      }
+    },
+    "groups": {
+      "thisResume": "This résumé",
+      "thisResumeScope": "Scoped to your current version",
+      "explore": "Explore"
+    },
+    "chips": {
+      "scopedDisabledHint": "Open a résumé first — these actions need one to scope to.",
+      "thisResume": {
+        "weakestSpots": "Find my résumé's 3 weakest spots",
+        "tailorToJd": "Tailor this résumé to a JD",
+        "careerMoves": "Map my next 1–2 career moves",
+        "surfaceRoles": "Surface roles that match this résumé"
+      },
+      "explore": {
+        "findRolesToday": "Find roles I should look at today",
+        "sharpenForStripe": "Sharpen my résumé for Stripe",
+        "practiseStripeScreen": "Practise the Stripe recruiter screen",
+        "marketThisWeek": "What changed in the market this week?",
+        "coverLetterLinear": "Build me a cover letter for Linear"
+      }
+    },
+    "agentTeams": {
+      "scout": "Find / match roles",
+      "resume": "Parse · optimise · tailor",
+      "interview": "Mock · feedback",
+      "apply": "Cover letters · form prep",
+      "trend": "Market · skills movement"
+    },
+    "composer": {
+      "placeholder": "Ask anything",
+      "attachFile": "Attach file (PDF / DOCX / TXT)",
+      "mentionTeam": "Mention an agent team",
+      "voiceInput": "Voice input",
+      "stopVoice": "Stop voice input",
+      "agentTeamsListLabel": "Agent teams",
+      "uploading": "Uploading…",
+      "uploadNoId": "Upload accepted but no file id returned.",
+      "uploadFailed": "Upload failed",
+      "remove": "Remove",
+      "removeNamed": "Remove {name}",
+      "sendAria": "Send",
+      "sendAriaDisabled": "Type a message to send",
+      "sendTitle": "Send (⌘↵)",
+      "sendTitleDisabled": "Type to send"
+    },
+    "recent": {
+      "empty": "Your conversation lives here. Ask Vantage anything to start the log.",
+      "olderOpenThread": "older — open thread to see",
+      "justNow": "just now",
+      "minutesAgo": "{count}m ago",
+      "hoursAgo": "{count}h ago",
+      "daysAgo": "{count}d ago"
+    },
+    "agentCard": {
+      "collapse": "Collapse thinking",
+      "expand": "Expand thinking",
+      "thinkingElapsed": "Thinking · {elapsed}",
+      "waitingForModel": "Waiting for the model · {elapsed} — no tools or narration yet."
+    },
+    "meta": {
+      "agent": "agent",
+      "started": "started",
+      "status": "status",
+      "tool": "tool"
+    },
+    "tool": {
+      "ok": "ok",
+      "failed": "failed",
+      "collapse": "Collapse tool console",
+      "expand": "Expand tool console",
+      "input": "Input",
+      "output": "Output",
+      "moreLines": "{count} more lines",
+      "showLess": "show less",
+      "showAll": "show all"
+    },
+    "partial": {
+      "drafting": "Drafting…"
+    },
+    "message": {
+      "thinking": "Thinking"
+    },
+    "artifact": {
+      "confident": "{pct}% CONFIDENT",
+      "review": "{pct}% — REVIEW",
+      "evidence": "EVIDENCE"
+    },
+    "suggestion": {
+      "needsReview": "Needs review",
+      "accepted": "✓ Accepted",
+      "rejected": "Rejected",
+      "accept": "Accept",
+      "reject": "Reject",
+      "discuss": "Discuss",
+      "revise": "Revise",
+      "discussPlaceholder": "e.g. tighten this, or drop the metric",
+      "discussSeed": "About this bullet — \"{bullet}\" — I'd like to "
+    },
+    "taskGraph": {
+      "planHeader": "PLAN · {count} {count, plural, one {STEP} other {STEPS}}",
+      "running": "RUNNING",
+      "done": "DONE",
+      "review": "REVIEW",
+      "failed": "FAILED",
+      "waiting": "WAITING"
+    },
+    "reasoning": {
+      "thinking": "Thinking · {duration} · {count, plural, one {# step} other {# steps}}",
+      "thought": "Thought for {duration} · {count, plural, one {# step} other {# steps}}",
+      "thoughtPartial": "Thought for {duration} · {count, plural, one {# step} other {# steps}} · partial",
+      "collapse": "Collapse reasoning",
+      "expand": "Expand reasoning",
+      "transcriptLabel": "Model reasoning transcript"
+    },
+    "hitl": {
+      "missingToken": "HITL surface missing resume_token — agent emitted an interrupt with no resumable thread. This is a wiring bug; please retry or report.",
+      "youResponded": "You responded: {summary}",
+      "titleAskUser": "Vantage needs your input",
+      "titleDiff": "Review the change",
+      "titleApproval": "Approve next step",
+      "statusAnswered": "Answered",
+      "statusSubmitting": "Submitting…",
+      "statusCancelled": "Cancelled",
+      "statusAwaiting": "Awaiting you",
+      "answerPlaceholder": "Type your answer…",
+      "send": "Send",
+      "before": "Before",
+      "after": "After",
+      "approve": "Approve",
+      "askToTweak": "Ask to tweak",
+      "discard": "Discard",
+      "reject": "Reject",
+      "summaryApproved": "Approved",
+      "summaryRejected": "Rejected",
+      "summaryTweak": "Asked to tweak",
+      "summaryDiscarded": "Discarded",
+      "wantsTo": "Vantage wants to <strong>{action}</strong>.",
+      "optionalNote": "Optional note for the agent…",
+      "cancelWithout": "Cancel without answering"
+    }
+  },
+  "resume": {
+    "loading": "LOADING RÉSUMÉ…",
+    "loadError": "COULDN'T LOAD RÉSUMÉ",
+    "aiOutcomeLed": "AI · outcome-led",
+    "time": {
+      "justNow": "Just now",
+      "minutesAgo": "{n}m ago",
+      "hoursAgo": "{n}h ago",
+      "daysAgo": "{n}d ago"
+    },
+    "track": {
+      "originalSummary": "Your upload, kept untouched.",
+      "optimizedSummary": "AI-optimized from your original.",
+      "tailoredSummary": "Tuned for one role."
+    },
+    "empty": {
+      "title": "NO RÉSUMÉ YET",
+      "body": "Upload one, or build one by talking to Vantage.",
+      "uploadCta": "Upload a file",
+      "talkCta": "Talk it through with Vantage"
+    },
+    "header": {
+      "original": "Original résumé",
+      "tailored": "Tailored variant",
+      "optimized": "AI-optimized résumé",
+      "version": "VERSION {v}",
+      "saved": "Saved",
+      "compare": "Compare",
+      "exitCompare": "Exit compare",
+      "enterCompareAria": "Enter compare mode",
+      "exitCompareAria": "Exit compare mode",
+      "uploadNew": "Upload new",
+      "export": "Export"
+    },
+    "prompt": {
+      "tailor": "Tailor this résumé for a new role — ",
+      "upload": "I want to upload a new résumé.",
+      "fillGapsIntro": "My résumé parse left a few gaps. Please ask me one question at a time so we can fill them in:",
+      "fillGapsRawHeader": "Here's the resume text I uploaded:"
+    },
+    "originalPane": {
+      "label": "ORIGINAL",
+      "uploadedFallback": "Your uploaded résumé",
+      "none": "No original on file yet.",
+      "loading": "LOADING ORIGINAL…",
+      "iframeTitle": "Original résumé",
+      "unavailable": "Original preview is unavailable. You can download it from the source chip."
+    },
+    "suggestions": {
+      "count": "{count, plural, one {# SUGGESTION} other {# SUGGESTIONS}}",
+      "subtitle": "AI proposals — accept to fold into your optimized version.",
+      "needsReview": "Needs review",
+      "accept": "Accept",
+      "reject": "Reject"
+    },
+    "rail": {
+      "original": {
+        "label": "ORIGINAL",
+        "caption": "Your uploads — kept exactly as you sent them.",
+        "current": "v{v} · current"
+      },
+      "optimized": {
+        "label": "OPTIMIZED",
+        "caption": "AI-improved siblings of your original — no job needed.",
+        "emptyHint": "Vantage proposes these automatically after you upload."
+      },
+      "tailored": {
+        "label": "TAILORED",
+        "caption": "Branches tuned for one role.",
+        "rowLabel": "For a role · v{v}"
+      },
+      "tailorCta": "Tailor for a new role",
+      "editWithVantage": "EDIT WITH VANTAGE",
+      "editHint": "Use the dock to refine, tailor, or rewrite. Your original stays untouched."
+    },
+    "compare": {
+      "title": "Compare mode",
+      "diffTitle": "Compare mode — diff vs master {v}",
+      "loadingTitle": "Compare mode — loading master version…",
+      "body": "Open a tailored variant to see what AI added vs your master.",
+      "diffBody": "AI-tailored segments are highlighted in coral. Anything unchanged is your master résumé.",
+      "loadingBody": "Pulling your master résumé so we can mark what changed."
+    },
+    "doc": {
+      "nameFallback": "Your résumé",
+      "summary": "SUMMARY",
+      "experience": "EXPERIENCE",
+      "skills": "SKILLS",
+      "education": "EDUCATION"
+    },
+    "rawFallback": {
+      "badge": "Couldn't structure — here's what we saw",
+      "body": "Vantage saved your upload, but the AI couldn't map it into résumé fields. The original text is below — use Ask Vantage to walk through it section by section, or upload a cleaner file.",
+      "empty": "(Empty file — no text could be extracted.)"
+    },
+    "parse": {
+      "failed": "Parsing failed",
+      "complete": "Parsing complete",
+      "running": "Parsing résumé…",
+      "doneDetail": "Saved as a new version. Open the timeline on the left to review.",
+      "tryAnother": "Try another file",
+      "askVantage": "Ask Vantage",
+      "dismiss": "DISMISS",
+      "dismissAria": "Dismiss"
+    },
+    "warnings": {
+      "title": "AI couldn't fully structure your résumé — your text is saved as v1.",
+      "more": "+ {n} more",
+      "fillCta": "Help me fill the gaps →"
+    },
+    "source": {
+      "chip": "Source · {name}",
+      "drawerAria": "Source file",
+      "closeAria": "Close",
+      "close": "CLOSE",
+      "download": "Download original",
+      "replace": "Replace with a new file",
+      "fetching": "FETCHING SIGNED URL…",
+      "fetchError": "Couldn't fetch the original — the file may have been removed or storage is offline.",
+      "previewError": "COULDN'T LOAD PREVIEW",
+      "previewUnsupported": "PREVIEW NOT SUPPORTED",
+      "previewUnsupportedBody": "Inline preview only works for PDFs. Use the download button above to open the original in your editor."
+    },
+    "presentation": {
+      "tablistAria": "Presentation tab",
+      "optimized": "Optimized",
+      "original": "Original",
+      "compare": "Compare"
+    },
+    "editor": {
+      "dirtyCount": "{n, plural, one {# unsaved edit} other {# unsaved edits}}",
+      "pendingSuggestion": "Suggestion pending in dock",
+      "section": {
+        "summary": "Summary",
+        "experience": "Experience"
+      },
+      "placeholder": {
+        "name": "Your full name",
+        "label": "Your headline · e.g. Senior Backend Engineer",
+        "email": "you@example.com",
+        "phone": "+1 555 0100",
+        "location": "City, Region",
+        "summary": "A short summary in your own voice — three lines max.",
+        "company": "Company",
+        "role": "Role",
+        "dateEnd": "Present",
+        "roleSummary": "(optional) one line on what this role was about",
+        "bullet": "Type a bullet — start with an action verb."
+      },
+      "action": {
+        "addRole": "Add role",
+        "addBullet": "Add bullet",
+        "saveSnapshot": "Save snapshot",
+        "discard": "Discard draft"
+      },
+      "status": {
+        "saved": "Saved",
+        "savedJust": "Saved",
+        "savedAs": "Saved as v{v}",
+        "draft": "Draft · autosaving…",
+        "saving": "Saving…",
+        "offline": "Offline · will retry",
+        "error": "Couldn't save"
+      },
+      "empty": {
+        "experience": "No roles yet — click \"Add role\" to start your timeline."
+      },
+      "conflict": {
+        "title": "This résumé moved while you were editing.",
+        "body": "Another tab saved v{theirs} after your edit started at v{attempted}. Your draft is kept locally.",
+        "bodyLoading": "Pulling the newer version so you can compare…",
+        "viewTheirs": "View their version",
+        "branch": "Keep my draft & branch from theirs",
+        "discard": "Discard my draft"
+      }
+    },
+    "viewMode": {
+      "tablistAria": "Document view mode",
+      "document": "Document",
+      "extracted": "Extracted"
+    },
+    "extracted": {
+      "badge": "EXTRACTED · WHAT THE PARSER SAW",
+      "markdownHint": "Rendered from the upload's Markdown middle state.",
+      "plainHint": "Plain text — no Markdown structure detected."
+    },
+    "changeLog": {
+      "empty": "No change log on this version — either the agent didn't emit one or this is the original master. There's nothing to review.",
+      "header": "{count, plural, one {CHANGE LOG · # EDIT} other {CHANGE LOG · # EDITS}}",
+      "regenerate": "Regenerate",
+      "approve": "Approve",
+      "approveHint": "Accept this tailored version",
+      "approveBlockedHint": "Clear the needs-review / unsupported rows first",
+      "evidence": "evidence:",
+      "before": "BEFORE",
+      "after": "AFTER",
+      "noPriorBullet": "(no prior bullet)",
+      "empty2": "(empty)",
+      "risk": {
+        "safe": "SAFE",
+        "needsReview": "NEEDS REVIEW",
+        "unsupported": "UNSUPPORTED",
+        "unknown": "UNKNOWN"
+      },
+      "count": {
+        "safe": "safe",
+        "needsReview": "needs review",
+        "unsupported": "unsupported"
+      },
+      "type": {
+        "tighten": "Tighten",
+        "quantifyExisting": "Quantified existing",
+        "reorder": "Reorder",
+        "inferWording": "Wording inferred"
+      }
+    },
+    "builder": {
+      "title": "Résumé studio",
+      "subtitle": "Building with you",
+      "backToHome": "Back to home",
+      "nameFallback": "Your name",
+      "locationFallback": "Add a location in settings",
+      "composerPlaceholder": "Type or pick a suggestion…",
+      "profileReady": "Your profile is ready",
+      "livePreview": "Live preview · updates as you talk",
+      "profileLocked": "Profile locked",
+      "autoSaved": "Auto-saved",
+      "positioning": "Positioning",
+      "summary": "Summary",
+      "summaryPlaceholder": "Tell us about yourself in chat — your summary will land here as we go.",
+      "experienceRewritten": "Experience · rewritten",
+      "bulletPlaceholder": "Walk me through a project you led — I'll rewrite it outcome-led, never inventing details.",
+      "lockedInTitle": "Profile locked in.",
+      "lockedInBody": "Your base résumé is ready — every application will be tailored from it.",
+      "seeMatches": "See matches",
+      "titleLead": "Lead Product Designer",
+      "titleSenior": "Senior Product Designer",
+      "titleDefault": "Product Designer",
+      "targetLead": "Targeting lead and staff design roles — leading with scope, ownership, and team impact.",
+      "targetSenior": "Targeting senior IC roles — leading with craft depth, project ownership, and measurable outcomes.",
+      "targetDefault": "Open to senior IC and lead roles — positioning for both depth and breadth."
+    },
+    "delivery": {
+      "back": "Back",
+      "open": "Open in studio",
+      "operations": "Operations",
+      "openOps": "Open operations panel",
+      "publishedBadge": "Published",
+      "notPublishedBadge": "Draft",
+      "loading": "Loading…"
+    },
+    "public": {
+      "loading": "Loading…",
+      "notFound": {
+        "title": "This résumé is not available",
+        "body": "The link may have been revoked, or never existed."
+      },
+      "publishedOn": "Published on {date}",
+      "madeWith": "Made with Vantage"
+    },
+    "operations": {
+      "title": "Operations",
+      "eyebrow": "OPERATIONS",
+      "close": "Close",
+      "exportFailed": "Export couldn't finish. Please try again.",
+      "publishFailed": "Publishing didn't finish — try again, or contact support.",
+      "revokeFailed": "Couldn't revoke the link — try again.",
+      "export": {
+        "title": "Export",
+        "markdown": "Markdown",
+        "markdownSub": "Portable .md — paste into Notion, GitHub, anywhere.",
+        "pdf": "PDF",
+        "pdfSub": "Recruiter-ready, fixed layout.",
+        "docx": "DOCX",
+        "docxSub": "Editable Word document.",
+        "beta": "Beta",
+        "json": "JSON Resume",
+        "jsonSub": "The structured data file — for backup or import.",
+        "downloading": "Downloading…"
+      },
+      "share": {
+        "title": "Share",
+        "notPublishedBody": "Generate a read-only link a recruiter can open without an account. You can revoke it anytime.",
+        "publish": "Publish read-only link",
+        "publishing": "Publishing…",
+        "published": "Published",
+        "copy": "Copy link",
+        "copied": "Copied!",
+        "revoke": "Revoke"
+      },
+      "print": {
+        "title": "Print",
+        "cta": "Open print dialog"
+      }
+    }
+  },
+  "today": {
+    "remote": "Remote",
+    "notScored": "Not scored",
+    "percentMatch": "{pct}% match",
+    "addResumeToScore": "Add or refresh your résumé so Vantage can score this match.",
+    "skillGaps": "+{count} gaps",
+    "reviewAndApply": "Review & apply",
+    "rolesInDatabase": "{count, plural, one {role in database} other {roles in database}}",
+    "noFitsScored": "no fits scored yet",
+    "noStrongFits": "no strong fits — try broader filters",
+    "strongFitsReady": "{count, plural, one {strong fit, ready to send} other {strong fits, ready to send}}",
+    "trendingSkillsTracked": "{count, plural, one {trending skill tracked} other {trending skills tracked}}",
+    "queueHeading": "Today, {count, plural, one {# thing moves} other {# things move}} you forward",
+    "tapToStart": "Tap to start",
+    "whyThis": "Why this · {reason}",
+    "emptyResumeTitle": "Start with your résumé.",
+    "emptyResumeBody": "Vantage builds the queue once it has something to match against — upload or paste your résumé and matches, prep actions, and skill signals start showing up here.",
+    "uploadResume": "Upload résumé",
+    "emptyQueuePassive": "Nothing on the action queue yet — applications, interviews and learn signals will surface here automatically.",
+    "liveMatches": "Live matches",
+    "fromDbSorted": "From database · sorted by fit",
+    "fromDbPending": "From database · scoring pending",
+    "whileWeLook": "While we look for matches",
+    "sampleSurface": "Sample of what we'll surface",
+    "oneClickApply": "One-click apply",
+    "applyOnSite": "Apply on site",
+    "buttonsHint": "Filled buttons mean everything's prepared. Outlined ones open the company's own site.",
+    "fit": {
+      "excellent": "Excellent",
+      "strong": "Strong",
+      "good": "Good",
+      "fair": "Fair"
+    },
+    "why": {
+      "interviewImminent": "Interview imminent",
+      "interviewThisWeek": "Interview this week",
+      "draftAging": "Draft aging",
+      "openDraft": "Open draft",
+      "awaitingReply": "Awaiting reply",
+      "skillGap": "Skill-gap signal"
+    },
+    "pill": {
+      "interview": "INTERVIEW",
+      "prep": "PREP",
+      "followUp": "FOLLOW UP",
+      "learn": "LEARN"
+    }
+  },
+  "tracker": {
+    "pipeline": "Pipeline",
+    "title": "Applications",
+    "syncing": "Syncing with database…",
+    "nothingSubmitted": "Nothing submitted yet — your seed flow is below.",
+    "tracked": "{count, plural, one {# application tracked} other {# applications tracked}}",
+    "unknownCompany": "Unknown company",
+    "role": "Role",
+    "justSent": "Just sent",
+    "openCard": "Open {role} at {company}",
+    "openPrep": "Open prep",
+    "browseMatches": "Browse matches",
+    "firstEmptyTitle": "Nothing here yet — pick a role from today's matches to begin.",
+    "firstEmptyBody": "Once you tailor and submit your first application, this board fills with real activity. The cards below are a preview only.",
+    "interviewingBanner": "You have {count, plural, one {# active interview} other {# active interviews}}. Click <strong>Prep this interview</strong> to launch a mock.",
+    "dropError": "Couldn't update that card. Try again.",
+    "dropErrorWithReason": "Couldn't update that card: {reason}",
+    "dismiss": "Dismiss",
+    "dismissDropError": "Dismiss drop error",
+    "columns": {
+      "applied": "Applied",
+      "interviewing": "Interviewing",
+      "outcome": "Outcome"
+    },
+    "empty": {
+      "applied": "Submit an application and it lands here.",
+      "interviewing": "When a recruiter replies, the conversation moves to this column.",
+      "outcome": "Offers and closed loops settle here."
+    },
+    "time": {
+      "justNow": "Just now",
+      "minutesAgo": "{n}m ago",
+      "hoursAgo": "{n}h ago",
+      "daysAgo": "{n}d ago",
+      "weeksAgo": "{n}w ago"
+    },
+    "nextAction": {
+      "interview": "INTERVIEW",
+      "followUp": "FOLLOW UP",
+      "ready": "READY",
+      "prep": "PREP",
+      "wrapUp": "WRAP UP"
+    },
+    "status": {
+      "draft": "Draft",
+      "review": "In review",
+      "submitted": "Submitted",
+      "interview": "Interviewing",
+      "offer": "Offer",
+      "rejected": "Rejected",
+      "ghosted": "Ghosted"
+    },
+    "delivery": {
+      "title": "You submit · we prepare",
+      "body": "Vantage tailors your résumé, drafts the cover letter, and pre-fills the form — but the final <strong>Submit</strong> click happens in your browser, under your login, on your IP. Zero risk of bot-detection, no stored ATS passwords.",
+      "dismissTitle": "Got it — don't show again",
+      "dismissLabel": "Dismiss explanation"
+    },
+    "drawer": {
+      "application": "Application",
+      "submittedWhen": "submitted {when}",
+      "createdWhen": "created {when}",
+      "close": "Close",
+      "statusLabel": "Status",
+      "statusHelp": "Moves the card between columns. The change saves immediately; if it fails, the previous status comes back.",
+      "outcomeLabel": "Outcome (optional)",
+      "outcomePlaceholder": "e.g. signed offer, closed at recruiter screen…",
+      "outcomeHelp": "Narrative for what actually happened. Saved on blur.",
+      "coverLabel": "Cover letter draft",
+      "coverPlaceholder": "Paste or write the cover letter you sent…"
+    }
+  },
+  "chat": {
+    "loadingConversation": "Loading your conversation…",
+    "intro": "What should we work on? Ask anything — or launch a task and I'll run the agents.",
+    "thinking": "Thinking...",
+    "composerPlaceholder": "Ask anything, or launch a task…",
+    "uploading": "Uploading…",
+    "uploadFailed": "Upload failed",
+    "remove": "Remove",
+    "removeAttachment": "Remove {name}",
+    "attachLabel": "Attach a file or image",
+    "voiceStart": "Voice input",
+    "voiceStop": "Stop voice input",
+    "send": "Send",
+    "sendTitle": "Send (Enter)",
+    "sendDisabledLabel": "Type a message to send",
+    "sendDisabledTitle": "Type to send",
+    "suggestions": {
+      "find": "Find new roles that fit me",
+      "tailor": "Tailor my résumé for a role",
+      "prep": "Prep me for an interview",
+      "market": "Show me today's market"
+    },
+    "demo": {
+      "userMsg": "Find new roles that fit my profile",
+      "onIt": "On it — scanning job boards and matching against your skills and experience.",
+      "jobScanner": "Job scanner",
+      "scanning": "scanning…",
+      "done": "done",
+      "rolesFound": "5 matching roles found",
+      "readyToApply": "3 are ready to apply — check your briefing",
+      "viewMatches": "View matches"
+    }
+  },
+  "auth": {
+    "loading": "Loading…",
+    "verifying": "Verifying your session…",
+    "welcomeBack": "Welcome back.",
+    "startHunt": "Start your hunt.",
+    "signInSub": "Sign in to your workspace.",
+    "signUpSub": "It takes under a minute.",
+    "displayName": "Display name",
+    "displayNamePlaceholder": "What we should call you",
+    "email": "Email",
+    "password": "Password",
+    "passwordHint": "6+ characters.",
+    "signIn": "Sign in",
+    "signUp": "Sign up",
+    "createAccount": "Create account",
+    "noAccount": "Don't have an account?",
+    "haveAccount": "Already have an account?",
+    "backToHome": "Back to home",
+    "notice": {
+      "sessionExpired": "Your session has expired. Please sign in again.",
+      "sessionTimeout": "Couldn't reach the server. Please try signing in again."
+    },
+    "plan": {
+      "pro": "Continue to start your 7-day Pro trial.",
+      "max": "Continue to go Max.",
+      "free": "Continue to start free."
+    },
+    "error": {
+      "rateLimit": "Too many attempts. Please wait a moment before trying again.",
+      "rateLimitSeconds": "Too many attempts. Please wait {seconds} seconds before trying again.",
+      "generic": "Something went wrong"
+    }
+  },
+  "onboarding": {
+    "heroTitle": "Your job hunt, handled.",
+    "heroSubtitle": "Drop your résumé in. We find the roles, tailor each application, and prep you for every interview — you stay in control.",
+    "privacyNote": "Password never stored · your data can stay on your device",
+    "method": {
+      "upload": "Upload",
+      "chat": "Chat",
+      "paste": "Paste",
+      "link": "Link"
+    },
+    "upload": {
+      "title": "Drop your résumé to begin",
+      "hint": "PDF or DOCX · or click to browse"
+    },
+    "chat": {
+      "title": "No résumé? Build one by talking.",
+      "desc": "Answer a few questions and we'll draft a strong résumé from scratch.",
+      "cta": "Start a conversation"
+    },
+    "paste": {
+      "placeholder": "Paste your résumé text here…",
+      "cta": "Parse résumé"
+    },
+    "link": {
+      "comingSoon": "Link import is coming soon — for now, upload a file or paste your résumé text."
+    },
+    "banner": {
+      "yourResume": "your résumé",
+      "running": "Reading your experience from <strong>{file}</strong> — keep exploring, this runs in the background.",
+      "done": "<strong>Résumé ready{name}.</strong> We're matching it against open roles now.",
+      "nameSuffix": ", {name}",
+      "failed": "{reason} You can re-upload from onboarding anytime.",
+      "failedDefault": "Couldn't finish parsing.",
+      "dismiss": "Dismiss"
+    },
+    "tour": {
+      "stepCounter": "STEP {current} / {total}",
+      "skip": "Skip",
+      "next": "Next",
+      "gotIt": "Got it",
+      "dock": {
+        "title": "Ask Vantage anything",
+        "body": "The dock on the right is always here — find roles, tailor a résumé, prep an interview. Send a chip to fire it instantly, or write your own."
+      },
+      "today": {
+        "title": "Today's matches",
+        "body": "Fresh roles scored against your résumé, with the strongest fit at the top. We refresh this every morning."
+      },
+      "apps": {
+        "title": "Track every application",
+        "body": "Drafts, submissions, interviews, outcomes — all in one place. Status updates land here automatically."
+      }
+    }
+  },
+  "extension": {
+    "closeDemo": "Close demo",
+    "companyLogo": "{company} logo",
+    "applyForJob": "Apply for this job",
+    "whyInterested": "Why are you interested in {company}?",
+    "whyPlaceholder": "Tell us what draws you to this role…",
+    "atsSubmitDisabled": "ATS Submit (disabled in demo)",
+    "submitApplication": "Submit application",
+    "assistant": "Vantage assistant",
+    "onThisPage": "On this page",
+    "filling": "Filling the form for you…",
+    "filledMessage": "I filled 4 fields from your profile — name, email, phone, and a tailored answer below.",
+    "aiDraftedAnswer": "AI drafted answer",
+    "youPressSubmit": "You press submit, not us.",
+    "markSubmitted": "Mark as submitted",
+    "notNow": "Not now",
+    "filledByVantage": "Filled by Vantage",
+    "field": {
+      "yourName": "Your name",
+      "addPhone": "Add a phone in settings",
+      "fullName": "Full name",
+      "fullNamePlaceholder": "Your full name",
+      "email": "Email",
+      "phone": "Phone"
+    }
+  }
+}

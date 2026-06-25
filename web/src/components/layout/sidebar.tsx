@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   MessageSquare,
   Home,
@@ -20,6 +21,7 @@ import { useVantage } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
 import { initialsOf } from "@/lib/dates";
 import { statusVisual } from "@/lib/status";
+import { QuotaPanel } from "./quota-panel";
 
 // Ask Vantage is intentionally NOT in this nav anymore — the persistent dock
 // (mounted by AppLayout) is its sole surface, per vantage-ui-mapping.md §1.
@@ -39,6 +41,8 @@ const COLLAPSED_KEY = "vantage.sidebar.collapsed";
 export function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
+  const t = useTranslations("nav");
+  const tc = useTranslations("common");
   const apiApplications = useVantage((s) => s.apiApplications ?? []);
   const setNav = useVantage((s) => s.setNav);
   const openPrep = useVantage((s) => s.openPrep);
@@ -138,7 +142,7 @@ export function Sidebar() {
       collapsed ? "justify-center px-0" : "px-[10px]"
     } py-[9px] rounded-[9px] cursor-pointer text-[14px] font-medium transition-[background-color,color,box-shadow] duration-200 ${
       isActive
-        ? "bg-cream text-brown font-semibold shadow-[inset_0_0_0_1px_rgba(122,63,0,0.08)]"
+        ? "nav-chip text-brown font-semibold"
         : "text-ink-light hover:bg-[#F8F5F0] hover:text-ink"
     }`;
 
@@ -150,7 +154,7 @@ export function Sidebar() {
   const displayName =
     (parsedResume?.basics?.name?.trim() || "") ||
     (currentUser?.displayName?.trim() || "") ||
-    "Welcome";
+    tc("welcome");
   const initials = initialsOf(displayName);
   const subline =
     parsedResume?.basics?.label?.trim() ||
@@ -164,9 +168,9 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`${
+      className={`width-ease ${
         collapsed ? "w-[74px] px-2" : "w-[248px] px-4"
-      } shrink-0 bg-white border-r border-border flex flex-col py-[22px] transition-[width] duration-150`}
+      } shrink-0 bg-white border-r border-border flex flex-col py-[22px]`}
     >
       {/* Brand mark — also the "home" affordance. Clicking it routes to
           /app/today (the highest-signal landing screen — see app/page.tsx)
@@ -177,8 +181,8 @@ export function Sidebar() {
       <Link
         href="/app/today"
         onClick={() => onNavClick("today")}
-        title={collapsed ? "Vantage — back to Today" : "Back to Today"}
-        aria-label="Vantage — back to Today"
+        title={collapsed ? t("backToTodayLong") : t("backToToday")}
+        aria-label={t("backToTodayLong")}
         className={`flex items-center ${
           collapsed ? "justify-center" : "gap-[9px] px-[10px]"
         } pb-[20px] cursor-pointer bg-transparent border-0 text-left hover:opacity-80 transition-opacity`}
@@ -197,8 +201,8 @@ export function Sidebar() {
       <button
         type="button"
         onClick={toggleCollapsed}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? t("expandSidebar") : t("collapseSidebar")}
+        aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
         className={`flex items-center ${
           collapsed ? "justify-center" : "justify-end px-[10px]"
         } py-[6px] mb-2 text-ink-muted hover:text-brown transition-colors cursor-pointer`}
@@ -212,36 +216,36 @@ export function Sidebar() {
 
       {!collapsed && (
         <div className="font-display font-bold text-[10px] tracking-[1.5px] uppercase text-ink-muted px-[10px] pb-2">
-          Workspace
+          {t("workspace")}
         </div>
       )}
-      <nav className="flex flex-col gap-[2px]" aria-label="Workspace">
+      <nav className="flex flex-col gap-[2px]" aria-label={t("workspace")}>
         <Link
           href={ROUTES.today}
           data-tour="today"
           className={navItem(active("today"))}
           onClick={() => onNavClick("today")}
-          title={collapsed ? "Today" : undefined}
+          title={collapsed ? t("today") : undefined}
           aria-current={active("today") ? "page" : undefined}
           data-active={active("today") ? "true" : undefined}
         >
           <Home data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
-          {!collapsed && <span>Today</span>}
+          {!collapsed && <span>{t("today")}</span>}
         </Link>
         <Link
           href={ROUTES.apps}
           data-tour="apps"
           className={navItem(active("apps"))}
           onClick={() => onNavClick("apps")}
-          title={collapsed ? "Applications" : undefined}
+          title={collapsed ? t("applications") : undefined}
           aria-current={active("apps") ? "page" : undefined}
           data-active={active("apps") ? "true" : undefined}
         >
           <LayoutGrid data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && (
             <>
-              <span>Applications</span>
-              <span key={totalApps} className="count-pop ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
+              <span>{t("applications")}</span>
+              <span key={totalApps} className="count-pop count-tick ml-auto font-mono text-[10px] font-medium bg-[#F3F0EB] text-ink-light px-[7px] py-[2px] rounded-full">
                 {totalApps}
               </span>
             </>
@@ -251,14 +255,14 @@ export function Sidebar() {
           href={ROUTES.interviews}
           className={navItem(false)}
           onClick={() => onNavClick("interviews")}
-          title={collapsed ? "Interviews" : undefined}
+          title={collapsed ? t("interviews") : undefined}
         >
           <Calendar data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && (
             <>
-              <span>Interviews</span>
+              <span>{t("interviews")}</span>
               {interviewingCount > 0 && (
-                <span key={interviewingCount} className="count-pop ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
+                <span key={interviewingCount} className="count-pop count-tick ml-auto font-mono text-[10px] font-medium bg-gold-bg text-amber px-[7px] py-[2px] rounded-full">
                   {interviewingCount}
                 </span>
               )}
@@ -270,74 +274,54 @@ export function Sidebar() {
       {!collapsed ? (
         <div className="font-display font-bold text-[10px] tracking-[1.5px] uppercase text-ink-muted px-[10px] pt-6 pb-2 flex items-center gap-[7px]">
           <Sparkles className="w-3 h-3 text-amber" strokeWidth={1.8} />
-          AI Studio
+          {t("aiStudio")}
         </div>
       ) : (
         <div className="h-[10px]" />
       )}
-      <nav className="flex flex-col gap-[2px]" aria-label="AI studio">
+      <nav className="flex flex-col gap-[2px]" aria-label={t("aiStudio")}>
         <Link
           href={ROUTES.builder}
           className={navItem(active("builder"))}
           onClick={() => onNavClick("builder")}
-          title={collapsed ? "Résumé studio" : undefined}
+          title={collapsed ? t("resumeStudio") : undefined}
           aria-current={active("builder") ? "page" : undefined}
           data-active={active("builder") ? "true" : undefined}
         >
           <FileText data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
-          {!collapsed && <span>Résumé studio</span>}
+          {!collapsed && <span>{t("resumeStudio")}</span>}
         </Link>
         <Link
           href={ROUTES.mock}
           className={navItem(active("mock"))}
           onClick={() => onNavClick("mock")}
-          title={collapsed ? "Mock interview" : undefined}
+          title={collapsed ? t("mock") : undefined}
           aria-current={active("mock") ? "page" : undefined}
           data-active={active("mock") ? "true" : undefined}
         >
           <MessageSquare data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
-          {!collapsed && <span>Mock interview</span>}
+          {!collapsed && <span>{t("mock")}</span>}
         </Link>
       </nav>
 
       <div className="mt-auto" />
 
-      <nav className="flex flex-col gap-[2px] mb-3" aria-label="Account">
+      <nav className="flex flex-col gap-[2px] mb-3" aria-label={t("account")}>
         <Link
           href={ROUTES.settings}
           className={navItem(active("settings"))}
           onClick={() => onNavClick("settings")}
-          title={collapsed ? "Settings" : undefined}
+          title={collapsed ? t("settings") : undefined}
           aria-current={active("settings") ? "page" : undefined}
           data-active={active("settings") ? "true" : undefined}
         >
           <Settings data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
-          {!collapsed && <span>Settings</span>}
+          {!collapsed && <span>{t("settings")}</span>}
         </Link>
       </nav>
 
-      {!collapsed && (
-        <div className="bg-[#FBF8F3] border border-border rounded-xl p-[14px] mb-3">
-          <div className="flex items-center justify-between mb-[9px]">
-            <span className="font-mono text-[10px] tracking-[0.6px] uppercase text-ink-light">
-              Auto-applies
-            </span>
-            <span className="font-mono text-[10px] tracking-[0.6px] text-brown">
-              14 / 40
-            </span>
-          </div>
-          <div className="bar-track h-[6px] rounded-full bg-border overflow-hidden">
-            <div
-              className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#7A3F00,#A66A00)]"
-              style={{ width: "35%" }}
-            />
-          </div>
-          <div className="font-body text-[11px] text-ink-muted mt-[9px]">
-            Resets in 14 days ·{" "}
-            <span className="text-brown font-semibold cursor-pointer">Upgrade</span>
-          </div>
-        </div>
-      )}
+      <QuotaPanel collapsed={collapsed} />
+
 
       <div
         className={`flex items-center ${
@@ -345,7 +329,7 @@ export function Sidebar() {
         }`}
       >
         <div
-          className="w-[34px] h-[34px] rounded-[9px] bg-brown flex items-center justify-center font-display font-bold text-[14px] text-paper shrink-0"
+          className="avatar-ring w-[34px] h-[34px] rounded-[9px] bg-brown flex items-center justify-center font-display font-bold text-[14px] text-paper shrink-0"
           aria-hidden="true"
           title={collapsed ? displayName : undefined}
         >
@@ -365,8 +349,8 @@ export function Sidebar() {
           <button
             type="button"
             onClick={handleSignOut}
-            title="Sign out"
-            aria-label="Sign out"
+            title={tc("signOut")}
+            aria-label={tc("signOut")}
             className="w-[28px] h-[28px] rounded-[8px] flex items-center justify-center text-ink-muted hover:text-brown hover:bg-cream transition-colors cursor-pointer"
           >
             <LogOut className="w-[15px] h-[15px]" strokeWidth={1.7} />

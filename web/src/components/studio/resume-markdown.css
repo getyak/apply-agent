@@ -1,0 +1,432 @@
+/* Résumé Markdown theme — the "10/10 rendering" surface for Resume Studio's
+ * Optimized tab (docs/design/resume-original-vs-optimized-vibe-design.md §11.3).
+ *
+ * Design goal: a printed-document feel — calm, balanced, premium. Not a chat
+ * bubble, not a Notion page. This is what the user shows a recruiter.
+ *
+ * Type stack:
+ *   Display (name)    Space Grotesk 700, tight tracking — confidence.
+ *   Section headings  Space Grotesk 700 caps — printed-paper rhythm.
+ *   Role/company      Inter 600 — work-history rows that scan fast.
+ *   Body              Inter 400 15px — comfortable for a 640px column.
+ *   Meta dates        JetBrains Mono 11px caps — discrete, neutral.
+ *
+ * Vertical rhythm: 8px base, doubled around section seams. Every bullet
+ * starts on the same gridline as its sibling — no jagged left edge.
+ *
+ * Print-friendly: A4/Letter widths, no shadows or gradients, ink-safe greys.
+ * Print rule at the bottom turns interactive chrome off.
+ */
+
+.resume-prose {
+  --rp-ink: var(--color-ink, #2B2822);
+  --rp-ink-light: var(--color-ink-light, #6B6560);
+  --rp-ink-muted: var(--color-ink-muted, #A39F99);
+  --rp-brown: var(--color-brown, #5D3000);
+  --rp-gold: var(--color-gold, #e8a317);
+  --rp-rule: #E8DCCA;
+  --rp-rule-strong: #D6CEC0;
+  --rp-bullet: #C9A368;
+  --rp-paper: #FFFFFF;
+
+  font-family:
+    'Inter',
+    -apple-system,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Source Han Sans SC',
+    'Noto Sans CJK SC',
+    system-ui,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--rp-ink);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'ss01' on, 'cv01' on, 'cv11' on, 'kern' on;
+  font-variant-numeric: oldstyle-nums proportional-nums;
+}
+
+/* ───────── Name + role + contact (header block) ───────── */
+
+.resume-prose h1 {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.02;
+  letter-spacing: -0.8px;
+  margin: 0 0 8px;
+  color: var(--rp-ink);
+  /* Decorative hairline under the name — feels like a letterpress nameplate.
+   * The gradient fades the ink so the line doesn't compete with the H2 rules. */
+  position: relative;
+  padding-bottom: 14px;
+}
+.resume-prose h1::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 4px;
+  width: 56px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--rp-gold) 0%,
+    var(--rp-bullet) 60%,
+    transparent 100%
+  );
+  border-radius: 1px;
+}
+
+/* "_Senior Backend Engineer_" — italic subtitle under the name. */
+.resume-prose h1 + p > em:only-child,
+.resume-prose h1 + p em:first-child:last-child {
+  font-style: italic;
+  font-weight: 500;
+  font-size: 16px;
+  color: var(--rp-brown);
+  letter-spacing: 0.1px;
+}
+
+/* The contact line: "email · phone · City · GitHub". A naked <p> right after
+ * the name (no markup beyond inline links) becomes the contact strip. */
+.resume-prose h1 + p {
+  margin: 0 0 22px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--rp-ink-light);
+  letter-spacing: 0.1px;
+}
+.resume-prose h1 + p + p {
+  margin-top: -6px;
+}
+
+/* ───────── Section headings (## Experience / ## Skills / ...) ───────── */
+
+.resume-prose h2 {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: 2.4px;
+  text-transform: uppercase;
+  color: var(--rp-brown);
+  margin: 38px 0 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rp-rule-strong);
+  position: relative;
+  /* Tiny gold square inset before the label — letterpress mark. */
+}
+.resume-prose h2::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: var(--rp-gold);
+  margin-right: 10px;
+  vertical-align: middle;
+  transform: rotate(45deg) translateY(-1px);
+}
+
+.resume-prose > h2:first-of-type {
+  margin-top: 30px;
+}
+
+/* ───────── Per-role / per-school heading (### Position — Company) ───────── */
+
+.resume-prose h3 {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 650;
+  font-size: 16.5px;
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+  color: var(--rp-ink);
+  margin: 24px 0 6px;
+}
+
+.resume-prose h3:first-of-type {
+  margin-top: 6px;
+}
+
+/* "_Jun 2021 – Present · Shenzhen_" — meta line under H3. */
+.resume-prose h3 + p > em:only-child,
+.resume-prose h3 + p em:first-child:last-child {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--rp-ink-light);
+}
+
+.resume-prose h3 + p {
+  margin: 2px 0 12px;
+  font-size: 13px;
+  color: var(--rp-ink-light);
+}
+
+/* ───────── Body paragraphs ───────── */
+
+.resume-prose p {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.62;
+  color: var(--rp-ink);
+}
+
+.resume-prose strong,
+.resume-prose b {
+  font-weight: 650;
+  color: var(--rp-ink);
+}
+
+.resume-prose em,
+.resume-prose i {
+  font-style: italic;
+  color: var(--rp-ink);
+}
+
+.resume-prose a {
+  color: var(--rp-brown);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rp-rule);
+  transition: border-color 120ms ease, color 120ms ease;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.resume-prose a:hover,
+.resume-prose a:focus-visible {
+  color: var(--rp-gold);
+  border-bottom-color: currentColor;
+}
+
+/* ───────── Bullet lists ───────── */
+
+.resume-prose ul {
+  list-style: none;
+  margin: 6px 0 4px;
+  padding: 0;
+}
+
+.resume-prose ul > li {
+  position: relative;
+  /* Hanging indent: every wrapped line aligns to the same gridline as the
+   * first character, never the bullet. This is the single biggest
+   * print-typography upgrade over the default "list-style: disc". */
+  padding: 3px 0 3px 22px;
+  font-size: 14.5px;
+  line-height: 1.62;
+  color: var(--rp-ink);
+  break-inside: avoid;
+  text-indent: 0;
+}
+
+.resume-prose ul > li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  /* Optical centre with the first line's x-height — sits a hair below the
+   * ascender so it doesn't read as a bullet "popping up". */
+  top: 11px;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: var(--rp-bullet);
+  transform: rotate(45deg);
+}
+
+.resume-prose h3 + p + ul,
+.resume-prose h3 + ul {
+  margin-top: 6px;
+}
+
+.resume-prose ul ul {
+  margin: 2px 0;
+}
+.resume-prose ul ul > li::before {
+  background: transparent;
+  border: 1.4px solid var(--rp-bullet);
+  border-radius: 50%;
+  width: 5px;
+  height: 5px;
+  transform: none;
+  top: 13px;
+}
+
+.resume-prose ol {
+  margin: 6px 0 4px;
+  padding-left: 22px;
+}
+.resume-prose ol > li {
+  font-size: 14.5px;
+  line-height: 1.62;
+  margin-bottom: 2px;
+  font-variant-numeric: oldstyle-nums tabular-nums;
+}
+
+/* ───────── Skills section ───────── */
+
+.resume-prose h2 + ul > li {
+  /* Skills row: a left rule + a wide leading column for the group label, then
+   * the keywords. Flex (not grid) is the right tool here because the keywords
+   * are a TEXT NODE sibling to <strong> inside the LI — anonymous inline boxes
+   * don't get a grid track in every engine. Flex turns the LI's children
+   * (strong + anon text) into flex items reliably across browsers, and a fixed
+   * width on the strong gives us the column look we want. */
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+  padding: 7px 0 7px 14px;
+  border-top: 1px dashed var(--rp-rule);
+  position: relative;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--rp-ink);
+}
+.resume-prose h2 + ul > li::before {
+  /* Slim gold rule on the left edge — like a column index marker on a
+   * printed page. Overrides the bullet diamond from the body-list rule. */
+  display: block;
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  height: auto;
+  background: var(--rp-bullet);
+  border-radius: 1px;
+  transform: none;
+}
+.resume-prose h2 + ul > li:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+.resume-prose h2 + ul > li:first-child::before {
+  top: 4px;
+}
+.resume-prose h2 + ul > li > strong {
+  flex: 0 0 152px;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--rp-brown);
+  /* Hold the column even if the label is short. */
+  min-width: 0;
+}
+
+/* ───────── Table ───────── */
+
+.resume-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 16px;
+  font-size: 14px;
+}
+.resume-prose th,
+.resume-prose td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rp-rule);
+}
+.resume-prose th {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 11.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--rp-ink-light);
+}
+
+/* ───────── Code ───────── */
+
+.resume-prose code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 13px;
+  background: #FBF6EE;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--rp-rule);
+  color: var(--rp-brown);
+}
+.resume-prose pre {
+  background: #FBF6EE;
+  border: 1px solid var(--rp-rule);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.resume-prose pre > code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--rp-ink);
+}
+
+/* ───────── Blockquote ───────── */
+
+.resume-prose blockquote {
+  margin: 12px 0;
+  padding: 8px 16px;
+  border-left: 3px solid var(--rp-bullet);
+  background: linear-gradient(90deg, rgba(232, 163, 23, 0.06), transparent 60%);
+  color: var(--rp-ink-light);
+  font-size: 14px;
+  font-style: italic;
+}
+
+.resume-prose hr {
+  border: 0;
+  border-top: 1px solid var(--rp-rule);
+  margin: 22px 0;
+}
+
+/* ───────── Mixed-script harmony (CJK) ───────── */
+
+.resume-prose:lang(zh),
+.resume-prose:lang(ja),
+.resume-prose:lang(ko) {
+  line-height: 1.78;
+  letter-spacing: 0;
+}
+
+/* ───────── AI-touched bullets (suggestion overlay) ───────── */
+
+.resume-prose .rp-touched {
+  background: linear-gradient(180deg, transparent 70%, rgba(232, 163, 23, 0.18) 70%);
+  border-radius: 1px;
+  padding: 0 2px;
+}
+
+.resume-prose .rp-touched-review {
+  background: linear-gradient(180deg, transparent 70%, rgba(201, 70, 46, 0.16) 70%);
+}
+
+/* ───────── Print rule ───────── */
+
+@media print {
+  .resume-prose {
+    color: #000;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+  .resume-prose h1 { font-size: 22pt; }
+  .resume-prose h2 {
+    border-bottom-color: #000;
+    color: #000;
+  }
+  .resume-prose h3 { font-size: 12pt; color: #000; }
+  .resume-prose ul > li::before { background: #000; }
+  .resume-prose a {
+    color: #000;
+    border-bottom-color: #999;
+  }
+  .resume-prose .rp-touched,
+  .resume-prose .rp-touched-review {
+    background: transparent;
+  }
+}

@@ -34,7 +34,6 @@ from langgraph.types import interrupt
 from agents.events.bus import publish
 from agents.harness.audit import audit
 from agents.harness.checkpointer import get_checkpointer
-from agents.harness.guards import attach_budget
 from agents.harness.llm import cost_cents, pick_model
 from agents.harness.permissions import mark_auto, mark_notify
 from agents.harness.state import (
@@ -45,7 +44,6 @@ from agents.harness.state import (
     WeakPoint,
 )
 from agents.tools.auto import pg_query, redis_get, redis_setex
-
 
 log = structlog.get_logger("agents.nodes.interview")
 
@@ -80,6 +78,13 @@ async def fetch_intel(
 
     if strategy == "crowdsourced":
         brief = await _intel_from_pool(company, role, round_type)
+        # P2-4: if the crowdsourced pool is empty, fall back to scraping the
+        # open web. This is what makes the "search intel for X" scenario
+        # actually return content instead of an empty pool message.
+        if brief and not brief.get("frequent_questions"):
+            web_brief = await _intel_from_web(company, role, round_type)
+            if web_brief and web_brief.get("frequent_questions"):
+                brief = web_brief
     elif strategy == "jd_based":
         brief = await _intel_from_jd(company, role, round_type)
     elif strategy == "recruiter_specific":
@@ -158,6 +163,95 @@ def _is_trap_question(q: str) -> bool:
             "why are you leaving",
             "why our company",
         ]
+    )
+
+
+async def _intel_from_web(
+    company: str | None, role: str | None, round_type: str | None
+) -> IntelBrief | None:
+    """P2-4: web fallback when crowdsourced pool is empty.
+
+    Scrapes DuckDuckGo (or Tavily if TAVILY_API_KEY is set) for recent
+    interview write-ups, then asks V4 Flash to extract structured
+    questions. Never fabricates — if the search returns nothing, we
+    return a brief with an honest "no public data yet" style note.
+    """
+    if not company:
+        return None
+
+    from agents.tools.web import web_search
+
+    query = f"{company} {role or 'engineering'} interview process questions {round_type or ''}".strip()
+    search_out = await web_search(query, max_results=5)
+    hits = search_out.get("results") or []
+    if not hits:
+        return IntelBrief(
+            round_minutes=30,
+            interviewer_style=f"No public write-ups found for {company} yet.",
+            frequent_questions=[],
+            jd_real_focus=[],
+        )
+
+    # Pack the top snippets into a single prompt for V4 Flash to extract
+    # 3-5 frequent question patterns. We use a tight system prompt so the
+    # model can't drift into "made-up generic interview questions".
+    digest = "\n\n".join(
+        f"[{h['title']}]({h['url']})\n{h['snippet']}" for h in hits[:5]
+    )
+    extract_prompt = (
+        "Extract 3 to 5 interview questions that recur across these write-ups. "
+        "Output ONLY valid JSON with shape: "
+        '{"interviewer_style": "<one short sentence>", '
+        '"frequent_questions": [{"q": "<question>", "probability": 0.0-1.0, "trap": false}], '
+        '"jd_real_focus": ["topic1", "topic2"]}. '
+        "If the snippets don't actually describe interviews, return "
+        '{"interviewer_style": "Snippets did not contain interview details.", '
+        '"frequent_questions": [], "jd_real_focus": []}. '
+        "Never invent questions."
+    )
+    try:
+        model = pick_model("fast", temperature=0.2, max_tokens=600)
+        resp = await model.ainvoke(
+            [SystemMessage(content=extract_prompt), HumanMessage(content=digest)]
+        )
+        raw = resp.content if isinstance(resp.content, str) else str(resp.content)
+        # Strip code fences if present.
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```", 2)[1].lstrip("json").lstrip()
+        parsed = json.loads(cleaned)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "interview.intel_from_web.extract_failed",
+            company=company,
+            error=str(exc),
+            kind=type(exc).__name__,
+        )
+        return IntelBrief(
+            round_minutes=30,
+            interviewer_style=f"Found web hits for {company} but couldn't parse them.",
+            frequent_questions=[],
+            jd_real_focus=[],
+        )
+
+    questions = parsed.get("frequent_questions") or []
+    sanitised: list[dict[str, Any]] = []
+    for q in questions[:5]:
+        if not isinstance(q, dict):
+            continue
+        sanitised.append(
+            {
+                "q": str(q.get("q", "")).strip()[:300],
+                "probability": float(q.get("probability", 0.5) or 0.5),
+                "trap": bool(q.get("trap", False))
+                or _is_trap_question(str(q.get("q", ""))),
+            }
+        )
+    return IntelBrief(
+        round_minutes=int(parsed.get("round_minutes", 30)),
+        interviewer_style=str(parsed.get("interviewer_style", ""))[:200],
+        frequent_questions=sanitised,
+        jd_real_focus=[str(t)[:80] for t in (parsed.get("jd_real_focus") or [])[:6]],
     )
 
 

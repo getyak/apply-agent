@@ -349,6 +349,9 @@ def test_ask_stream_dock_tool_trace_hides_system_tools(client, monkeypatch):
 def test_ask_stream_dock_tool_trace_on_error(client, monkeypatch):
     """tool_error MUST also emit a tool_trace, with status=error."""
     monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    # P3-1: force the dock branch even for high-confidence regex hits —
+    # this test specifically covers the dock pipeline's tool_error trace.
+    monkeypatch.setattr(srv, "_DOCK_REGEX_FAST_PATH_THRESHOLD", 0.99)
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
@@ -472,6 +475,8 @@ def test_ask_stream_dock_fast_path_skips_react(client, monkeypatch):
 
 def test_ask_stream_dock_branch_handles_tool_error(client, monkeypatch):
     monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    # P3-1: keep this test in the dock branch even after fast-path lowered.
+    monkeypatch.setattr(srv, "_DOCK_REGEX_FAST_PATH_THRESHOLD", 0.99)
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw):
@@ -845,3 +850,82 @@ def test_ask_stream_dock_tool_trace_includes_result(client, monkeypatch):
     traces = [e for e in events if e.get("event") == "tool_trace"]
     assert len(traces) == 1
     assert traces[0]["result"] == result_body
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P0-2 IDOR guard on /ask/stream X-Relay-Thread-Id
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_ask_stream_rejects_foreign_thread_id(client):
+    """Header pointing at another user's thread must yield 403."""
+    tc, _ = client
+    foreign_thread = f"ask_vantage:{uuid4()}"  # not the auth'd user's id
+    resp = tc.post(
+        "/ask/stream",
+        json={"message": "hi"},
+        headers={"X-Relay-Thread-Id": foreign_thread},
+    )
+    assert resp.status_code == 403
+    body = resp.json()
+    # The FastAPI exception envelope nests under "message" (not "detail")
+    # via the global http_exception handler installed in server.py.
+    assert "not yours" in body.get("message", "") or "not yours" in body.get(
+        "detail", ""
+    )
+
+
+def test_ask_stream_rejects_unknown_thread_shape(client):
+    """A thread id of unknown shape must also be rejected (defense in depth)."""
+    tc, _ = client
+    resp = tc.post(
+        "/ask/stream",
+        json={"message": "hi"},
+        headers={"X-Relay-Thread-Id": "bogus-not-a-thread"},
+    )
+    assert resp.status_code == 403
+
+
+def test_ask_stream_accepts_own_thread_id(client, monkeypatch):
+    """Header with the user's own thread id continues to work."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", False)
+    tc, user_id = client
+    own_thread = f"ask_vantage:{user_id}"
+
+    async def fake_classify(_msg):
+        from agents.coordinator.router import Intent
+
+        return Intent(intent="other", confidence=0.5, args={}, via="regex")
+
+    async def fake_dispatch(*args, **kwargs):
+        return {"agent": "coordinator", "action": "reply", "text": "hi"}
+
+    with patch("agents.api.server.classify_intent", new=fake_classify), patch(
+        "agents.api.server.dispatch", new=fake_dispatch
+    ), patch("agents.api.server.persist_turn", new=AsyncMock()):
+        resp = tc.post(
+            "/ask/stream",
+            json={"message": "hello"},
+            headers={"X-Relay-Thread-Id": own_thread},
+        )
+    assert resp.status_code == 200
+
+
+def test_ask_stream_no_header_still_works(client, monkeypatch):
+    """Missing X-Relay-Thread-Id falls back to ask_vantage_thread_id(user)."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", False)
+    tc, _ = client
+
+    async def fake_classify(_msg):
+        from agents.coordinator.router import Intent
+
+        return Intent(intent="other", confidence=0.5, args={}, via="regex")
+
+    async def fake_dispatch(*args, **kwargs):
+        return {"agent": "coordinator", "action": "reply", "text": "hi"}
+
+    with patch("agents.api.server.classify_intent", new=fake_classify), patch(
+        "agents.api.server.dispatch", new=fake_dispatch
+    ), patch("agents.api.server.persist_turn", new=AsyncMock()):
+        resp = tc.post("/ask/stream", json={"message": "hello"})
+    assert resp.status_code == 200

@@ -28,11 +28,28 @@ import type { AppEnv } from "../types";
 // through to the dock channel server-side.
 const SURFACES = ["dock", "resume_studio", "mock_studio", "applications"] as const;
 
+// Supported UI locales (mirror of web/src/i18n/config.ts LOCALES). The
+// gateway forwards the resolved locale to the Python agent host as
+// X-Relay-Locale so the coordinator/router can pin reply language instead
+// of re-guessing from the message charset on every turn.
+const LOCALES = ["en", "zh"] as const;
+
 const AskBody = z.object({
   prompt: z.string().min(1).max(8_000),
   thread_id: z.string().min(1).max(200),
   surface: z.enum(SURFACES).optional(),
+  // UI locale chosen by the user (dock sends it from the NEXT_LOCALE cookie
+  // mirror). Optional so older clients keep working; falls back to the
+  // Accept-Language header, then "en" downstream.
+  locale: z.enum(LOCALES).optional(),
 });
+
+// Map an Accept-Language header to a supported locale. Anything Chinese → zh,
+// else en. Used only when the body omits an explicit locale.
+function localeFromHeader(acceptLanguage: string | undefined): "en" | "zh" {
+  if (!acceptLanguage) return "en";
+  return /(^|[,;\s])zh/i.test(acceptLanguage) ? "zh" : "en";
+}
 
 const AGENT_HUMAN_LABEL: Record<string, string> = {
   resume_agent: "RÉSUMÉ AGENT",
@@ -121,9 +138,14 @@ function truncateForHistory(text: string): string {
 
 routes.use("/stream", authMiddleware);
 routes.post("/stream", validateBody(AskBody), async (c) => {
-  const { prompt, thread_id, surface } = c.get("validatedBody") as z.infer<
-    typeof AskBody
-  >;
+  const { prompt, thread_id, surface, locale } = c.get(
+    "validatedBody",
+  ) as z.infer<typeof AskBody>;
+  // Resolve the locale once: explicit body choice wins, else fall back to the
+  // browser's Accept-Language, else "en". Forwarded downstream so the agent
+  // reply language is pinned to the user's UI language (not re-guessed).
+  const resolvedLocale =
+    locale ?? localeFromHeader(c.req.header("accept-language"));
   const userId = c.get("userId") as string;
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/ask/stream`;
 
@@ -185,6 +207,8 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
         // to load. Default to "dock" upstream if absent, so older clients
         // keep working unchanged.
         ...(surface ? { "X-Relay-Surface": surface } : {}),
+        // UI locale — pins the agent's reply language (en/zh). Always sent.
+        "X-Relay-Locale": resolvedLocale,
         ...(requestId ? { "X-Request-Id": requestId } : {}),
       },
       body: JSON.stringify({ message: prompt }),
@@ -600,6 +624,22 @@ function toNdjson(
       out.push(JSON.stringify({ kind: "text", delta: payload.text }));
     }
     const action = payload.action as string | undefined;
+    // System-utility tools (recall / narrate / propose_plan) already have
+    // their own dedicated dock surfaces (narrator chip, task-graph card,
+    // collapsible console row). Stamping a second "coordinator → recall_user_memory"
+    // result card is duplicate chrome and clutters the conversation. Skip
+    // them here; the user still sees the underlying activity in the
+    // collapsible console row.
+    const UTILITY_ACTIONS = new Set([
+      "recall_user_memory",
+      "recall_past_applications",
+      "recall_weak_points",
+      "narrate",
+      "propose_plan",
+    ]);
+    if (action && UTILITY_ACTIONS.has(action)) {
+      return out;
+    }
     if (action && action !== "reply") {
       const route = routeFor(agent, action);
       const artifact = buildArtifact(agent, action, payload, route ?? undefined);
@@ -610,13 +650,19 @@ function toNdjson(
         // artifact template for this (agent, action) — keeps strange or
         // not-yet-categorised actions visible instead of silently
         // dropping them.
+        const status =
+          typeof payload.status === "string" ? (payload.status as string) : "";
+        const stub =
+          status === "not_implemented" || status === "not_implemented_yet";
         out.push(
           JSON.stringify({
             kind: "result",
-            title: humanizeAction(agent, action),
+            title: humanizeAction(agent, action, payload),
             sub: describeAction(payload),
-            action: ctaFor(agent, action),
-            ...(route ? { route } : {}),
+            // Stub agents shouldn't ship a primary CTA — without an `action`
+            // string the dock renders an info-only card.
+            ...(stub ? {} : { action: ctaFor(agent, action, payload) }),
+            ...(route && !stub ? { route } : {}),
           }),
         );
       }
@@ -649,24 +695,89 @@ function toNdjson(
   return [];
 }
 
-function humanizeAction(agent: string, action: string): string {
+function humanizeAction(
+  agent: string,
+  action: string,
+  payload?: Record<string, unknown>,
+): string {
+  const status =
+    typeof payload?.status === "string" ? (payload.status as string) : "";
+  // Honest titles when a tool route is wired but the backend can't deliver yet.
+  // Avoids claiming "Matching roles found" on an empty stub result.
+  if (status === "not_implemented" || status === "not_implemented_yet") {
+    if (agent === "jobmatch_agent") return "Job matcher — coming online";
+    if (agent === "trend_agent") return "Market snapshot — coming online";
+    if (agent === "appprep_agent") return "Application prep — coming online";
+    return "Wired up · not generating yet";
+  }
+  if (status === "needs_args" || status === "needs_clarification") {
+    if (agent === "resume_agent") return "Résumé tweak — needs a detail";
+    if (agent === "appprep_agent") return "Cover letter — needs a detail";
+    return "Almost there — one more detail";
+  }
   if (agent === "resume_agent" && action === "customize") return "Tailored résumé ready";
+  if (agent === "resume_agent" && action === "optimize_general") return "Résumé suggestions ready";
   if (agent === "resume_agent" && action === "update_field") return "Résumé update queued";
   if (agent === "interview_agent" && action === "build_mock_graph") return "Mock session ready";
   if (agent === "trend_agent" && action === "daily_snapshot") return "Today's market snapshot";
   if (agent === "jobmatch_agent" && action === "find_matches") return "Matching roles found";
   if (agent === "appprep_agent" && action === "draft_cover_letter") return "Cover letter drafted";
+  if (agent === "applications" && action === "list") {
+    const count =
+      typeof payload?.count === "number"
+        ? (payload?.count as number)
+        : Array.isArray((payload as { items?: unknown[] })?.items)
+          ? ((payload as { items: unknown[] }).items.length)
+          : null;
+    if (count === 0) return "No applications yet";
+    if (count != null) return `${count} application${count === 1 ? "" : "s"}`;
+    return "Your application pipeline";
+  }
   return `${agent.replace(/_/g, " ")} → ${action}`;
 }
 
 function describeAction(payload: Record<string, unknown>): string {
   const status = payload.status as string | undefined;
-  if (status === "not_implemented_yet") return "Coming soon — wired up but not generating yet.";
-  if (status === "needs_clarification") return "Tell me which field to update.";
+  if (status === "not_implemented" || status === "not_implemented_yet") {
+    const summary =
+      typeof payload.summary === "string" ? (payload.summary as string) : "";
+    // Prefer the agent's own honest summary; never claim "Open it to keep going"
+    // when the destination has nothing to show.
+    return summary || "Wired up — generation is on the roadmap.";
+  }
+  if (status === "needs_args" || status === "needs_clarification") {
+    return "Tell me the missing detail and I'll continue.";
+  }
+  // applications → list — surface the count + an encouraging next step
+  // instead of the generic CTA. Empty pipeline gets a friendly nudge.
+  if (payload.agent === "applications" && payload.action === "list") {
+    const count =
+      typeof payload.count === "number"
+        ? (payload.count as number)
+        : Array.isArray((payload as { items?: unknown[] }).items)
+          ? (payload as { items: unknown[] }).items.length
+          : null;
+    if (count === 0) {
+      return "Drop a job link in here and I'll start the first one.";
+    }
+    if (count != null) {
+      return `${count} active. Open the kanban to track outcomes.`;
+    }
+  }
   return "Open it to keep going.";
 }
 
-function ctaFor(agent: string, action: string): string {
+function ctaFor(
+  agent: string,
+  action: string,
+  payload?: Record<string, unknown>,
+): string {
+  const status =
+    typeof payload?.status === "string" ? (payload.status as string) : "";
+  // Stubbed agents shouldn't promise a destination — say so up front.
+  if (status === "not_implemented" || status === "not_implemented_yet") {
+    return "Notify me when ready";
+  }
   if (agent === "resume_agent") return "Open résumé";
   if (agent === "interview_agent") return "Open mock";
   if (agent === "trend_agent") return "View trends";
@@ -703,6 +814,16 @@ interface ArtifactAction {
   label: string;
   route?: string;
 }
+interface SuggestionOut {
+  id: string;
+  bullet_stable_id: string | null;
+  section: string | null;
+  change_type: string;
+  before_text: string;
+  after_text: string;
+  rationale: string | null;
+  risk_level: "safe" | "needs_review" | "unsupported";
+}
 interface ArtifactOut {
   artifact_type:
     | "resume_version"
@@ -710,7 +831,10 @@ interface ArtifactOut {
     | "application_package"
     | "interview_session"
     | "cover_letter"
-    | "market_snapshot";
+    | "market_snapshot"
+    // Dual-track suggestion stack (design §6.3) — accept/reject cards rendered
+    // inline in the dock, no page jump.
+    | "suggestion_list";
   id: string;
   title: string;
   sub: string;
@@ -718,6 +842,9 @@ interface ArtifactOut {
   needs_user_review?: boolean;
   source_evidence?: ArtifactSource[];
   next_actions?: ArtifactAction[];
+  // Only set for suggestion_list artifacts.
+  suggestions?: SuggestionOut[];
+  source_resume_id?: string;
 }
 
 export function buildArtifact(
@@ -729,7 +856,7 @@ export function buildArtifact(
   const id =
     (payload.artifact_id as string) ??
     `art-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const title = humanizeAction(agent, action);
+  const title = humanizeAction(agent, action, payload);
   const sub = describeAction(payload);
   const confidence =
     typeof payload.confidence === "number" ? (payload.confidence as number) : undefined;
@@ -755,6 +882,42 @@ export function buildArtifact(
       next_actions: [
         { kind: "open", label: "Open résumé", route: route ?? "/app/studio/resume" },
         { kind: "tweak", label: "Tweak in studio", route: "/app/studio/resume" },
+      ],
+    };
+  }
+  // Dual-track optimize pass → a suggestion-list card the user accepts/rejects
+  // inline in the dock (design §6.3). The suggestions ride in the payload from
+  // the router's optimize_resume dispatch.
+  if (agent === "resume_agent" && action === "optimize_general") {
+    const raw = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+    const suggestions: SuggestionOut[] = raw
+      .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null)
+      .map((s) => ({
+        id: String(s.id ?? ""),
+        bullet_stable_id: (s.bullet_stable_id as string) ?? null,
+        section: (s.section as string) ?? null,
+        change_type: String(s.change_type ?? ""),
+        before_text: String(s.before_text ?? ""),
+        after_text: String(s.after_text ?? ""),
+        rationale: (s.rationale as string) ?? null,
+        risk_level: (s.risk_level as SuggestionOut["risk_level"]) ?? "needs_review",
+      }))
+      .filter((s) => s.id && s.after_text);
+    return {
+      artifact_type: "suggestion_list",
+      id,
+      title: suggestions.length
+        ? `${suggestions.length} quick win${suggestions.length === 1 ? "" : "s"} ready`
+        : "Your résumé looks solid",
+      sub: suggestions.length
+        ? "Accept to fold into your optimized version. Originals stay untouched."
+        : "Nothing pressing to change right now.",
+      needs_user_review: suggestions.some((s) => s.risk_level === "needs_review"),
+      suggestions,
+      source_resume_id:
+        typeof payload.source_resume_id === "string" ? payload.source_resume_id : undefined,
+      next_actions: [
+        { kind: "open", label: "Open in studio", route: "/app/studio/resume" },
       ],
     };
   }
@@ -809,6 +972,9 @@ export function buildArtifact(
     };
   }
   if (agent === "jobmatch_agent") {
+    const stub =
+      payload.status === "not_implemented" ||
+      payload.status === "not_implemented_yet";
     return {
       artifact_type: "job_match_set",
       id,
@@ -816,9 +982,14 @@ export function buildArtifact(
       sub,
       confidence,
       source_evidence: evidenceFromPayload,
-      next_actions: [
-        { kind: "open", label: "See matches", route: route ?? "/app/applications" },
-      ],
+      // Don't promise a destination when the matcher is still a stub —
+      // dropping next_actions makes the dock render an info-only card
+      // instead of a misleading "See matches" CTA.
+      next_actions: stub
+        ? []
+        : [
+            { kind: "open", label: "See matches", route: route ?? "/app/applications" },
+          ],
     };
   }
   if (agent === "interview_agent") {
@@ -835,6 +1006,9 @@ export function buildArtifact(
     };
   }
   if (agent === "trend_agent") {
+    const stub =
+      payload.status === "not_implemented" ||
+      payload.status === "not_implemented_yet";
     return {
       artifact_type: "market_snapshot",
       id,
@@ -842,9 +1016,11 @@ export function buildArtifact(
       sub,
       confidence,
       source_evidence: evidenceFromPayload,
-      next_actions: [
-        { kind: "open", label: "View trends", route: route ?? "/app/today" },
-      ],
+      next_actions: stub
+        ? []
+        : [
+            { kind: "open", label: "View trends", route: route ?? "/app/today" },
+          ],
     };
   }
   return null;

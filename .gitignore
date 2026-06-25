@@ -85,6 +85,15 @@ vantage-*.png
 /ui[0-9]-*.png
 /verify-*.png
 /verifier-*.png
+/dock-*.png
+/editor-*.png
+/quota-*.png
+/relay-*.png
+
+# stray probe / scratch files at repo root or inside web/
+/goal-*.md
+web/_probe_*
+web/src/components/_orig_*.tsx
 
 # AI automation test fixtures (local-only)
 test-fixtures/
@@ -101,7 +110,11 @@ TODO.md
 /.lock
 /__probe_*
 
+# relay-up skill runtime artifacts (logs + pids for the local dev stack)
+/.relay-stack/
+
 # env (ensure .env.example is allowed)
 .env.*
 !.env.example
 !.env.example.*
+api/scratch/

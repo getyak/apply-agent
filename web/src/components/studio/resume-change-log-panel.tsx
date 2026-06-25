@@ -25,6 +25,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useTranslations } from "next-intl";
 
 export type ChangeLogRisk = "safe" | "needs_review" | "unsupported";
 export type ChangeLogType =
@@ -50,21 +51,26 @@ function truncate(s: string | null | undefined): string {
   return s.length > CHARS ? `${s.slice(0, CHARS).trimEnd()}…` : s;
 }
 
+// Returns the colour spec plus the i18n key for the risk label. The label
+// text itself is resolved in the component via t() so it localises.
 function riskSpec(risk: string | null | undefined) {
-  if (risk === "safe") return { text: "SAFE", fg: "#2F5722", bg: "#E2EED9" };
+  if (risk === "safe") return { key: "changeLog.risk.safe", fg: "#2F5722", bg: "#E2EED9" };
   if (risk === "needs_review")
-    return { text: "NEEDS REVIEW", fg: "#8A6A12", bg: "#FBEFD0" };
+    return { key: "changeLog.risk.needsReview", fg: "#8A6A12", bg: "#FBEFD0" };
   if (risk === "unsupported")
-    return { text: "UNSUPPORTED", fg: "#7A2A1F", bg: "#F4D7D2" };
-  return { text: "UNKNOWN", fg: "#5D5046", bg: "#F4F0E8" };
+    return { key: "changeLog.risk.unsupported", fg: "#7A2A1F", bg: "#F4D7D2" };
+  return { key: "changeLog.risk.unknown", fg: "#5D5046", bg: "#F4F0E8" };
 }
 
-function changeTypeLabel(t: string): string {
-  if (t === "tighten") return "Tighten";
-  if (t === "quantify_existing") return "Quantified existing";
-  if (t === "reorder") return "Reorder";
-  if (t === "infer_wording") return "Wording inferred";
-  return t.replace(/_/g, " ");
+// Translator type narrowed to what these helpers need.
+type Translate = (key: string, values?: Record<string, string | number>) => string;
+
+function changeTypeLabel(t: Translate, type: string): string {
+  if (type === "tighten") return t("changeLog.type.tighten");
+  if (type === "quantify_existing") return t("changeLog.type.quantifyExisting");
+  if (type === "reorder") return t("changeLog.type.reorder");
+  if (type === "infer_wording") return t("changeLog.type.inferWording");
+  return type.replace(/_/g, " ");
 }
 
 interface Props {
@@ -84,6 +90,7 @@ interface Props {
 }
 
 export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props) {
+  const t = useTranslations("resume");
   const counts = useMemo(() => {
     let safe = 0;
     let needs = 0;
@@ -111,8 +118,7 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
           color: "#5D5046",
         }}
       >
-        No change log on this version — either the agent didn&apos;t emit one
-        or this is the original master. There&apos;s nothing to review.
+        {t("changeLog.empty")}
       </div>
     );
   }
@@ -148,13 +154,12 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
             flex: "0 0 auto",
           }}
         >
-          CHANGE LOG · {entries.length}{" "}
-          {entries.length === 1 ? "EDIT" : "EDITS"}
+          {t("changeLog.header", { count: entries.length })}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <CountChip n={counts.safe} label="safe" risk="safe" />
-          <CountChip n={counts.needs} label="needs review" risk="needs_review" />
-          <CountChip n={counts.unsupported} label="unsupported" risk="unsupported" />
+          <CountChip n={counts.safe} label={t("changeLog.count.safe")} risk="safe" />
+          <CountChip n={counts.needs} label={t("changeLog.count.needsReview")} risk="needs_review" />
+          <CountChip n={counts.unsupported} label={t("changeLog.count.unsupported")} risk="unsupported" />
         </div>
         <div style={{ flex: 1 }} />
         {onRegenerate ? (
@@ -173,7 +178,7 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
               borderRadius: 8,
             }}
           >
-            Regenerate
+            {t("changeLog.regenerate")}
           </button>
         ) : null}
         {onApprove ? (
@@ -186,8 +191,8 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
             }}
             title={
               approveBlocked
-                ? "Clear the needs-review / unsupported rows first"
-                : "Accept this tailored version"
+                ? t("changeLog.approveBlockedHint")
+                : t("changeLog.approveHint")
             }
             style={{
               cursor: approveBlocked ? "not-allowed" : "pointer",
@@ -202,7 +207,7 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
               opacity: approveBlocked ? 0.7 : 1,
             }}
           >
-            Approve
+            {t("changeLog.approve")}
           </button>
         ) : null}
       </div>
@@ -247,7 +252,7 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
                   color: "#A39F99",
                 }}
               >
-                · {changeTypeLabel(e.change_type)}
+                · {changeTypeLabel(t, e.change_type)}
               </span>
             </div>
             {e.explanation ? (
@@ -272,7 +277,7 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
                   color: "#A39F99",
                 }}
               >
-                evidence: {e.source_evidence}
+                {t("changeLog.evidence")} {e.source_evidence}
               </div>
             ) : null}
           </li>
@@ -283,6 +288,7 @@ export function ResumeChangeLogPanel({ entries, onApprove, onRegenerate }: Props
 }
 
 function RiskChip({ risk }: { risk: string | null }) {
+  const t = useTranslations("resume");
   const spec = riskSpec(risk);
   return (
     <span
@@ -296,7 +302,7 @@ function RiskChip({ risk }: { risk: string | null }) {
         background: spec.bg,
       }}
     >
-      {spec.text}
+      {t(spec.key)}
     </span>
   );
 }
@@ -337,6 +343,7 @@ function DiffPair({
   before: string | null | undefined;
   after: string | null | undefined;
 }) {
+  const t = useTranslations("resume");
   return (
     <div
       style={{
@@ -367,11 +374,11 @@ function DiffPair({
             marginBottom: 4,
           }}
         >
-          BEFORE
+          {t("changeLog.before")}
         </div>
         {truncate(before) || (
           <span style={{ color: "#A39F99" }}>
-            <em>(no prior bullet)</em>
+            <em>{t("changeLog.noPriorBullet")}</em>
           </span>
         )}
       </div>
@@ -397,11 +404,11 @@ function DiffPair({
             marginBottom: 4,
           }}
         >
-          AFTER
+          {t("changeLog.after")}
         </div>
         {truncate(after) || (
           <span style={{ color: "#A39F99" }}>
-            <em>(empty)</em>
+            <em>{t("changeLog.empty2")}</em>
           </span>
         )}
       </div>

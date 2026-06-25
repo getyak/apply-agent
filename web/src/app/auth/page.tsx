@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { auth as authApi, setToken, getToken, ApiError } from "@/lib/api";
 import { BrandLoader, Button, Field, Input } from "@/components/ui";
@@ -13,7 +14,8 @@ import { BrandLoader, Button, Field, Input } from "@/components/ui";
 // in a suspense boundary". The fallback mirrors the same brand frame the inner
 // component shows while verifying the session.
 function AuthFallback() {
-  return <BrandLoader label="Loading…" />;
+  const t = useTranslations("auth");
+  return <BrandLoader label={t("loading")} />;
 }
 
 export default function AuthPage() {
@@ -26,24 +28,25 @@ export default function AuthPage() {
 
 function AuthPageInner() {
   const router = useRouter();
+  const t = useTranslations("auth");
   const search = useSearchParams();
   const sessionNotice = useMemo(() => {
     const reason = search?.get("reason");
     if (reason === "session_expired")
-      return "Your session has expired. Please sign in again.";
+      return t("notice.sessionExpired");
     if (reason === "session_timeout")
-      return "Couldn't reach the server. Please try signing in again.";
+      return t("notice.sessionTimeout");
     return null;
-  }, [search]);
+  }, [search, t]);
   // Landing CTAs hand off plan / mode / intent via query so the auth page can
   // open in the right state and remember the user's pricing choice on signup.
   const planLabel = useMemo(() => {
     const plan = search?.get("plan");
-    if (plan === "pro") return "Continue to start your 7-day Pro trial.";
-    if (plan === "max") return "Continue to go Max.";
-    if (plan === "free") return "Continue to start free.";
+    if (plan === "pro") return t("plan.pro");
+    if (plan === "max") return t("plan.max");
+    if (plan === "free") return t("plan.free");
     return null;
-  }, [search]);
+  }, [search, t]);
   const initialMode = useMemo(() => {
     const mode = search?.get("mode");
     // mode=login → sign-in form; mode=signup or any plan/intent → sign-up form.
@@ -114,11 +117,11 @@ function AuthPageInner() {
         const retrySeconds = match ? match[1] : null;
         setError(
           retrySeconds
-            ? `Too many attempts. Please wait ${retrySeconds} seconds before trying again.`
-            : "Too many attempts. Please wait a moment before trying again.",
+            ? t("error.rateLimitSeconds", { seconds: retrySeconds })
+            : t("error.rateLimit"),
         );
       } else {
-        setError(err instanceof Error ? err.message : "Something went wrong");
+        setError(err instanceof Error ? err.message : t("error.generic"));
       }
     } finally {
       setLoading(false);
@@ -126,7 +129,7 @@ function AuthPageInner() {
   };
 
   if (checking) {
-    return <BrandLoader label="Verifying your session…" />;
+    return <BrandLoader label={t("verifying")} />;
   }
 
   return (
@@ -153,10 +156,10 @@ function AuthPageInner() {
             <span className="gradient-text">VANTAGE</span>
           </div>
           <h1 className="mt-4 font-display text-[32px] font-bold -tracking-[0.3px] text-ink leading-tight">
-            {isLogin ? "Welcome back." : "Start your hunt."}
+            {isLogin ? t("welcomeBack") : t("startHunt")}
           </h1>
           <p className="mt-2 font-body text-[14px] text-ink-light">
-            {isLogin ? "Sign in to your workspace." : "It takes under a minute."}
+            {isLogin ? t("signInSub") : t("signUpSub")}
           </p>
         </div>
 
@@ -191,17 +194,17 @@ function AuthPageInner() {
           className="glow-track spotlight animate-pop-blur stagger space-y-4 bg-white border border-border rounded-[14px] p-6 shadow-md"
         >
           {!isLogin && (
-            <Field label="Display name">
+            <Field label={t("displayName")}>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="What we should call you"
+                placeholder={t("displayNamePlaceholder")}
                 autoComplete="name"
               />
             </Field>
           )}
 
-          <Field label="Email">
+          <Field label={t("email")}>
             <Input
               type="email"
               value={email}
@@ -212,7 +215,7 @@ function AuthPageInner() {
             />
           </Field>
 
-          <Field label="Password" hint={isLogin ? undefined : "6+ characters."}>
+          <Field label={t("password")} hint={isLogin ? undefined : t("passwordHint")}>
             <Input
               type="password"
               value={password}
@@ -240,12 +243,12 @@ function AuthPageInner() {
             size="lg"
             trailingIcon={!loading ? <ArrowRight size={16} strokeWidth={2} /> : null}
           >
-            {loading ? "…" : isLogin ? "Sign in" : "Create account"}
+            {loading ? "…" : isLogin ? t("signIn") : t("createAccount")}
           </Button>
         </form>
 
         <p className="text-center mt-6 font-body text-[14px] text-ink-light">
-          {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
+          {isLogin ? t("noAccount") : t("haveAccount")}{" "}
           <button
             type="button"
             onClick={() => {
@@ -254,13 +257,13 @@ function AuthPageInner() {
             }}
             className="text-brown font-semibold hover:underline outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
           >
-            {isLogin ? "Sign up" : "Sign in"}
+            {isLogin ? t("signUp") : t("signIn")}
           </button>
         </p>
 
         <p className="text-center mt-4 font-mono text-[11px] tracking-[0.4px] uppercase text-ink-muted">
           <Link href="/" className="inline-flex items-center gap-1 hover:text-ink transition-colors">
-            <ArrowLeft size={11} /> Back to home
+            <ArrowLeft size={11} /> {t("backToHome")}
           </Link>
         </p>
       </div>

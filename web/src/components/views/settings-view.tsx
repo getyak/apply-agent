@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { X, Check, AlertCircle, Download, Trash2 } from "lucide-react";
+import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 import {
   users,
   resumes as resumesApi,
@@ -41,6 +43,7 @@ function TagInput({
   onChange: (next: string[]) => void;
   placeholder: string;
 }) {
+  const t = useTranslations("settings");
   const [draft, setDraft] = useState("");
 
   const commit = () => {
@@ -63,7 +66,7 @@ function TagInput({
               type="button"
               onClick={() => onChange(values.filter((x) => x !== v))}
               className="cursor-pointer text-brown/60 hover:text-brown"
-              aria-label={`Remove ${v}`}
+              aria-label={t("jobPrefs.removeTag", { value: v })}
             >
               <X className="h-[13px] w-[13px]" strokeWidth={2} />
             </button>
@@ -109,6 +112,7 @@ function Section({
 
 export function SettingsView() {
   const router = useRouter();
+  const t = useTranslations("settings");
   const [me, setMe] = useState<UserRecord | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -191,7 +195,7 @@ export function SettingsView() {
         });
       })
       .catch((err) => {
-        setLoadError(err instanceof ApiError ? err.message : "Could not load your profile.");
+        setLoadError(err instanceof ApiError ? err.message : t("errors.load"));
       });
   }, []);
 
@@ -218,7 +222,7 @@ export function SettingsView() {
     if (minSalary.trim() !== "") {
       const n = Number(minSalary);
       if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
-        setSalaryError("Enter a whole, non-negative number.");
+        setSalaryError(t("errors.salaryInteger"));
         return;
       }
       // S1 (round-6): mirror the server-side cap from
@@ -228,7 +232,7 @@ export function SettingsView() {
       // toast and no field-level cue. Catch it here so the same inline
       // salaryError surfaces and onSave can short-circuit cheaply.
       if (n > 10_000_000) {
-        setSalaryError("Salary must be at most 10,000,000.");
+        setSalaryError(t("errors.salaryMax"));
         return;
       }
       parsedSalary = n;
@@ -266,7 +270,7 @@ export function SettingsView() {
         crowdsourceOptIn,
       });
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : "Could not save your preferences.");
+      setSaveError(err instanceof ApiError ? err.message : t("errors.save"));
     } finally {
       setSaving(false);
     }
@@ -281,7 +285,7 @@ export function SettingsView() {
       clearToken();
       router.replace("/");
     } catch (err) {
-      setDeleteError(err instanceof ApiError ? err.message : "Could not delete your account.");
+      setDeleteError(err instanceof ApiError ? err.message : t("errors.delete"));
       setDeleting(false);
     }
   };
@@ -333,7 +337,7 @@ export function SettingsView() {
       URL.revokeObjectURL(url);
     } catch (err) {
       setExportError(
-        err instanceof ApiError ? err.message : "Could not export your data.",
+        err instanceof ApiError ? err.message : t("errors.export"),
       );
     } finally {
       setExporting(false);
@@ -363,10 +367,10 @@ export function SettingsView() {
   return (
     <div className="mx-auto max-w-[760px] animate-fade-up px-12 pb-[60px] pt-10">
       <div className="mb-[10px] font-mono text-[11px] uppercase tracking-[1px] text-ink-muted">
-        Account
+        {t("account")}
       </div>
       <h1 className="mb-[26px] font-display text-[32px] font-bold -tracking-[0.3px] text-ink">
-        Settings
+        {t("title")}
       </h1>
 
       {loadError && (
@@ -377,47 +381,52 @@ export function SettingsView() {
       )}
 
       <div className="flex flex-col gap-5">
+        {/* Language (interface locale) */}
+        <Section title={t("language.title")} desc={t("language.desc")}>
+          <LanguageSwitcher variant="segmented" />
+        </Section>
+
         {/* Profile (read-only) */}
-        <Section title="Profile" desc="Your account details. Read-only for now.">
+        <Section title={t("profile.title")} desc={t("profile.desc")}>
           <dl className="grid grid-cols-[140px_1fr] gap-y-3 font-body text-[14px]">
-            <dt className="text-ink-light">Email</dt>
+            <dt className="text-ink-light">{t("profile.email")}</dt>
             <dd className="text-ink">{me?.email ?? "—"}</dd>
-            <dt className="text-ink-light">Display name</dt>
+            <dt className="text-ink-light">{t("profile.displayName")}</dt>
             <dd className="text-ink">{me?.display_name || "—"}</dd>
-            <dt className="text-ink-light">Member since</dt>
+            <dt className="text-ink-light">{t("profile.memberSince")}</dt>
             <dd className="text-ink">{created}</dd>
           </dl>
         </Section>
 
         {/* Job preferences (editable) */}
         <Section
-          title="Job preferences"
-          desc="What Vantage matches against. The closer this is to reality, the better your daily briefing."
+          title={t("jobPrefs.title")}
+          desc={t("jobPrefs.desc")}
         >
           <div className="flex flex-col gap-5">
             <TagInput
-              label="Target roles"
+              label={t("jobPrefs.targetRoles")}
               values={targetRoles}
               onChange={setTargetRoles}
-              placeholder="e.g. Senior Product Designer — press Enter"
+              placeholder={t("jobPrefs.targetRolesPlaceholder")}
             />
             <TagInput
-              label="Skills"
+              label={t("jobPrefs.skills")}
               values={skills}
               onChange={setSkills}
-              placeholder="e.g. Figma, Design systems — press Enter"
+              placeholder={t("jobPrefs.skillsPlaceholder")}
             />
             <TagInput
-              label="Locations"
+              label={t("jobPrefs.locations")}
               values={locations}
               onChange={setLocations}
-              placeholder="e.g. Remote, New York — press Enter"
+              placeholder={t("jobPrefs.locationsPlaceholder")}
             />
 
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
                 <span className="font-body text-[13px] font-semibold text-ink">
-                  Minimum salary (USD)
+                  {t("jobPrefs.minSalary")}
                 </span>
                 <input
                   type="number"
@@ -434,16 +443,16 @@ export function SettingsView() {
               </label>
 
               <label className="block">
-                <span className="font-body text-[13px] font-semibold text-ink">Work arrangement</span>
+                <span className="font-body text-[13px] font-semibold text-ink">{t("jobPrefs.workArrangement")}</span>
                 <select
                   value={remote}
                   onChange={(e) => setRemote(e.target.value as RemoteChoice)}
                   className="mt-2 w-full cursor-pointer rounded-[10px] border border-border bg-white px-3 py-[11px] font-body text-[14px] text-ink outline-none transition-colors focus:border-border-dark"
                 >
-                  <option value="any">Any</option>
-                  <option value="remote">Remote</option>
-                  <option value="hybrid">Hybrid</option>
-                  <option value="onsite">On-site</option>
+                  <option value="any">{t("jobPrefs.remoteAny")}</option>
+                  <option value="remote">{t("jobPrefs.remoteRemote")}</option>
+                  <option value="hybrid">{t("jobPrefs.remoteHybrid")}</option>
+                  <option value="onsite">{t("jobPrefs.remoteOnsite")}</option>
                 </select>
               </label>
             </div>
@@ -456,12 +465,12 @@ export function SettingsView() {
                 className="flex items-center gap-[7px] rounded-[9px] border-none bg-brown px-[18px] py-[11px] font-body text-[14px] font-semibold text-paper transition-colors hover:bg-brown-light disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Check className="h-[15px] w-[15px]" strokeWidth={2} />
-                {saving ? "Saving…" : "Save preferences"}
+                {saving ? t("jobPrefs.saving") : t("jobPrefs.save")}
               </button>
               {saveOk && (
                 <span className="flex items-center gap-[6px] font-body text-[13px] font-medium text-green">
                   <Check className="h-4 w-4" strokeWidth={2.4} />
-                  Saved
+                  {t("jobPrefs.saved")}
                 </span>
               )}
               {saveError && (
@@ -476,8 +485,8 @@ export function SettingsView() {
 
         {/* Privacy — flywheel opt-in (vantage-ui-mapping.md §3.5) */}
         <Section
-          title="Privacy"
-          desc="Help future job-seekers without exposing yourself. Off by default."
+          title={t("privacy.title")}
+          desc={t("privacy.desc")}
         >
           <div className="flex items-start gap-3 rounded-[10px] border border-border bg-paper px-4 py-3">
             <label
@@ -485,22 +494,16 @@ export function SettingsView() {
               className="flex-1 cursor-pointer"
             >
               <div className="font-body text-[14px] font-semibold text-ink">
-                Donate anonymised interview questions to the shared pool
+                {t("privacy.donateTitle")}
               </div>
               <p className="mt-1 font-body text-[13px] leading-[1.55] text-ink-light">
-                When you log a real interview, Vantage strips company /
-                personal identifiers and contributes the question text to a
-                pool that helps other users prep for the same round. Your
-                résumé, answers, and outcomes never leave your account. You
-                can turn this off at any time and any previously donated
-                questions stay in the pool — past contributions are
-                anonymised, so we can&apos;t pull a specific one back.
+                {t("privacy.donateBody")}
               </p>
               <a
                 href="/legal/privacy"
                 className="mt-1 inline-block font-body text-[12px] text-brown underline hover:no-underline"
               >
-                Read what we collect →
+                {t("privacy.readMore")}
               </a>
             </label>
             <button
@@ -519,14 +522,14 @@ export function SettingsView() {
                 }`}
               />
               <span className="sr-only">
-                {crowdsourceOptIn ? "On" : "Off"} — toggle question donation
+                {crowdsourceOptIn ? t("privacy.toggleOn") : t("privacy.toggleOff")}
               </span>
             </button>
           </div>
         </Section>
 
         {/* Data (export + delete) */}
-        <Section title="Data" desc="Export or permanently delete everything Vantage holds about you.">
+        <Section title={t("data.title")} desc={t("data.desc")}>
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-2">
               <button
@@ -536,12 +539,10 @@ export function SettingsView() {
                 className="flex w-fit items-center gap-[7px] rounded-[9px] border border-border bg-white px-[16px] py-[10px] font-body text-[14px] font-medium text-ink transition-colors hover:border-border-dark disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Download className="h-[15px] w-[15px]" strokeWidth={1.8} />
-                {exporting ? "Preparing export…" : "Export my data"}
+                {exporting ? t("data.exporting") : t("data.export")}
               </button>
               <p className="font-body text-[12px] text-ink-light">
-                Downloads a JSON file with your profile, all résumé versions, and every
-                application Vantage holds for you. No server-side queue — generated on
-                the spot.
+                {t("data.exportDesc")}
               </p>
               {exportError && (
                 <span className="flex items-center gap-[6px] font-body text-[12px] text-red-600">
@@ -552,10 +553,9 @@ export function SettingsView() {
             </div>
 
             <div className="mt-2 rounded-[10px] border border-red-200 bg-red-50/60 p-4">
-              <div className="font-body text-[14px] font-semibold text-ink">Delete account</div>
+              <div className="font-body text-[14px] font-semibold text-ink">{t("data.deleteTitle")}</div>
               <p className="mt-1 font-body text-[13px] text-ink-light">
-                Permanently erases your résumés, applications, interviews, and profile. This cannot be
-                undone.
+                {t("data.deleteDesc")}
               </p>
               <button
                 type="button"
@@ -567,7 +567,7 @@ export function SettingsView() {
                 className="mt-3 flex items-center gap-[7px] rounded-[9px] border border-red-300 bg-white px-[16px] py-[9px] font-body text-[14px] font-semibold text-red-600 transition-colors hover:bg-red-600 hover:text-white"
               >
                 <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                Delete my account
+                {t("data.deleteButton")}
               </button>
             </div>
           </div>
@@ -593,18 +593,21 @@ export function SettingsView() {
               id="delete-account-title"
               className="font-display text-[19px] font-bold text-ink"
             >
-              Delete your account?
+              {t("deleteModal.title")}
             </h3>
             <p className="mt-2 font-body text-[13px] text-ink-light">
-              This permanently deletes all your data. Type{" "}
-              <span className="font-mono font-semibold text-ink">DELETE</span> to confirm.
+              {t.rich("deleteModal.body", {
+                token: (chunks) => (
+                  <span className="font-mono font-semibold text-ink">{chunks}</span>
+                ),
+              })}
             </p>
             <input
               autoFocus
               value={deleteConfirm}
               onChange={(e) => setDeleteConfirm(e.target.value)}
               placeholder="DELETE"
-              aria-label="Type DELETE to confirm"
+              aria-label={t("deleteModal.inputLabel")}
               className="mt-4 w-full rounded-[10px] border border-border bg-white px-3 py-[10px] font-mono text-[14px] text-ink outline-none focus:border-red-300"
             />
             {deleteError && (
@@ -620,7 +623,7 @@ export function SettingsView() {
                 disabled={deleting}
                 className="rounded-[9px] border border-border bg-white px-[16px] py-[9px] font-body text-[14px] font-medium text-ink transition-colors hover:bg-cream disabled:opacity-60"
               >
-                Cancel
+                {t("deleteModal.cancel")}
               </button>
               <button
                 type="button"
@@ -628,7 +631,7 @@ export function SettingsView() {
                 disabled={deleteConfirm !== "DELETE" || deleting}
                 className="rounded-[9px] border-none bg-red-600 px-[16px] py-[9px] font-body text-[14px] font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {deleting ? "Deleting…" : "Delete forever"}
+                {deleting ? t("deleteModal.deleting") : t("deleteModal.confirm")}
               </button>
             </div>
           </div>

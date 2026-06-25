@@ -706,3 +706,178 @@ FOR EACH ROW EXECUTE FUNCTION prevent_original_mutation();
 ---
 
 > 本文档结束。任何对"Resume Studio 主区为什么不是双栏"、"为什么不能让 AI 直接覆盖原版"、"为什么 dock 要有 artifact 而不是跳页"的疑问 — 回到 §3（指导原则）。任何模型改动（schema 层）— 必须先回到 §4 改设计再改 SQL。
+
+---
+
+## 11. 修订（2026-06-24）：默认展示形态 + 渲染技术
+
+> 本节是对 §3.1 / §5.1 / §5.3 的**定向修订**。§1–§10 的数据模型、fabrication 红线、suggestions 表、dock artifact 设计**全部保留不变**——本节只改"主区默认看哪个版本"和"用什么渲染"这两个 UX 决策。决策人：项目 owner，2026-06-24。
+
+### 11.1 决策对账
+
+§3.1 原立场是"**原版是主区默认布局的左半**"（原版优先）。本次修订改为：**主区默认渲染 AI 优化版，以 Markdown→HTML 呈现**；原版降为平级 tab（不藏 modal）。
+
+**为什么改**（与 vision.md 对齐度更高）：
+
+| | §3.1 原立场（原版优先） | 修订（优化版优先） |
+|---|---|---|
+| 第一印象 | "它先尊重我的版本" | "它已经帮我改好了" |
+| §2.1 的担忧"用户觉得格式被毁" | 用原版规避 | 用**干净的 Markdown 渲染**化解——优化版不再是"丑陋 JSON 模板重排"，而是一份体面文档 |
+| vision.md「AI 先做，用户后审」 | 偏"后审" | 偏"先做" ← **更贴北极星"为我而做的求职简报"** |
+
+**关键澄清——这次修订没有动任何红线**：
+
+- §3.2「衍生版本是建议不是覆盖」**不变**：优化版仍然是建议堆叠的结果，原版仍是导出默认（§7.3）。
+- §7.2「原版永不被覆盖」**不变**：`prevent_original_mutation` trigger（migration 017 已落盘）继续生效。
+- "默认看哪个"是**纯第一印象 UX**，与数据层 source-of-truth 是两件事。优化版默认可见，不代表它取代原版的合同地位。
+
+### 11.2 主区布局修订（取代 §5.1 / §5.3 的 tab 定义）
+
+§5.1 的"原版 ↔ 衍生版双栏"**保留为 Compare 模式**，但不再是默认。默认是**单栏看优化版**，一键切原版/对照：
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ Chrome: [优化版 ●] [原版] [对照]   [Source: resume.pdf] [Upload] [Export ▼] │
+├──────────────┬───────────────────────────────────────────────────┤
+│ Version Rail │ Document Pane（默认单栏）                          │
+│ (280px)      │                                                   │
+│ (§5.2 三段   │ 默认 = 优化版 Markdown → HTML                      │
+│  rail 不变)  │   ① react-markdown + remark-gfm                   │
+│              │   ② 一套 .resume-prose 主题 CSS                    │
+│              │   ③ AI 改写的 bullet 行内 coral 高亮 + hover 看理由 │
+│              │   ④ needs_review 建议行尾挂 [Accept][Reject] chip  │
+└──────────────┴───────────────────────────────────────────────────┘
+```
+
+**三个 tab 的修订定义**（取代 §5.3）：
+
+| Tab | 内容 | 是否默认 |
+|---|---|---|
+| **优化版** | 单栏，优化版 Markdown 渲染（默认落点） | ✅ 默认 |
+| **原版** | 单栏，原版按上传版式渲染（PDF iframe / DOCX 转 PDF / MD 渲染，渲染方式见 §5.1 表） | |
+| **对照** | §5.1 的双栏 diff（原版左 ↔ 优化版右，coral 高亮） | |
+
+`Extracted`（LLM 输入 raw text）降为 Compare 模式下的 advanced 折叠项，不再是顶层 tab。
+
+**优化版还在跑时的空态**：上传刚完成、`optimize_general` 异步未回 → 默认 tab 显示 skeleton + "Vantage 正在优化你的简历…"，并提供"先看原版"的副 CTA（避免空等）。
+
+### 11.3 渲染技术：Markdown 为存储 + 渲染为 HTML
+
+**决策**：优化版 / tailored 的**人类可读形态以 Markdown 字符串存储**，前端 react-markdown + remark-gfm + 一套 `.resume-prose` 主题渲染成 HTML。**不**为不同简历维护多套 HTML 模板。
+
+**与现有 JSON Resume 的关系**——采纳 §10 之外的第三形态「Markdown 主轨 + JSON 旁路」：
+
+```
+解析时（parse-async）一次产出两份，由 bullet stable_id 关联：
+┌─ 主轨：Markdown ──────────────┐   ┌─ 旁路：JSON Resume ─────────┐
+│ 给人看（Document Pane 渲染）   │   │ 给机器用（匹配/技能/分析）   │
+│ 给 LLM 改（optimize/vibe 输入） │←→│ jobmatch / analyze / 技能图  │
+│ 行级 diff 干净                 │   │ basics/work/skills/...      │
+└────────────────────────────────┘   └──────────────────────────────┘
+        关联键：resumes.bullet_index 的 stable_id
+        （§4.3 已定义；每个 stable_id 既指 JSON path 也锚 Markdown 行）
+```
+
+**为什么 Markdown 是主轨**（回应 owner 原话"HTML 显示有优势但渲染麻烦，且不同简历不同定制"）：
+
+1. **LLM 友好**：`optimize_general` / `propose_bullet_edit` 直接产出/修改 Markdown，不必让 LLM 操作嵌套 JSON 数组下标——这也顺带消解了 §2.3「LLM 重写洗牌下标」的根因。
+2. **diff 干净**：Markdown 行级 diff 比 JSON 结构 diff 直观，§5.1 的 coral 高亮直接基于行 diff。
+3. **可编辑**：未来"手动微调"= textarea ↔ 预览，零模板成本。
+4. **一套主题吃所有简历**：`.resume-prose` 一套 CSS，不为每份简历定制——"不同简历不同定制"的需求改由**优化版内容本身的差异**承载，而非排版模板差异。HTML 自由排版（双栏、图标）简历其实不需要，导出 PDF 时再谈版式（§7.3）。
+
+**存储落点**：`resumes.content` 扩展为同时持有 `markdown`（新，主轨）+ `parsed`（JSON，旁路）+ `raw`（原始抽取文本，不变）。Markdown 由 JSON 渲染生成，或由 LLM 直接产出——两者必须经 §4.3 的 stable_id 校验保持一致。
+
+**安全**：Markdown→HTML 渲染必须过 sanitize（react-markdown 默认禁 raw HTML，保持默认；简历内容不需要内嵌 HTML/script）。这条对齐 RULES.md「sanitize all HTML output」。
+
+### 11.4 对 §8 PR 顺序的影响
+
+- **P0-3**（主区双栏）修订为：**主区默认单栏优化版 Markdown 渲染 + [优化版/原版/对照] tab**；§5.1 双栏降级为"对照"tab 内的形态。
+- 新增 **P0-2.5**：`parse-async` 产出 Markdown 主轨 + JSON 旁路双形态 + `.resume-prose` 渲染组件。排在 P0-2（optimize_general）前，因为 optimize 的输入/输出都是 Markdown。
+
+---
+
+## 12. 新增（2026-06-24）：上传 = Resume Intake Agent
+
+> §1.1 把上传当**纯管道**（提取 → LLM parse → 入库），唯一"验证"是被动 `warnings`。本节把上传升级为一个**主动验证 agent**——这是 §1–§11 完全没有的新层。决策人：项目 owner，2026-06-24（四项能力全要）。
+
+### 12.1 定位：intake 是 parse 的超集，不是新 agent
+
+不新增第 6 个 agent（守 agent-architecture.md「红线：能塞进现有 5 个之一就不新增」）。**intake 是 ResumeAgent 的一个新 action**，把现有的 `parse` 包进一条更长的验证链：
+
+```
+upload → bytesToMarkdown (TS, 不变)
+              │
+              ▼
+   ResumeAgent.intake(markdown, user_id)   ← 新 action，替代裸 parse
+   ┌─────────────────────────────────────────────────────┐
+   │ ① parse           markdown → JSON Resume（复用现有）  │
+   │ ② structure_check 必备 section 齐全？缺口清单          │
+   │ ③ proofread       错别字/语法/时态/标点（标，不改）     │
+   │ ④ normalize       日期/技能名/动词时态 规范化建议        │
+   │ ⑤ quality_diag    弱 bullet 诊断（= analyze 的子集）   │
+   └─────────────────────────────────────────────────────┘
+              │
+              ├─ JSON + Markdown 双形态落 track='original'
+              │   （原版内容不动，校验产物单独存）
+              └─ 校验产物 → resume_suggestions(proposed_by='intake')
+                          + dock artifact 主动推送
+```
+
+**关键约束——intake 永不改原版**：四项验证全部产出**建议/标注**，写进 §4.2 的 `resume_suggestions` 表（`proposed_by='intake'`），绝不 mutate `track='original'` 的内容（§7.2 trigger 兜底）。这守住了 §3.1 信任合同——上传是"它先看了一遍并指出问题"，不是"它擅自改了我的简历"。
+
+### 12.2 四项能力的实现边界（对应 owner 四选）
+
+| 能力 | 做什么 | 模型 | 产出 risk_level | 是否自动应用 |
+|---|---|---|---|---|
+| **① 结构完整性** | 检查 basics/work/skills/education 必备项；缺口标注（"没有量化成果"、"缺联系方式"） | 规则 + V4 Flash | — (诊断类，不是改写建议) | 否，只提示 |
+| **② 错别字/语法** | 拼写、语法、时态一致、标点。**标出可疑处，不自动改** | V4 Flash | `needs_review`（专有名词/技术栈缩写易误伤） | **否，必须用户确认** |
+| **③ 格式规范化** | 日期统一（2021–2024）、技能名规范（JavaScript≠js）、bullet 动词时态、量化表达 | 规则优先 + LLM 兜底 | `safe`（纯格式）/ `needs_review`（涉及语义） | safe 可自动，needs_review 卡 HITL |
+| **④ 内容质量诊断** | 弱 bullet 识别（无量化/被动语态/职责堆砌非成果）→ 改进方向。**这就是 §6.1 的 analyze / "3 weakest spots" chip** | GLM-4.7 | `needs_review`（都是改写建议） | 否 |
+
+**②/④ 必须守 fabrication 红线**（§7.1）：proofread 改专有名词、quality_diag 加量化指标，都极易偷塞虚构——必须逐项过 `fabrication_guard`，任何 before 里没有的 named entity 一律 `unsupported`，不进 safe。
+
+**②错别字的特别注意**：技术简历充斥"非词典词"（k8s、PostgreSQL、gRPC、CUBXXW）。proofread prompt 必须显式声明"技术栈缩写、产品名、人名不算拼写错误"，否则误报率会毁掉信任。这条进 `agents/prompts/resume/proofread.v1.md` 并配 Promptfoo eval（误伤率 < 5%）。
+
+### 12.3 上传后的 dock 主动通道（具体化 §6.4）
+
+intake 跑完 → dock 主动推一张 artifact 卡（沿用 §6.3 suggestion-list 协议，新增 intake 分组）：
+
+```
+│ [agent task] RÉSUMÉ AGENT · checking your résumé
+│ [agent task] RÉSUMÉ AGENT · done
+│ [artifact: intake-report]                          ← 新 artifact 子类型
+│   ┌──────────────────────────────────────────────┐
+│   │ 我看了一遍你的简历：                            │
+│   │                                                │
+│   │ ✅ 结构完整（4/4 section 齐全）                 │
+│   │ ⚠️ 2 处可能的笔误（待你确认）                   │
+│   │ 🔧 3 处格式已帮你规范（safe，已应用）           │
+│   │ 💡 4 条 bullet 可以更有说服力                   │
+│   │                                                │
+│   │ [逐条看 (6)] [全部接受 safe (3)] [先这样]        │
+│   └──────────────────────────────────────────────┘
+```
+
+- ③的 `safe` 项（日期格式统一等）**自动应用进 optimized v1**（vision.md「AI 先做」），卡片只做事后告知。
+- ①②④ 全是 `needs_review` → 留 `status='proposed'`，等用户逐条决定（vision.md「用户后审」）。
+- 点 [逐条看] → 进 §6.3 的逐条 accept/reject/discuss 流。
+
+### 12.4 同步 vs 异步
+
+intake 是**两段**：
+
+1. **快段（同步，阻塞 parse-async job）**：① parse + ② structure_check。这两步是"能不能用"的判断，必须在 job done 前完成——否则用户进 workspace 看到的优化版是空的。
+2. **慢段（异步，parse 完链式触发）**：③ proofread + ④ normalize + ⑤ quality_diag + `optimize_general`（§6.2）。这些是"锦上添花"，走 §6.2 的 optimize-async job，dock banner 通知。
+
+这样 §6.2 的"上传链式触发 optimize_general"和本节的慢段验证**合并成一条 optimize-async**，省一次 LLM 往返。
+
+### 12.5 对 §8 PR 顺序的影响
+
+- 新增 **P0-2.7**：`ResumeAgent.intake` action（封装 parse + 四项验证）+ `proofread.v1.md` / `normalize.v1.md` prompt + Promptfoo 误伤率 eval。排在 P0-2.5（双形态）后、P1-5（dock artifact）前。
+- `intake-report` artifact 子类型并入 **P1-5** dock artifact card 工程。
+
+### 12.6 留给实施的问题
+
+1. **structure_check 的"必备 section"对不同人群是否一刀切**：应届生没 work，是不是该判"缺经历"？建议按 `preferences.target_roles` 推断期望档位，缺口提示分级。
+2. **proofread 误伤的反馈回路**：用户 reject 一条"笔误"建议 → 该词应进 per-user 白名单，下次不再报。落 `user_memories` 还是新表？倾向复用 `user_memories`（type='resume_term_whitelist'）。
+3. **慢段失败如何降级**：proofread/quality_diag LLM 超时 → intake 不应整体失败（结构已校验、简历已可用）。慢段每项独立 try，失败项 dock 静默跳过，不报错打扰用户。

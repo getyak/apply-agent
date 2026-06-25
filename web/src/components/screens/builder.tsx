@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { useVantage, BUILDER_STAGES } from "@/lib/store";
 import { ArrowLeft, Sparkles, Zap, Send } from "lucide-react";
 import { Button, Chip } from "@/components/ui";
@@ -12,6 +13,7 @@ import { initialsOf } from "@/lib/dates";
 // "Jordan Avery" placeholder, and the bullets should fall back honestly when we don't have
 // real work history yet.
 export function BuilderScreen() {
+  const t = useTranslations("resume");
   const builderStep = useVantage((s) => s.builderStep);
   const builderTarget = useVantage((s) => s.builderTarget);
   const builderThinking = useVantage((s) => s.builderThinking);
@@ -52,7 +54,7 @@ export function BuilderScreen() {
   const isDone = builderStep === BUILDER_STAGES.length - 1 && builderChoices.length >= BUILDER_STAGES.length - 1;
 
   // Real-data identity for the live preview. We never resurrect "Jordan Avery".
-  const realName = parsedResume?.basics?.name || currentUser?.displayName || "Your name";
+  const realName = parsedResume?.basics?.name || currentUser?.displayName || t("builder.nameFallback");
   const realInitials = initialsOf(realName);
   const realEmail = currentUser?.email || "you@example.com";
   const cityRegion = [
@@ -61,7 +63,7 @@ export function BuilderScreen() {
   ]
     .filter(Boolean)
     .join(", ");
-  const realLocation = cityRegion || "Add a location in settings";
+  const realLocation = cityRegion || t("builder.locationFallback");
   const realLabel = parsedResume?.basics?.label;
   const realSummary = parsedResume?.basics?.summary;
   const firstWork = parsedResume?.work?.[0];
@@ -69,16 +71,16 @@ export function BuilderScreen() {
   const bTitle =
     realLabel ||
     (builderTarget === "Lead / Staff"
-      ? "Lead Product Designer"
+      ? t("builder.titleLead")
       : builderTarget === "Senior IC"
-        ? "Senior Product Designer"
-        : "Product Designer");
+        ? t("builder.titleSenior")
+        : t("builder.titleDefault"));
 
   const bTarget = builderTarget === "Lead / Staff"
-    ? "Targeting lead and staff design roles — leading with scope, ownership, and team impact."
+    ? t("builder.targetLead")
     : builderTarget === "Senior IC"
-      ? "Targeting senior IC roles — leading with craft depth, project ownership, and measurable outcomes."
-      : "Open to senior IC and lead roles — positioning for both depth and breadth.";
+      ? t("builder.targetSenior")
+      : t("builder.targetDefault");
 
   // Pull real work bullets if present. Otherwise show a single transparent-honest line —
   // never fabricate three made-up career achievements.
@@ -98,7 +100,7 @@ export function BuilderScreen() {
         <div className="h-[60px] shrink-0 border-b border-border bg-paper/85 backdrop-blur-xl flex items-center px-[22px] gap-3">
           <button
             onClick={backHome}
-            aria-label="Back to home"
+            aria-label={t("builder.backToHome")}
             className="cursor-pointer border-none bg-transparent flex items-center text-ink-light p-1 hover:text-ink rounded outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
           >
             <ArrowLeft className="w-[19px] h-[19px]" strokeWidth={1.8} />
@@ -108,10 +110,10 @@ export function BuilderScreen() {
           </div>
           <div>
             <div className="font-body font-semibold text-[14px] text-ink leading-[1.1]">
-              Résumé studio
+              {t("builder.title")}
             </div>
             <div className="font-mono text-[10px] tracking-[0.5px] uppercase text-ink-muted">
-              Building with you
+              {t("builder.subtitle")}
             </div>
           </div>
         </div>
@@ -192,7 +194,7 @@ export function BuilderScreen() {
           )}
           <div className="flex items-center gap-[10px] bg-white border border-border-dark rounded-xl pl-4 pr-[5px] py-[5px]">
             <span className="flex-1 font-body text-[14px] text-ink-muted">
-              {isDone ? "Your profile is ready" : "Type or pick a suggestion…"}
+              {isDone ? t("builder.profileReady") : t("builder.composerPlaceholder")}
             </span>
             <button
               onClick={sendBuilder}
@@ -208,11 +210,11 @@ export function BuilderScreen() {
         <div className="max-w-[620px] mx-auto px-10">
           <div className="flex items-center justify-between mb-4">
             <span className="font-mono text-[10px] tracking-[0.8px] uppercase text-ink-muted">
-              Live preview · updates as you talk
+              {t("builder.livePreview")}
             </span>
             <span className="flex items-center gap-[6px] font-mono text-[10px] tracking-[0.5px] uppercase text-green">
               <span className="w-[6px] h-[6px] rounded-full bg-green" />
-              {isDone ? "Profile locked" : "Auto-saved"}
+              {isDone ? t("builder.profileLocked") : t("builder.autoSaved")}
             </span>
           </div>
 
@@ -230,7 +232,7 @@ export function BuilderScreen() {
             {builderTarget && (
               <div className="mb-5 animate-fade-in">
                 <div className="font-display font-bold text-[10px] tracking-[1.4px] uppercase text-amber mb-2">
-                  Positioning
+                  {t("builder.positioning")}
                 </div>
                 <div className="font-body text-[14px] text-ink">{bTarget}</div>
               </div>
@@ -239,11 +241,10 @@ export function BuilderScreen() {
             {builderStep >= 1 && (
               <div className="mb-5 animate-fade-in">
                 <div className="font-display font-bold text-[11px] tracking-[1.3px] uppercase text-ink-light mb-[9px]">
-                  Summary
+                  {t("builder.summary")}
                 </div>
                 <p className="font-body text-[14px] leading-[1.6] text-ink m-0">
-                  {realSummary ||
-                    "Tell us about yourself in chat — your summary will land here as we go."}
+                  {realSummary || t("builder.summaryPlaceholder")}
                 </p>
               </div>
             )}
@@ -252,10 +253,10 @@ export function BuilderScreen() {
               <div className="animate-fade-in">
                 <div className="flex items-center gap-2 mb-[13px]">
                   <span className="font-display font-bold text-[11px] tracking-[1.3px] uppercase text-ink-light">
-                    Experience · rewritten
+                    {t("builder.experienceRewritten")}
                   </span>
                   <span className="font-mono text-[9px] tracking-[0.5px] uppercase text-amber bg-gold-bg px-[7px] py-[2px] rounded">
-                    AI · outcome-led
+                    {t("aiOutcomeLed")}
                   </span>
                 </div>
                 {firstWork?.name && (
@@ -269,8 +270,7 @@ export function BuilderScreen() {
                     <div className="flex gap-[10px] items-start">
                       <div className="w-[5px] h-[5px] rounded-full bg-ink-muted mt-2 shrink-0" />
                       <span className="font-body text-[14px] leading-[1.5] text-ink-light italic">
-                        Walk me through a project you led — I&apos;ll rewrite it
-                        outcome-led, never inventing details.
+                        {t("builder.bulletPlaceholder")}
                       </span>
                     </div>
                   ) : (
@@ -295,11 +295,11 @@ export function BuilderScreen() {
                 <path d="M22 4L12 14.01l-3-3" />
               </svg>
               <div className="flex-1 font-body text-[14px] text-green leading-[1.45]">
-                <b className="font-semibold">Profile locked in.</b> Your base
-                résumé is ready — every application will be tailored from it.
+                <b className="font-semibold">{t("builder.lockedInTitle")}</b>{" "}
+                {t("builder.lockedInBody")}
               </div>
               <Button onClick={enterApp} size="sm">
-                See matches
+                {t("builder.seeMatches")}
               </Button>
             </div>
           )}

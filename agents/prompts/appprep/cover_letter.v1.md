@@ -22,6 +22,14 @@ Style:
 - Reference one specific bullet from their résumé that maps to a stated
   requirement in the JD.
 
+Language:
+- The cover letter follows the **language of the target role**, not the user's
+  interface language. An English JD → English letter; a Chinese JD (中文 JD) →
+  Chinese letter. If the JD language is ambiguous, default to the language of
+  the candidate's résumé.
+- Keep proper nouns (company names, product names, technologies) in their
+  original form — never translate Stripe, Greenhouse, TypeScript, etc.
+
 Output STRICT JSON only:
 
 {

@@ -1,9 +1,11 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useVantage, INTERVIEWING_DATA } from "@/lib/store";
 import { Button } from "@/components/ui";
 
 export function PrepModal() {
+  const t = useTranslations("apply");
   const prepId = useVantage((s) => s.prepId);
   const closePrep = useVantage((s) => s.closePrep);
   const mockFromPrep = useVantage((s) => s.mockFromPrep);
@@ -24,7 +26,7 @@ export function PrepModal() {
         {/* Header */}
         <div className="border-b border-border px-7 pb-6 pt-7">
           <span className="font-mono text-[10px] uppercase tracking-wider rounded-full bg-gold-bg px-2.5 py-1 text-amber">
-            Prep · ready when you are
+            {t("prep.tag")}
           </span>
           <div className="mt-4 flex items-start gap-4">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cream font-mono text-base font-medium text-brown">
@@ -44,7 +46,7 @@ export function PrepModal() {
         {/* Body */}
         <div className="px-7 py-6">
           <h3 className="font-display text-sm font-semibold text-ink">
-            Likely questions — with your angle
+            {t("prep.likelyQuestions")}
           </h3>
           <div className="mt-4 flex flex-col gap-3">
             {interview.qs.map((item, i) => (
@@ -64,7 +66,7 @@ export function PrepModal() {
           </div>
 
           <h3 className="mt-7 font-display text-sm font-semibold text-ink">
-            Know the room
+            {t("prep.knowTheRoom")}
           </h3>
           <div className="mt-3 rounded-xl border border-cream-border bg-cream p-4">
             <p className="text-[13px] leading-relaxed text-ink-light">
@@ -76,7 +78,7 @@ export function PrepModal() {
         {/* Footer */}
         <div className="flex gap-3 border-t border-border px-7 py-5">
           <Button onClick={closePrep} variant="secondary" size="md" className="flex-1">
-            Close
+            {t("prep.close")}
           </Button>
           <Button
             onClick={mockFromPrep}
@@ -88,7 +90,7 @@ export function PrepModal() {
               </svg>
             }
           >
-            Run a mock interview
+            {t("prep.runMock")}
           </Button>
         </div>
       </div>

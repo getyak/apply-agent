@@ -74,10 +74,18 @@ from agents.coordinator.workflows import build_from_scratch_graph  # noqa: E402
 # main-loop LLM tax. Default OFF so the rollout is opt-in until we're happy.
 _DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "0") == "1"
 # Threshold for skipping the dock and going straight to dispatch on a cheap
-# regex hit. Higher than router.REGEX_ACCEPT_THRESHOLD so we only fast-path
-# the *very* confident matches; everything else gets the dock loop.
+# regex hit.
+#
+# P3-1 fix: lowered default from 0.95 → 0.85. The earlier audit found that
+# turning _DOCK_REACT_ENABLED on with a 0.95 cutoff silently lost 5 intents
+# (analyze_resume / optimize_resume / map_career_moves / surface_roles /
+# list_resume_versions) whose regex confidences sit in 0.85–0.92 — they
+# wouldn't fast-path AND they have no dock_tool wrapper, so they fell into
+# the dock LLM as free-form turns. 0.85 matches router.REGEX_ACCEPT_THRESHOLD,
+# so every regex-confident intent now goes straight to dispatch via the same
+# rule. Override with RELAY_DOCK_FAST_PATH to be stricter / looser per env.
 _DOCK_REGEX_FAST_PATH_THRESHOLD = float(
-    os.environ.get("RELAY_DOCK_FAST_PATH", "0.95")
+    os.environ.get("RELAY_DOCK_FAST_PATH", "0.85")
 )
 from agents.harness.audit import redact_exception_text  # noqa: E402
 from agents.harness.checkpointer import (  # noqa: E402
@@ -102,17 +110,21 @@ from contextlib import asynccontextmanager  # noqa: E402 — needs `app` below
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    from agents.events.consumers import start_in_background
+    # P1-5: launch all cross-agent consumers in the background.
+    # application:submitted + resume:updated + resume:tailored + flywheel.
+    from agents.events.consumers import start_all_in_background
 
-    task = start_in_background()
+    tasks = start_all_in_background()
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except BaseException:
-            pass  # noqa: BLE001 — clean shutdown path
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            try:
+                await t
+            except BaseException:
+                pass  # noqa: BLE001 — clean shutdown path
 
 
 app = FastAPI(title="Relay Agents", version="0.1.0", lifespan=_lifespan)
@@ -239,6 +251,7 @@ async def ask_stream(
     user_id: UserDep,
     x_relay_thread_id: Annotated[str | None, Header()] = None,
     x_relay_surface: Annotated[str | None, Header()] = None,
+    x_relay_locale: Annotated[str | None, Header()] = None,
     x_request_id: Annotated[str | None, Header()] = None,
 ) -> StreamingResponse:
     """SSE stream — classifies intent, runs the dispatched agent, emits task cards.
@@ -251,11 +264,30 @@ async def ask_stream(
     if it needs to. A missing thread header falls back to the dock thread —
     matches old curl behaviour.
     """
+    # IDOR guard (P0-2): if the gateway forwards an X-Relay-Thread-Id, it
+    # MUST belong to the auth'd user. Without this check a hand-crafted
+    # header could read another user's lifetime dock thread history. The
+    # /ask/resume endpoint has had this check since day one (line 871);
+    # /ask/stream had been trusting the header — fixed here. Falling back
+    # to ask_vantage_thread_id(user_id) when no header is sent is still
+    # safe — that helper derives the thread from the user's own id.
+    if x_relay_thread_id and not _owns_dock_thread(
+        thread_id=x_relay_thread_id, user_id=user_id
+    ):
+        log.warning(
+            "ask_stream.thread_id_mismatch",
+            thread_id=x_relay_thread_id,
+            requested_by=str(user_id),
+        )
+        raise HTTPException(status_code=403, detail="thread is not yours")
     thread_id = x_relay_thread_id or ask_vantage_thread_id(str(user_id))
     # surface is informational today (we trust the gateway's thread id);
     # logged for observability and reserved for future per-surface context
     # tuning in the router.
     surface = (x_relay_surface or "dock").lower()
+    # UI locale forwarded by the gateway (X-Relay-Locale). None → downstream
+    # falls back to charset detection so older clients / raw curl still work.
+    locale = x_relay_locale
     # OBS3 (round-12): bind the gateway-issued request id to structlog so
     # every subsequent log line in this turn carries it. The round-12
     # observability audit pointed out that Python logs were context-free
@@ -299,6 +331,7 @@ async def ask_stream(
                     message=payload.message,
                     thread_id=thread_id,
                     surface=surface,
+                    locale=locale,
                 ):
                     yield chunk
                 yield _sse({"event": "done"})
@@ -310,6 +343,7 @@ async def ask_stream(
                 user_id=user_id,
                 thread_id=thread_id,
                 surface=surface,
+                locale=locale,
             ):
                 yield chunk
             yield _sse({"event": "done"})
@@ -335,6 +369,7 @@ async def ask_stream(
             message=payload.message,
             thread_id=thread_id,
             surface=surface,
+            locale=locale,
         ):
             yield chunk
 
@@ -350,6 +385,7 @@ async def _dispatch_and_persist(
     message: str,
     thread_id: str,
     surface: str,
+    locale: str | None = None,
 ) -> AsyncIterator[str]:
     """Shared body for legacy + regex-fast-path branches.
 
@@ -365,6 +401,7 @@ async def _dispatch_and_persist(
             message=message,
             thread_id=thread_id,
             surface=surface,
+            locale=locale,
         )
         yield _sse({"event": "result", **result})
         await persist_turn(
@@ -391,6 +428,7 @@ async def _stream_dock_turn(
     user_id: UUID,
     thread_id: str,
     surface: str,
+    locale: str | None = None,
 ) -> AsyncIterator[str]:
     """Run the Dock ReAct loop and translate its events to SSE frames.
 
@@ -412,10 +450,29 @@ async def _stream_dock_turn(
     clients drop them, new clients render them.
     """
     from agents.coordinator import dock_agent, dock_tools
+    from agents.coordinator.user_brief import build_user_brief
+    from agents.harness.locale import language_directive
 
     tokens = dock_tools.set_dock_context(
         user_id=user_id, thread_id=thread_id, surface=surface
     )
+    # Pin the dock's reply language to the user's UI locale (X-Relay-Locale).
+    # Passed as an extra system block so the persistent graph prompt stays
+    # cacheable. Falls back to charset detection of the message when locale
+    # is absent (older clients).
+    lang_block = language_directive(locale, message)
+    # P1-2: per-turn user context (active résumé, recent applications, last
+    # interview weak points, preferences). Empty string when there's nothing
+    # to say or PG is offline — the SystemMessage filter drops it.
+    try:
+        user_brief_block = await build_user_brief(user_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block dock
+        log.warning(
+            "ask_stream.user_brief_failed",
+            error=redact_exception_text(str(exc)),
+            kind=type(exc).__name__,
+        )
+        user_brief_block = ""
     assistant_buf: list[str] = []
     # Per-turn plan progress tracker. Holds the most recent plan emitted by
     # propose_plan + a cursor over its steps so we can annotate each
@@ -427,6 +484,7 @@ async def _stream_dock_turn(
             async for evt in dock_agent.run_dock_turn(
                 message=message,
                 thread_id=thread_id,
+                extra_system_blocks=[lang_block, user_brief_block],
             ):
                 frames = _dock_event_to_sse(evt, plan_progress)
                 if not frames:
@@ -942,12 +1000,17 @@ async def resume_upload(payload: ResumeUploadPayload, user_id: UserDep) -> dict[
 
     # version is assigned atomically by migration 016's trigger — no
     # app-level SELECT MAX(version)+1 race.
+    # An uploaded base is an ORIGINAL (017 dual-track model) — immutable, the
+    # left pane of the studio. We also pin bullet stable IDs now so later
+    # optimize / vibe passes can target individual lines.
     new_id, assigned_v = await save_resume_version(
         user_id=user_id,
         content_json=parsed,
         parent_version_id=None,
         tailored_for_job=None,
         is_base=True,
+        track="original",
+        bullet_index=resume_agent.assign_bullet_ids(parsed),
     )
     return {"resume_id": str(new_id), "version": assigned_v, "parsed": parsed}
 
@@ -969,6 +1032,115 @@ async def resume_customize(payload: ResumeCustomizePayload, user_id: UserDep) ->
         base_version=payload.base_version,
         base_id=payload.base_resume_id,
         job_id=payload.job_id,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Résumé optimize / suggestions — dual-track model (017 + design doc §6)
+# ───────────────────────────────────────────────────────────────────────
+
+
+class ResumeOptimizePayload(BaseModel):
+    base_resume_id: UUID
+
+
+@app.post("/resume/optimize")
+async def resume_optimize(payload: ResumeOptimizePayload, user_id: UserDep) -> dict[str, Any]:
+    """No-JD best-practice pass. Produces a suggestion stack and (when there are
+    'safe' ones) an auto-applied optimized sibling. Called by the Bun gateway
+    right after a base résumé is parsed+saved (the upload chain) and by the
+    'optimize' dock chip."""
+    result = await resume_agent.optimize_general(payload.base_resume_id, user_id=user_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+
+class ResumeIntakePayload(BaseModel):
+    base_resume_id: UUID
+
+
+@app.post("/resume/intake")
+async def resume_intake(payload: ResumeIntakePayload, user_id: UserDep) -> dict[str, Any]:
+    """Resume Intake Agent (design §12): parse-superset validation pass over an
+    already-saved original. Runs structure_check + proofread + normalize +
+    quality_diag, stacks the findings as suggestions (proposed_by='intake'), and
+    NEVER mutates the original. Called by the Bun gateway right after a base
+    résumé is parsed+saved (the upload chain's slow segment, §12.4)."""
+    result = await resume_agent.intake(payload.base_resume_id, user_id=user_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+
+class ApplySuggestionsPayload(BaseModel):
+    suggestion_ids: list[UUID]
+    target_track: str = "optimized"
+
+
+@app.post("/resume/apply-suggestions")
+async def resume_apply_suggestions(
+    payload: ApplySuggestionsPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Materialize a set of accepted suggestions into a new version."""
+    result = await resume_agent.apply_suggestions(
+        payload.suggestion_ids, user_id=user_id, target_track=payload.target_track
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+
+class SuggestionDecisionPayload(BaseModel):
+    decision: str = Field(pattern="^(accept|reject)$")
+    decided_via: str = "dock_inline"
+
+
+@app.post("/resume/suggestions/{suggestion_id}/decision")
+async def resume_suggestion_decision(
+    suggestion_id: UUID, payload: SuggestionDecisionPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Accept or reject a single suggestion inline (dock or studio panel).
+
+    Accepting one suggestion materializes it into an optimized version
+    immediately (so the user sees the change land without a separate 'apply'
+    step); rejecting just flips its status.
+    """
+    from agents.nodes import resume_store
+
+    rec = await resume_store.get_suggestion(suggestion_id, user_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+
+    if payload.decision == "reject":
+        await resume_store.set_suggestion_status(
+            suggestion_id, user_id, "rejected", decided_via=payload.decided_via
+        )
+        return {"ok": True, "status": "rejected"}
+
+    # accept → apply it into a new optimized version
+    result = await resume_agent.apply_suggestions([suggestion_id], user_id=user_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    return {"ok": True, "status": "accepted", **result}
+
+
+class ProposeBulletEditPayload(BaseModel):
+    resume_id: UUID
+    bullet_stable_id: str = Field(min_length=1, max_length=64)
+    instruction: str = Field(min_length=1, max_length=2000)
+
+
+@app.post("/resume/propose-bullet-edit")
+async def resume_propose_bullet_edit(
+    payload: ProposeBulletEditPayload, user_id: UserDep
+) -> dict[str, Any]:
+    """Vibe chat on ONE bullet — returns a single proposed suggestion."""
+    result = await resume_agent.propose_bullet_edit(
+        payload.resume_id, payload.bullet_stable_id, payload.instruction, user_id=user_id
     )
     if not result.get("ok"):
         raise HTTPException(status_code=422, detail=result)

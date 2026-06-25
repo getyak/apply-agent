@@ -110,7 +110,11 @@ export async function parseResumeText(
         { role: "system", content: PARSE_SYSTEM },
         { role: "user", content: `Resume text:\n\n${clipped}` },
       ],
-      { tier: "fast", temperature: 0.1, maxTokens: 2000 },
+      // 2000 tokens truncated long multi-project résumés mid-JSON
+      // (observed on a 4 KB CV — model stopped at "location":). Bump to
+      // 6000 so the worst-case full JSON Resume tree still fits with
+      // headroom; cost stays trivial at fast-tier pricing.
+      { tier: "fast", temperature: 0.1, maxTokens: 6000 },
     );
     data = out.data;
     modelMeta = { model: out.meta.model, costCents: out.meta.costCents };

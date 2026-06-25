@@ -138,6 +138,10 @@ export const UserPreferencesSchema = z
     // user choice required, never silently enabled. Storage layer reads
     // `users.preferences->>'crowdsourceOptIn'` before any pool write.
     crowdsourceOptIn: z.boolean().optional(),
+    // UI language preference (en/zh). Persisted so the chosen interface
+    // language follows the user across devices/sessions, not just the local
+    // NEXT_LOCALE cookie. Mirror of web/src/i18n/config.ts LOCALES.
+    language: z.enum(["en", "zh"]).optional(),
   })
   .strict();
 

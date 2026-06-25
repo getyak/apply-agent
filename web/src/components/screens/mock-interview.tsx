@@ -17,6 +17,7 @@
 // stays at "live" / "setup" for backward compat with onboarding code.
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   useVantage,
   MOCK_QS,
@@ -42,8 +43,9 @@ type LoopBehavior = "standalone" | "save_to_card" | "replay_real_interview";
 
 interface BuiltInMode {
   slug: string;
-  name: string;
-  tagline: string;
+  // i18n key suffixes — resolved at render via t(`modes.${slug}.name`) etc.
+  nameKey: string;
+  taglineKey: string;
   intel: IntelStrategy;
   pressure: PressureLevel;
   feedback: FeedbackStyle;
@@ -58,9 +60,8 @@ interface BuiltInMode {
 const BUILT_IN_MODES: BuiltInMode[] = [
   {
     slug: "scene_recreation",
-    name: "Scene recreation",
-    tagline:
-      "Crowd-sourced intel and a single sharp follow-up. Closest to a real round.",
+    nameKey: "modes.scene_recreation.name",
+    taglineKey: "modes.scene_recreation.tagline",
     intel: "crowdsourced",
     pressure: "one_follow_up",
     feedback: "three_perspective_translation",
@@ -68,9 +69,8 @@ const BUILT_IN_MODES: BuiltInMode[] = [
   },
   {
     slug: "pressure_drill",
-    name: "Pressure drill",
-    tagline:
-      "JD-grounded questions, chained follow-ups until you stick a landing.",
+    nameKey: "modes.pressure_drill.name",
+    taglineKey: "modes.pressure_drill.tagline",
     intel: "jd_based",
     pressure: "chained_to_stuck",
     feedback: "three_perspective_translation",
@@ -78,9 +78,8 @@ const BUILT_IN_MODES: BuiltInMode[] = [
   },
   {
     slug: "warm_up",
-    name: "Warm-up",
-    tagline:
-      "No intel, gentle pacing. Use before a real round when you need momentum.",
+    nameKey: "modes.warm_up.name",
+    taglineKey: "modes.warm_up.tagline",
     intel: "none",
     pressure: "encourage_only",
     feedback: "three_perspective_translation",
@@ -88,9 +87,8 @@ const BUILT_IN_MODES: BuiltInMode[] = [
   },
   {
     slug: "rapid_fire",
-    name: "Rapid fire",
-    tagline:
-      "No intel, no follow-ups — single-line feedback per answer. Highest reps.",
+    nameKey: "modes.rapid_fire.name",
+    taglineKey: "modes.rapid_fire.tagline",
     intel: "none",
     pressure: "encourage_only",
     feedback: "one_line_per_answer",
@@ -120,38 +118,41 @@ const M = {
   dangerBorder: "#FECACA",
 } as const;
 
-function intelLabel(s: IntelStrategy): string {
+// These four return i18n key suffixes (not display text) so the mono badge
+// row on each mode card can be translated. Resolved at render via
+// t(`badges.intel.${...}`) etc.
+function intelLabelKey(s: IntelStrategy): string {
   return s === "none"
-    ? "NO INTEL"
+    ? "none"
     : s === "jd_based"
-      ? "JD INTEL"
+      ? "jd"
       : s === "crowdsourced"
-        ? "CROWD INTEL"
-        : "RECRUITER INTEL";
+        ? "crowd"
+        : "recruiter";
 }
 
-function pressureLabel(p: PressureLevel): string {
+function pressureLabelKey(p: PressureLevel): string {
   return p === "encourage_only"
-    ? "LOW"
+    ? "low"
     : p === "one_follow_up"
-      ? "MED"
-      : "HIGH";
+      ? "med"
+      : "high";
 }
 
-function feedbackLabel(f: FeedbackStyle): string {
+function feedbackLabelKey(f: FeedbackStyle): string {
   return f === "rating_1to5"
-    ? "1–5 RATING"
+    ? "rating"
     : f === "one_line_per_answer"
-      ? "ONE-LINE"
-      : "3 PERSPECTIVE";
+      ? "oneLine"
+      : "threePerspective";
 }
 
-function loopLabel(l: LoopBehavior): string {
+function loopLabelKey(l: LoopBehavior): string {
   return l === "standalone"
-    ? "STANDALONE"
+    ? "standalone"
     : l === "save_to_card"
-      ? "SAVE CARD"
-      : "REPLAY REAL";
+      ? "saveCard"
+      : "replayReal";
 }
 
 type Stage = "modes" | "intel" | "live" | "debrief";
@@ -171,6 +172,7 @@ interface MockMessage {
 }
 
 export function MockScreen() {
+  const t = useTranslations("mock");
   const backHome = useVantage((s) => s.backHome);
   const apiApplications = useVantage((s) => s.apiApplications);
   const currentUser = useVantage((s) => s.currentUser);
@@ -217,8 +219,8 @@ export function MockScreen() {
         mono: realInterview.company.charAt(0).toUpperCase(),
         co: realInterview.company,
         role: realInterview.role_title,
-        stage: "Recruiter screen",
-        when: "soon",
+        stage: t("recruiterScreen"),
+        when: t("soon"),
       }
     : INTERVIEWING_DATA[0];
 
@@ -230,17 +232,16 @@ export function MockScreen() {
   );
 
   const intel = {
-    duration: "30 MIN",
-    style:
-      "Conversational. Stripe weighs craft and written communication heavily — expect a follow-up take-home, not a live exercise.",
+    duration: t("intel.duration"),
+    style: t("intel.style"),
     freq: [
-      { q: "Walk me through a project you're proud of.", p: "94%" },
-      { q: "Why Stripe, specifically?", p: "81%" },
-      { q: "How do you handle disagreement with engineering?", p: "67%" },
+      { q: t("intel.q1"), p: "94%" },
+      { q: t("intel.q2"), p: "81%" },
+      { q: t("intel.q3"), p: "67%" },
     ],
     trap: {
-      q: "Tell me about a time a design of yours failed.",
-      note: "Easy to over-hedge here. Own it plainly, then show the correction with a number.",
+      q: t("intel.trapQ"),
+      note: t("intel.trapNote"),
     },
   };
 
@@ -283,7 +284,7 @@ export function MockScreen() {
       {
         role: "interviewer",
         text: first.q,
-        label: "OPENING",
+        label: "OPENING", // stable code; MessageBlock translates for display
       },
     ]);
   }
@@ -305,12 +306,11 @@ export function MockScreen() {
         role: "translation",
         feedback: {
           said: text,
-          heard:
-            "Confident, but they're listening for the *decision* you made — not just the outcome.",
+          heard: t("live.sampleHeard"),
           rephrase: cur.feedback,
           stuck:
             selectedMode.pressure === "chained_to_stuck"
-              ? "Stuck on impact — next time, lead with the metric in one sentence."
+              ? t("live.sampleStuck")
               : undefined,
         },
       });
@@ -406,7 +406,7 @@ export function MockScreen() {
     <Shell>
       <Debrief
         job={job}
-        focusNext="Owning impact, naming the metric early"
+        focusNext={t("debrief.focusNext")}
         onRestart={() => {
           setQIdx(0);
           setMessages([]);
@@ -452,6 +452,7 @@ function ModeGallery({
   onStart: () => void;
   onBack: () => void;
 }) {
+  const t = useTranslations("mock");
   const selected = modes.find((x) => x.slug === selectedSlug);
   return (
     <div
@@ -467,7 +468,7 @@ function ModeGallery({
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5M11 18l-6-6 6-6" />
           </svg>
-          Back
+          {t("back")}
         </button>
 
         {/* For-line: who you're practising for. Mono, one line, left-aligned. */}
@@ -481,7 +482,7 @@ function ModeGallery({
             marginBottom: 18,
           }}
         >
-          For · {job.co} · {job.role} · {job.stage}
+          {t("forLine")} · {job.co} · {job.role} · {job.stage}
         </div>
 
         <h1
@@ -495,7 +496,7 @@ function ModeGallery({
             margin: "0 0 12px",
           }}
         >
-          Pick how you want to rehearse.
+          {t("gallery.title")}
         </h1>
         <p
           style={{
@@ -507,7 +508,7 @@ function ModeGallery({
             maxWidth: 560,
           }}
         >
-          Each mode is a different way to practise for a real round.
+          {t("gallery.subtitle")}
         </p>
 
         {/* Single-column mode list. Each card carries the 4-dimension mono row
@@ -539,7 +540,7 @@ function ModeGallery({
                       color: M.ink,
                     }}
                   >
-                    {m.name}
+                    {t(m.nameKey)}
                   </span>
                   <span
                     aria-hidden
@@ -562,7 +563,7 @@ function ModeGallery({
                     marginBottom: 14,
                   }}
                 >
-                  {m.tagline}
+                  {t(m.taglineKey)}
                 </div>
                 <div
                   style={{
@@ -575,10 +576,10 @@ function ModeGallery({
                     color: M.muted,
                   }}
                 >
-                  <span>ANCHOR · {intelLabel(m.intel)}</span>
-                  <span>PRESSURE · {pressureLabel(m.pressure)}</span>
-                  <span>FEEDBACK · {feedbackLabel(m.feedback)}</span>
-                  <span>LOOP · {loopLabel(m.loop)}</span>
+                  <span>{t("badges.anchor")} · {t(`badges.intel.${intelLabelKey(m.intel)}`)}</span>
+                  <span>{t("badges.pressure")} · {t(`badges.pressureLevel.${pressureLabelKey(m.pressure)}`)}</span>
+                  <span>{t("badges.feedback")} · {t(`badges.feedbackStyle.${feedbackLabelKey(m.feedback)}`)}</span>
+                  <span>{t("badges.loop")} · {t(`badges.loopBehavior.${loopLabelKey(m.loop)}`)}</span>
                 </div>
               </button>
             );
@@ -586,7 +587,7 @@ function ModeGallery({
         </div>
 
         <button onClick={onStart} style={primaryBtnStyle()}>
-          Start{selected ? ` · ${selected.name}` : ""}
+          {selected ? t("gallery.startWithMode", { mode: t(selected.nameKey) }) : t("gallery.start")}
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={M.surface} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 12h14M13 6l6 6-6 6" />
           </svg>
@@ -612,6 +613,7 @@ function IntelBrief({
   onBack: () => void;
   onBegin: () => void;
 }) {
+  const t = useTranslations("mock");
   return (
     <div
       style={{
@@ -626,7 +628,7 @@ function IntelBrief({
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5M11 18l-6-6 6-6" />
           </svg>
-          Modes
+          {t("intel.modesBack")}
         </button>
         <div
           style={{
@@ -638,7 +640,7 @@ function IntelBrief({
             marginBottom: 18,
           }}
         >
-          Intel brief · {job.co} · {job.stage}
+          {t("intel.briefLabel")} · {job.co} · {job.stage}
         </div>
         <h1
           style={{
@@ -651,10 +653,10 @@ function IntelBrief({
             margin: "0 0 12px",
           }}
         >
-          What this round actually asks.
+          {t("intel.title")}
         </h1>
         <p style={{ fontFamily: "Inter", fontSize: 15, lineHeight: 1.55, color: M.body, margin: "0 0 32px" }}>
-          Pulled from the crowd-sourced question bank and public signals. We drill the likely ones first.
+          {t("intel.subtitle")}
         </p>
 
         {/* Round summary — bordered card, no fills. */}
@@ -700,7 +702,7 @@ function IntelBrief({
             marginBottom: 10,
           }}
         >
-          Most likely questions
+          {t("intel.mostLikely")}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
           {intel.freq.map((q) => (
@@ -751,7 +753,7 @@ function IntelBrief({
               marginBottom: 8,
             }}
           >
-            THE TRAP
+            {t("intel.trap")}
           </div>
           <div style={{ fontFamily: "Inter", fontWeight: 600, fontSize: 15, color: M.ink, marginBottom: 6 }}>
             {intel.trap.q}
@@ -762,7 +764,7 @@ function IntelBrief({
         </div>
 
         <button onClick={onBegin} style={primaryBtnStyle()}>
-          I&apos;m ready — start
+          {t("intel.imReady")}
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={M.surface} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 12h14M13 6l6 6-6 6" />
           </svg>
@@ -793,6 +795,7 @@ function LiveStage({
   onSend: () => void;
   progressIdx: number;
 }) {
+  const t = useTranslations("mock");
   const total = MOCK_QS.length;
   const curr = Math.min(progressIdx + 1, total);
   // Topics breakdown becomes a hover tooltip in the progress pill so the
@@ -818,7 +821,7 @@ function LiveStage({
           gap: 14,
         }}
       >
-        <button onClick={onBack} style={iconBtnStyleInk()} aria-label="Exit mock">
+        <button onClick={onBack} style={iconBtnStyleInk()} aria-label={t("live.exitMock")}>
           <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
@@ -837,7 +840,7 @@ function LiveStage({
               marginTop: 2,
             }}
           >
-            {job.co} · {mode.name}
+            {job.co} · {t(mode.nameKey)}
           </div>
         </div>
         <div
@@ -897,7 +900,7 @@ function LiveStage({
                     onSend();
                   }
                 }}
-                placeholder="Type your answer…   ⌘↵ to send"
+                placeholder={t("live.answerPlaceholder")}
                 rows={3}
                 style={{
                   flex: 1,
@@ -914,7 +917,7 @@ function LiveStage({
                   maxHeight: 200,
                 }}
               />
-              <button onClick={onSend} style={sendBtnStyle()} aria-label="Send answer">
+              <button onClick={onSend} style={sendBtnStyle()} aria-label={t("live.sendAnswer")}>
                 <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={M.surface} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
                   <path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" />
                 </svg>
@@ -936,6 +939,7 @@ function MessageBlock({
   job: { mono: string };
   initials: string;
 }) {
+  const t = useTranslations("mock");
   // Mono section labels render in mute gray here so accent stays scarce.
   const monoLabel = (text: string, color = M.muted): React.CSSProperties => ({
     fontFamily: "JetBrains Mono",
@@ -970,7 +974,7 @@ function MessageBlock({
         <div style={{ flex: 1, minWidth: 0 }}>
           {m.label && (
             <div style={monoLabel(m.label === "FOLLOW-UP" ? M.accent : M.muted)}>
-              {m.label}
+              {m.label === "FOLLOW-UP" ? t("live.labelFollowUp") : t("live.labelOpening")}
             </div>
           )}
           <div
@@ -1055,21 +1059,21 @@ function MessageBlock({
             color: M.muted,
           }}
         >
-          WHAT THE INTERVIEWER HEARD
+          {t("feedback.interviewerHeard")}
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
-            <div style={monoLabel("YOU SAID")}>YOU SAID</div>
+            <div style={monoLabel(M.muted)}>{t("feedback.youSaid")}</div>
             <div style={{ fontFamily: "Inter", fontSize: 13.5, color: M.body, fontStyle: "italic", lineHeight: 1.55 }}>
               “{fb.said}”
             </div>
           </div>
           <div style={{ borderLeft: `2px solid ${M.borderStrong}`, paddingLeft: 14 }}>
-            <div style={monoLabel("WHAT THEY HEARD")}>WHAT THEY HEARD</div>
+            <div style={monoLabel(M.muted)}>{t("feedback.whatTheyHeard")}</div>
             <div style={{ fontFamily: "Inter", fontSize: 14, color: M.ink, lineHeight: 1.55 }}>{fb.heard}</div>
           </div>
           <div style={{ borderLeft: `2px solid ${M.accent}`, paddingLeft: 14 }}>
-            <div style={monoLabel("TRY INSTEAD")}>TRY INSTEAD</div>
+            <div style={monoLabel(M.muted)}>{t("feedback.tryInstead")}</div>
             <div style={{ fontFamily: "Inter", fontSize: 14, color: M.ink, lineHeight: 1.55 }}>{fb.rephrase}</div>
           </div>
           {fb.stuck && (
@@ -1084,7 +1088,7 @@ function MessageBlock({
                   color: M.danger,
                 }}
               >
-                STUCK
+                {t("feedback.stuck")}
               </span>
               <div style={{ fontFamily: "Inter", fontSize: 13, color: M.body, lineHeight: 1.55 }}>{fb.stuck}</div>
             </div>
@@ -1115,7 +1119,7 @@ function MessageBlock({
             marginBottom: 5,
           }}
         >
-          COACH
+          {t("feedback.coach")}
         </div>
         <div style={{ fontFamily: "Inter", fontSize: 14, color: M.ink, lineHeight: 1.55 }}>{m.text}</div>
       </div>
@@ -1130,12 +1134,15 @@ function MessageBlock({
 // because these are debrief-specific framings, not the practice questions
 // themselves. Replace with real translate_feedback() output once the
 // interview_agent landing PR ships.
-const DEBRIEF_HEARD: string[] = [
-  "Confident framing, but they're listening for the decision you made — not the outcome.",
-  "Clear on what happened. The trade-off you weighed against could be named earlier.",
-  "Honest about the tension. Naming the metric you optimized for would land harder.",
-  "Strong narrative. The follow-up will probe what you'd do differently — be ready.",
-  "Closed well. One concrete number in the first sentence would have anchored it.",
+// i18n key suffixes — resolved at render via t(`debrief.heard.${...}`). One
+// distinct read per topic; replace with real translate_feedback() output once
+// the interview_agent landing PR ships.
+const DEBRIEF_HEARD_KEYS: string[] = [
+  "debrief.heard.0",
+  "debrief.heard.1",
+  "debrief.heard.2",
+  "debrief.heard.3",
+  "debrief.heard.4",
 ];
 
 function Debrief({
@@ -1152,6 +1159,7 @@ function Debrief({
   // P3.3 flywheel entry. Opens the opt-in modal on first click; once the
   // user confirms (or declines) the modal's choice is persisted to
   // preferences.crowdsourceOptIn so we never re-prompt on later sessions.
+  const t = useTranslations("mock");
   const [logRealOpen, setLogRealOpen] = useState(false);
   return (
     <div
@@ -1173,7 +1181,7 @@ function Debrief({
             marginBottom: 18,
           }}
         >
-          Session complete
+          {t("debrief.sessionComplete")}
         </div>
         <h1
           style={{
@@ -1186,10 +1194,10 @@ function Debrief({
             margin: "0 0 12px",
           }}
         >
-          Your interview card.
+          {t("debrief.title")}
         </h1>
         <p style={{ fontFamily: "Inter", fontSize: 15, lineHeight: 1.55, color: M.body, margin: "0 0 32px" }}>
-          How each answer read from the other side of the table — and what to carry into the real round.
+          {t("debrief.subtitle")}
         </p>
 
         {/* Topic list. No score tags — each row is a distinct read. */}
@@ -1204,7 +1212,9 @@ function Debrief({
         >
           {MOCK_PROGRESS_LABELS.map((topic, i) => {
             const isLast = i === MOCK_PROGRESS_LABELS.length - 1;
-            const heard = DEBRIEF_HEARD[i] ?? DEBRIEF_HEARD[DEBRIEF_HEARD.length - 1];
+            const heardKey =
+              DEBRIEF_HEARD_KEYS[i] ?? DEBRIEF_HEARD_KEYS[DEBRIEF_HEARD_KEYS.length - 1];
+            const heard = t(heardKey);
             return (
               <div
                 key={topic}
@@ -1260,10 +1270,10 @@ function Debrief({
               marginBottom: 10,
             }}
           >
-            CLOSE THE LOOP
+            {t("debrief.closeLoop")}
           </div>
           <div style={{ fontFamily: "Inter", fontSize: 14, lineHeight: 1.6, color: M.body, marginBottom: 14 }}>
-            After the real {job.co} screen, come back and log what they actually asked. Vantage learns your real weak spots — not generic advice.
+            {t("debrief.closeLoopBody", { company: job.co })}
           </div>
           <button
             onClick={() => setLogRealOpen(true)}
@@ -1286,7 +1296,7 @@ function Debrief({
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
             </svg>
-            Log the real interview
+            {t("debrief.logReal")}
           </button>
         </div>
         {logRealOpen ? (
@@ -1317,7 +1327,7 @@ function Debrief({
               marginBottom: 8,
             }}
           >
-            NEXT SESSION OPENS ON
+            {t("debrief.nextSessionOpensOn")}
           </div>
           <div style={{ fontFamily: "Inter", fontSize: 15, lineHeight: 1.55, color: M.ink }}>
             <b style={{ fontWeight: 600 }}>{focusNext}</b>
@@ -1325,8 +1335,8 @@ function Debrief({
         </div>
 
         <div style={{ display: "flex", gap: 12 }}>
-          <button onClick={onRestart} style={secondaryBtnStyle()}>Run it again</button>
-          <button onClick={onDone} style={primaryBtnStyle({ marginTop: 0, flex: 1.4 })}>Done</button>
+          <button onClick={onRestart} style={secondaryBtnStyle()}>{t("debrief.runAgain")}</button>
+          <button onClick={onDone} style={primaryBtnStyle({ marginTop: 0, flex: 1.4 })}>{t("debrief.done")}</button>
         </div>
       </div>
     </div>
@@ -1452,6 +1462,7 @@ function StartConfirmModal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useTranslations("mock");
   const mins = estimatedDurationMin(mode.intel);
   // Esc to cancel — same affordance as native dialogs. We intentionally do
   // NOT add Enter to confirm here: starting a 10–25 min session should be
@@ -1505,7 +1516,7 @@ function StartConfirmModal({
             marginBottom: 10,
           }}
         >
-          Ready to start?
+          {t("confirm.readyToStart")}
         </div>
         <h2
           id="mock-start-title"
@@ -1519,7 +1530,7 @@ function StartConfirmModal({
             letterSpacing: -0.3,
           }}
         >
-          {mode.name} — about {mins} min, {questionCount} questions.
+          {t("confirm.heading", { mode: t(mode.nameKey), mins, count: questionCount })}
         </h2>
         <p
           style={{
@@ -1530,7 +1541,7 @@ function StartConfirmModal({
             margin: "0 0 10px",
           }}
         >
-          {mode.tagline}
+          {t(mode.taglineKey)}
         </p>
         <p
           style={{
@@ -1541,7 +1552,7 @@ function StartConfirmModal({
             margin: "0 0 24px",
           }}
         >
-          Once you start, the timer runs. You can exit at any time — your answers won&apos;t be saved if you cancel.
+          {t("confirm.timerNote")}
         </p>
         <div style={{ display: "flex", gap: 10 }}>
           <button
@@ -1560,7 +1571,7 @@ function StartConfirmModal({
               borderRadius: 8,
             }}
           >
-            Not yet
+            {t("confirm.notYet")}
           </button>
           <button
             type="button"
@@ -1583,7 +1594,7 @@ function StartConfirmModal({
               gap: 8,
             }}
           >
-            Start the session
+            {t("confirm.startSession")}
             <svg
               width={15}
               height={15}
@@ -1629,6 +1640,7 @@ function LogRealInterviewModal({
   company: string;
   onClose: () => void;
 }) {
+  const t = useTranslations("mock");
   const [saving, setSaving] = useState(false);
 
   async function persistAndHandoff(optIn: boolean) {
@@ -1643,11 +1655,7 @@ function LogRealInterviewModal({
         }
       }
       useDock.getState().open();
-      void sendAsk(
-        `I just finished the real ${company} interview. Let's log the actual questions they asked so Vantage can sharpen my next prep.`,
-        [],
-        { surface: "dock" },
-      );
+      void sendAsk(t("logReal.handoffPrompt", { company }), [], { surface: "dock" });
     } finally {
       setSaving(false);
       onClose();
@@ -1693,7 +1701,7 @@ function LogRealInterviewModal({
             textTransform: "uppercase",
           }}
         >
-          Privacy first
+          {t("logReal.privacyFirst")}
         </div>
         <h2
           style={{
@@ -1705,7 +1713,7 @@ function LogRealInterviewModal({
             margin: "0 0 10px",
           }}
         >
-          Log what {company} actually asked
+          {t("logReal.title", { company })}
         </h2>
         <p
           style={{
@@ -1716,8 +1724,7 @@ function LogRealInterviewModal({
             margin: "0 0 14px",
           }}
         >
-          We&apos;ll open Ask Vantage so you can walk through the real round
-          while it&apos;s fresh. Pick one — you can change it later in Settings.
+          {t("logReal.body")}
         </p>
         <ul
           style={{
@@ -1730,14 +1737,12 @@ function LogRealInterviewModal({
           }}
         >
           <li>
-            <b style={{ fontWeight: 600 }}>Just for me</b> — questions stay
-            on your account. We never share or aggregate them.
+            <b style={{ fontWeight: 600 }}>{t("logReal.justForMeLabel")}</b>
+            {t("logReal.justForMeBody")}
           </li>
           <li>
-            <b style={{ fontWeight: 600 }}>Help the pool</b> — same as above,
-            plus we anonymise the questions (no name, no company, no role
-            details) and add them to a shared bank so others get a closer
-            mock next time. You can opt out any time.
+            <b style={{ fontWeight: 600 }}>{t("logReal.helpPoolLabel")}</b>
+            {t("logReal.helpPoolBody")}
           </li>
         </ul>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1750,7 +1755,7 @@ function LogRealInterviewModal({
               cursor: saving ? "wait" : "pointer",
             }}
           >
-            Just for me
+            {t("logReal.justForMe")}
           </button>
           <button
             onClick={() => persistAndHandoff(true)}
@@ -1761,7 +1766,7 @@ function LogRealInterviewModal({
               cursor: saving ? "wait" : "pointer",
             }}
           >
-            Yes, help the pool
+            {t("logReal.helpPool")}
           </button>
         </div>
         <button
@@ -1773,7 +1778,7 @@ function LogRealInterviewModal({
             width: "100%",
           }}
         >
-          Not now
+          {t("logReal.notNow")}
         </button>
       </div>
     </div>

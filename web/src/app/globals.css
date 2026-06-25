@@ -585,13 +585,13 @@ body {
 
 /* Pointer tilt — the element tips toward the cursor in 3D (JS writes
    --tlt-x/--tlt-y in degrees). Unlike `.tilt-3d` there is no fixed hover
-   transform, so the cursor stays in command of the angle. A short transition
-   gives the lean a silky, slightly trailing glide rather than a rigid snap. */
+   transform, so the cursor stays in command of the angle. v13: the lean's
+   trailing glide is now owned by the PointerFX inertial spring, so the CSS
+   transition no longer smooths `transform` (that would double-smooth into a
+   laggy follow) — only box-shadow eases here. */
 .tilt-pointer {
   transform-style: preserve-3d;
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    box-shadow var(--dur-base) var(--ease-out);
+  transition: box-shadow var(--dur-base) var(--ease-out);
   transform: perspective(1100px) rotateX(var(--tlt-x, 0deg))
     rotateY(var(--tlt-y, 0deg));
   will-change: transform;
@@ -602,9 +602,11 @@ body {
 
 /* Parallax drift — uses the independent `translate` property (JS writes it
    directly) so it layers on top of any `transform`-based animation without
-   conflict. The transition smooths the cursor follow into a gentle float. */
+   conflict. v13: the float is now driven by the PointerFX inertial spring
+   (a very slow per-frame ease), so the depth field breathes after the cursor
+   rather than tracking it 1:1 — no CSS transition needed, and none here would
+   only fight the spring. */
 .parallax {
-  transition: translate var(--dur-slow) var(--ease-out);
   will-change: translate;
 }
 
@@ -649,6 +651,77 @@ body {
   /* Reveal targets must never be left hidden when motion is suppressed. */
   .reveal-ready [data-reveal] { opacity: 1 !important; transform: none !important; filter: none !important; }
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Continuity layer (v7) — where v4–v6 lit the surfaces and made light move,
+   v7 owns the moments *between* states: the seams. Route changes glide rather
+   than snap, the active nav item sits on a warm lit chip instead of a flat
+   fill, the "you" avatar wears a slow gradient ring, and a few high-touch
+   controls gain a crisper, more physical press. Every class is additive +
+   opt-in; nothing here mutates an existing primitive, and the whole layer
+   collapses under the prefers-reduced-motion guard above (it matches `*` with
+   !important, so motion-sensitive users keep the calm static version).
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* View enter — workspace content rises + un-blurs as a route's content mounts.
+   Keyed on pathname in AppLayout so each navigation reads as an intentional
+   beat rather than an instant swap. Ends on identity (no lingering transform),
+   so sticky headers inside the view are unaffected once it settles. */
+@keyframes view-enter {
+  0% { opacity: 0; transform: translateY(9px) scale(0.995); filter: blur(4px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.view-enter { animation: view-enter 0.46s var(--ease-out) both; }
+
+/* Active nav chip — a warm gradient + soft inner lift for the selected nav row,
+   so the current location reads as a raised, lit surface instead of a flat
+   cream block. Layers under the existing `.nav-rail` gold edge. Apply on the
+   active row alongside its base classes. */
+.nav-chip {
+  background: linear-gradient(180deg, #FBF2E1 0%, #F3E7D0 100%) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(122, 63, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 5px 14px -9px rgba(122, 63, 0, 0.5) !important;
+}
+
+/* Avatar ring — a slow-panning warm-gold hairline around the sidebar avatar, a
+   small "this is you" flourish. The ring is a masked gradient behind the tile,
+   so the avatar fill is untouched; it brightens on hover. */
+.avatar-ring { position: relative; isolation: isolate; }
+.avatar-ring::before {
+  content: ""; position: absolute; inset: -2px; z-index: -1; border-radius: inherit;
+  background: linear-gradient(120deg,
+    rgba(232, 163, 23, 0) 0%, rgba(232, 163, 23, 0.65) 30%,
+    rgba(243, 200, 105, 0.95) 50%, rgba(232, 163, 23, 0.65) 70%,
+    rgba(232, 163, 23, 0) 100%);
+  background-size: 220% auto;
+  animation: border-pan 5.5s linear infinite;
+  opacity: 0.5; transition: opacity var(--dur-base) var(--ease-out);
+}
+.avatar-ring:hover::before { opacity: 1; }
+
+/* Sidebar width easing — the rail's expand/collapse rides the system's calm
+   decel curve instead of a flat linear slide, so chrome settles like the rest
+   of the app. Opt-in via class so only the aside that wants it is affected. */
+.width-ease { transition: width var(--dur-base) var(--ease-out) !important; }
+
+/* Count tick — the small numeric badges (Applications / Interviews) recolour
+   and lift a hair when their value lands, reinforcing the existing count-pop
+   mount with a settled resting glow on change. */
+.count-tick { transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out); }
+
+/* Underline reveal for the sidebar "Upgrade" + inline text affordances that
+   aren't full links — a gold hairline draws in on hover so they read as
+   interactive without a permanent underline. */
+.link-pull { position: relative; }
+.link-pull::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1.5px;
+  border-radius: 2px; background: var(--grad-gold, #e8a317);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.link-pull:hover::after { transform: scaleX(1); }
 
 /* DayPage Design System — semantic classes from colors_and_type.css */
 .ds-display-lg { font-family: 'Space Grotesk', system-ui, sans-serif; font-weight: 700; font-size: 56px; line-height: 1.02; letter-spacing: 0.5px; text-transform: uppercase; }
@@ -871,3 +944,2462 @@ textarea[data-vantage-composer]:focus::placeholder { color: #C6BFB4; }
   transition: opacity var(--dur-base) var(--ease-out);
 }
 .group:hover .icon-glow::before { opacity: 0.8; }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Refinement layer (v6) — a craft + responsiveness pass. Where v4/v5 added
+   light and motion, v6 tightens the details that decide whether the product
+   feels considered: type that scales fluidly instead of snapping at one
+   breakpoint, a universal tactile press for the many inline buttons that
+   don't go through the <Button> primitive, segmented controls that respond to
+   touch, and a couple of small "alive" cues. Every class is opt-in and
+   additive — no existing primitive is mutated — and all of it collapses under
+   the prefers-reduced-motion guard above (it matches `*` with !important).
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Fluid display heading — clamp()-based so the hero headline glides from a
+   comfortable mobile size up to its full desktop scale with no jarring
+   breakpoint jump. Pair on the hero <h1>; line-height + tracking come along so
+   the proportions hold at every width. */
+.fluid-display {
+  font-size: clamp(2rem, 1.3rem + 3.6vw, 3.25rem);
+  line-height: 1.06;
+  letter-spacing: -0.5px;
+}
+
+/* Universal tactile press — the lightweight tap feedback that the <Button>
+   primitive bakes in, exposed as a class for the many hand-rolled inline
+   buttons/links across the app so they all compress crisply on click instead
+   of feeling inert. Combines a gentle lift on hover with a snap on press. */
+.tap {
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+  will-change: transform;
+}
+@media (hover: hover) {
+  .tap:hover { transform: translateY(-1px); }
+}
+.tap:active { transform: translateY(0) scale(0.96); }
+
+/* Segmented control — a pill group (tabs, mode switches) whose active item
+   sits on a soft raised chip and whose items respond to touch. Put `.seg` on
+   the track and `.seg-item` on each button; the active one carries
+   `data-active="true"`. Visuals (colour/border) stay with the component so the
+   class only owns motion + the press feel. */
+.seg-item {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
+}
+.seg-item:active { transform: scale(0.95); }
+.seg-item[data-active="true"] { animation: pop-in 0.32s var(--ease-spring) both; }
+
+/* Soft focus ring for text inputs/textareas — warmer + less abrupt than the
+   global keyboard ring, for fields that are clicked into with a mouse. Opt-in
+   via `.field-ring` so other inputs keep their own styling. */
+.field-ring { transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
+.field-ring:focus-within, .field-ring:focus {
+  border-color: var(--color-gold, #e8a317);
+  box-shadow: 0 0 0 3px rgba(232, 163, 23, 0.16);
+}
+
+/* Traffic-light cluster — the macOS-style window dots warm up together when
+   their bar is hovered, a tiny "this is a live console" cue. Put `.dots` on the
+   row wrapping the three dots. */
+.dots > span { transition: background-color var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring); }
+.dots:hover > span:nth-child(1) { background-color: #e06a5a; }
+.dots:hover > span:nth-child(2) { background-color: #e8b84b; }
+.dots:hover > span:nth-child(3) { background-color: #6fbf7f; }
+.dots:hover > span { transform: scale(1.08); }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Kinetic-light layer (v8) — where v4 lit the surfaces and v5 made light
+   travel, v8 hands the light to the reader: a warm pool that tracks the
+   cursor across whole sections, a glowing comet that rides the scroll rail,
+   and a couple of crisper "alive" cues on first-tier chrome. Every class is
+   additive + opt-in; each effect rests at a neutral value so a surface is
+   pixel-identical to its no-JS state until the pointer moves, and the whole
+   layer collapses under the prefers-reduced-motion guard above.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Ambient cursor light — a large warm pool that follows the reader's pointer
+   across a section, so the whole surface feels lit by a lamp they're holding.
+   PointerFX writes --ax/--ay (as %, section-relative) and toggles data-lit.
+   With no JS it rests at top-centre as a calm static glow, so it degrades
+   gracefully. Drop into a relative, overflow-hidden section as a -z layer. */
+.ambient-light {
+  position: absolute; inset: 0; pointer-events: none;
+  opacity: 0; transition: opacity var(--dur-slow) var(--ease-out);
+  mix-blend-mode: multiply;
+  background: radial-gradient(560px circle at var(--ax, 50%) var(--ay, 0%),
+    rgba(232, 163, 23, 0.12), rgba(232, 163, 23, 0.035) 40%, transparent 62%);
+  will-change: background;
+}
+.ambient-light[data-lit="true"] { opacity: 1; }
+/* On the near-black panel the pool reads as a travelling ember, not a shadow. */
+.ambient-light.on-dark {
+  mix-blend-mode: screen;
+  background: radial-gradient(620px circle at var(--ax, 50%) var(--ay, 0%),
+    rgba(232, 163, 23, 0.18), rgba(217, 164, 95, 0.05) 42%, transparent 64%);
+}
+
+/* Scroll comet — a small glowing head that rides the leading edge of the
+   scroll-progress rail. LandingMotion writes its `left` from rAF; it only
+   shows once the page has scrolled so the resting top reads clean. */
+.scroll-comet {
+  position: fixed; top: 0; left: 0; z-index: 61;
+  width: 16px; height: 2.5px; margin-left: -8px; border-radius: 9999px;
+  pointer-events: none; opacity: 0;
+  background: radial-gradient(circle, #fff4d8 0%, #f3c869 38%, transparent 76%);
+  box-shadow: 0 0 16px 3px rgba(243, 200, 105, 0.85),
+    0 0 4px 1px rgba(255, 255, 255, 0.7);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+[data-scrolled="true"] .scroll-comet { opacity: 1; }
+
+/* Wordmark gleam — a slow specular band that drifts through the brand wordmark
+   so the logo reads as warm metal rather than flat ink. Self-contained: put
+   `.wordmark-gleam` on the text element; the highlight is clipped to the glyphs
+   via background-clip, leaving the base colour intact between passes. */
+@keyframes wordmark-gleam {
+  0%, 72% { background-position: -140% 0; }
+  100% { background-position: 240% 0; }
+}
+.wordmark-gleam {
+  background-image:
+    linear-gradient(100deg, transparent 40%, rgba(255, 240, 200, 0.95) 50%, transparent 60%),
+    linear-gradient(var(--gleam-base, #5D3000), var(--gleam-base, #5D3000));
+  background-size: 220% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: wordmark-gleam 7s var(--ease-out) 2s infinite;
+}
+
+/* Settle-in — a refined first-paint for a single hero element: it rises a hair
+   while a soft warm underglow blooms and fades, marking the moment it lands.
+   Heavier than fade-up but lighter than the cinematic rise; for one focal
+   chip/badge, not whole grids. */
+@keyframes settle-in {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: none; }
+}
+.animate-settle { animation: settle-in 0.7s var(--ease-spring) both; }
+
+/* Edge-light hairline — a top border that carries a faint, always-on warm
+   gradient (no hover needed), for hero/CTA panels that should look permanently
+   lit from above. Calmer cousin of `.ignite-rule`. */
+.edge-light { position: relative; }
+.edge-light::before {
+  content: ""; position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+  border-radius: 2px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(243, 200, 105, 0.65), transparent);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Tactile depth & atmosphere layer (v9) — where v8 handed the light to the
+   reader, v9 makes contact *physical*: a primary press now blooms a warm
+   ripple from the exact point the finger lands, surfaces compress with a real
+   inner-shadow under the touch, the dark hero panel drifts with slow rising
+   embers, and the wordmark gains weight as the eye settles on it. Every class
+   is additive + opt-in; the ripple/ember motion is driven by ::before/::after
+   or JS-spawned nodes that rest at a neutral value, so each surface is
+   pixel-identical to its no-JS state until touched, and the whole layer
+   collapses under the prefers-reduced-motion guard above.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Pointer ripple — a warm gold bloom that radiates from the precise point of
+   contact on press, so a click reads as a physical impact rather than a state
+   flip. The host clips it; JS (Button primitive + PointerFX) spawns a `.ripple`
+   node with --rx/--ry (contact point) and --rs (diameter), and removes it on
+   animationend. The dedicated `.ripple-layer` lets a Button stay non-overflow
+   so its focus ring is never clipped. */
+@keyframes ripple-out {
+  0% { transform: translate(-50%, -50%) scale(0); opacity: 0.5; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+.ripple-layer {
+  position: absolute; inset: 0; z-index: 0;
+  border-radius: inherit; overflow: hidden; pointer-events: none;
+}
+.ripple {
+  position: absolute; top: var(--ry, 50%); left: var(--rx, 50%);
+  width: var(--rs, 200px); height: var(--rs, 200px); border-radius: 9999px;
+  pointer-events: none;
+  background: radial-gradient(circle,
+    rgba(255, 244, 216, 0.65), rgba(232, 163, 23, 0.30) 42%, transparent 70%);
+  transform: translate(-50%, -50%) scale(0);
+  animation: ripple-out 0.62s var(--ease-out) forwards;
+}
+
+/* Tactile compress — a surface that visibly takes the press: it shrinks a hair
+   and gains a soft inner shadow, so the click feels like pushing a real button.
+   Pairs cleanly with `.lift` / `.magnet` (which own the hover lift). */
+.pressure {
+  transition: transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.pressure:active {
+  transform: scale(0.985);
+  box-shadow: inset 0 2px 9px -4px rgba(61, 42, 20, 0.30);
+}
+
+/* Rising embers — a slow column of warm motes that drift up across a dark
+   panel, giving the near-black differentiators section the feel of a banked
+   fire rather than a flat fill. Put `.embers` over a relative section and seed
+   a handful of `.ember` spans with inline left / --dur / --delay / --drift. */
+@keyframes ember-rise {
+  0% { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
+  12% { opacity: 0.85; }
+  85% { opacity: 0.45; }
+  100% {
+    transform: translateY(-150px) translateX(var(--drift, 12px)) scale(0.35);
+    opacity: 0;
+  }
+}
+.embers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.ember {
+  position: absolute; bottom: -10px; width: 4px; height: 4px; border-radius: 9999px;
+  background: radial-gradient(circle, #f3c869, rgba(232, 163, 23, 0.25) 60%, transparent 72%);
+  box-shadow: 0 0 8px 1px rgba(232, 163, 23, 0.45);
+  animation: ember-rise var(--dur, 9s) linear var(--delay, 0s) infinite;
+  will-change: transform, opacity;
+}
+
+/* Weighted wordmark — the brand letters spread and bloom a faint halo as the
+   eye settles on the logo, a small "warm metal under light" flourish. Layers
+   over `.wordmark-gleam` without touching the resting tracking. */
+.weight-hover {
+  transition: letter-spacing var(--dur-base) var(--ease-out),
+    text-shadow var(--dur-base) var(--ease-out);
+}
+.weight-hover:hover {
+  letter-spacing: 3.7px;
+  text-shadow: 0 0 18px rgba(232, 163, 23, 0.35);
+}
+
+/* Sheen-on-reveal headline — a one-shot gradient figure reveal that pairs a
+   rise with a settle, for a section's lead numeral/stat. Lighter than `.crown`,
+   it just lifts and warms once on first paint. */
+@keyframes lift-warm {
+  0% { opacity: 0; transform: translateY(14px); filter: blur(5px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.animate-lift-warm { animation: lift-warm 0.7s var(--ease-out) both; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v10 — Settled light & tactile finish
+   Where v4–v9 lit the surfaces, moved the light, and made controls feel
+   physical, v10 tightens the highest-touch moments and adds a quiet material
+   finish: a fine film grain over warm hero light, a confident gold seam under
+   the lifted nav, an idle "press me" breath on the lead CTA, and a richer
+   spring + cascade on menus. Every class is additive and opt-in; no existing
+   primitive is mutated, and the whole layer collapses under the
+   prefers-reduced-motion guard (it matches `*` with !important).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Film grain — a barely-there tactile veil that keeps large warm-paper fields
+   from reading as flat digital fill. Fixed + pointer-transparent so it costs
+   nothing and never intercepts input. Animated drift keeps it from looking like
+   a static dust layer; the motion is sub-perceptual, just enough to live. */
+@keyframes grain-shift {
+  0%   { transform: translate3d(0, 0, 0); }
+  25%  { transform: translate3d(-3%, 2%, 0); }
+  50%  { transform: translate3d(2%, -3%, 0); }
+  75%  { transform: translate3d(-2%, -2%, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.grain-overlay {
+  position: absolute; inset: -50%; z-index: 0; pointer-events: none;
+  opacity: 0.5; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+  animation: grain-shift 7s steps(4) infinite;
+  will-change: transform;
+}
+
+/* Nav seam — once the page lifts off (data-scrolled), a thin warm-gold light
+   wipes across the bottom of the sticky header, reinforcing the "raised chrome"
+   read with the brand's signature metal. Layers under the existing condense
+   shadow; rests invisible so the top-of-page nav stays clean. */
+.site-nav::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%, rgba(232, 163, 23, 0.0) 12%,
+    rgba(232, 163, 23, 0.55) 50%,
+    rgba(232, 163, 23, 0.0) 88%, transparent 100%);
+  opacity: 0; transform: scaleX(0.6);
+  transition: opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+  pointer-events: none;
+}
+[data-scrolled="true"] .site-nav::after { opacity: 1; transform: scaleX(1); }
+
+/* CTA breath — a slow, low-amplitude attention pulse for the single lead CTA.
+   Calmer than the hover `.cta-aura` (which still fires over the top); this just
+   keeps a faint warm halo alive so the primary action never reads as inert. The
+   ring sits behind the button and never shifts layout. */
+@keyframes cta-breathe {
+  0%, 100% { opacity: 0.0; transform: scale(0.96); }
+  50%      { opacity: 0.5; transform: scale(1.04); }
+}
+.cta-breathe { position: relative; isolation: isolate; }
+.cta-breathe::after {
+  content: ""; position: absolute; inset: -3px; z-index: -1; border-radius: inherit;
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.5), transparent 78%);
+  filter: blur(10px); opacity: 0; pointer-events: none;
+  animation: cta-breathe 3.6s var(--ease-in-out) infinite;
+}
+
+/* Menu pop — a confident spring entrance for popovers/dropdowns: a touch of
+   overshoot + rise + un-blur, anchored to the trigger's top-right origin. More
+   alive than `.animate-fade-up` for transient surfaces the user just summoned. */
+@keyframes menu-pop {
+  0%   { opacity: 0; transform: translateY(-6px) scale(0.94); filter: blur(3px); }
+  60%  { opacity: 1; transform: translateY(0) scale(1.012); filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+.menu-pop { animation: menu-pop 0.34s var(--ease-spring) both; transform-origin: top right; }
+
+/* Menu stagger — children of a freshly-popped menu cascade in, so the surface
+   reads as "unfolding" rather than appearing whole. Index drives the delay via
+   inline `--i`. Pairs with `.menu-pop` on the container. */
+.menu-stagger > * {
+  animation: fade-up 0.34s var(--ease-out) both;
+  animation-delay: calc(60ms + var(--i, 0) * 46ms);
+}
+
+/* Avatar gleam — a single diagonal glint travels across the account avatar once
+   on mount, a small "lit metal" greeting. One-shot, decorative, masked to the
+   tile so the fill is untouched. */
+@keyframes avatar-gleam {
+  0%   { transform: translateX(-130%) rotate(8deg); opacity: 0; }
+  18%  { opacity: 0.85; }
+  100% { transform: translateX(130%) rotate(8deg); opacity: 0; }
+}
+.avatar-gleam { position: relative; overflow: hidden; }
+.avatar-gleam::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 42%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  animation: avatar-gleam 2.4s var(--ease-out) 0.45s 1 both;
+  pointer-events: none;
+}
+
+/* Reveal wipe — an opt-in headline variant that un-masks from the bottom as it
+   rises, a sharper, more editorial entrance than the standard blur-rise. Drive
+   it the same way as `[data-reveal]`: it shares the `.revealed` switch. */
+.reveal-ready [data-reveal].reveal-wipe {
+  clip-path: inset(0 0 100% 0);
+  transition:
+    opacity 0.8s var(--ease-out) var(--reveal-delay, 0ms),
+    transform 0.8s var(--ease-out) var(--reveal-delay, 0ms),
+    clip-path 0.8s var(--ease-out) var(--reveal-delay, 0ms),
+    filter 0.8s var(--ease-out) var(--reveal-delay, 0ms);
+}
+.reveal-ready [data-reveal].reveal-wipe.revealed { clip-path: inset(0 0 0% 0); }
+
+/* Lift-pop — a tactile combined hover for secondary/ghost controls that want
+   more than `.press`: a small rise + warm rim on hover, a crisp sink on click.
+   Complements `.magnet` (which owns cursor-tracked CTAs) for non-tracked
+   buttons that should still feel physical. */
+.lift-pop {
+  transition: transform var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .lift-pop:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 22px -12px rgba(61, 42, 20, 0.42);
+  }
+}
+.lift-pop:active { transform: translateY(0) scale(0.97); transition-duration: var(--dur-fast); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v11 — Material light & dimensional finish
+   Where v4–v10 lit the surfaces, moved the light, and made controls feel
+   physical, v11 makes light behave like a *material*: a specular highlight that
+   slides across the tilt cards as they lean (so the 3D mocks genuinely catch
+   the light), a soft volumetric god-ray that crosses the hero once on first
+   paint, a slow conic halo that makes the closing CTA radiate, and an engineered
+   dot-field that gives the dark panel real depth beneath the embers. Every class
+   is additive and opt-in; nothing here mutates an existing primitive, each
+   pointer-driven effect reuses custom properties the PointerFX island already
+   writes (no JS change), and the whole layer collapses under the
+   prefers-reduced-motion guard below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tilt specular — a broad soft highlight that slides across a card as it leans
+   toward the cursor, reusing the `--tlt-x` / `--tlt-y` degrees PointerFX writes
+   on `[data-tilt]`. The highlight's position is derived from the lean, so the
+   gloss tracks the light source the tilt implies — the single biggest lift to
+   the "this is a physical object" read. Put `.tilt-shine` on the same element
+   that wears `.tilt-pointer` (must be overflow-clipped + rounded). Rests fully
+   transparent at zero tilt, so a static card is untouched. */
+.tilt-shine { position: relative; }
+.tilt-shine::after {
+  content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit;
+  pointer-events: none; mix-blend-mode: screen;
+  /* The highlight centre swings opposite the lean: tilt right → light pools
+     left, as a real overhead light would. Scaled from deg into % offset. */
+  background: radial-gradient(
+    150% 120% at
+      calc(50% - var(--tlt-y, 0deg) * 5%)
+      calc(38% + var(--tlt-x, 0deg) * 5%),
+    rgba(255, 248, 232, 0.5), rgba(255, 248, 232, 0.12) 32%, transparent 58%);
+  opacity: 0; transition: opacity var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .tilt-shine:hover::after { opacity: 1; }
+}
+
+/* Hero god-ray — a single wide, soft volumetric beam that sweeps once across a
+   section on first paint, raking warm light over the hero like sun through a
+   window. Decorative -z layer; drop into a relative, overflow-hidden section.
+   One-shot, so it lands and clears rather than looping. */
+@keyframes beam-sweep {
+  0%   { opacity: 0; transform: translateX(-60%) rotate(18deg); }
+  18%  { opacity: 0.85; }
+  100% { opacity: 0; transform: translateX(120%) rotate(18deg); }
+}
+.beam { position: absolute; inset: -40% -20%; pointer-events: none; overflow: hidden; }
+.beam::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 36%;
+  background: linear-gradient(100deg,
+    transparent, rgba(255, 240, 205, 0.55) 45%, rgba(243, 200, 105, 0.18) 60%, transparent);
+  filter: blur(22px); mix-blend-mode: screen; transform: translateX(-60%) rotate(18deg);
+  animation: beam-sweep 2.6s var(--ease-out) 0.35s 1 both;
+  will-change: transform, opacity;
+}
+
+/* Conic CTA halo — a slow-rotating wheel of warm light behind a closing panel
+   so the surface reads as genuinely radiant, not just bordered. Implemented as
+   a self-contained decorative *child* layer (not host pseudo-elements) so it
+   composes cleanly with panels that already own `::before` via `.grad-border` /
+   `.edge-light`. Drop `<div class="cta-conic" aria-hidden />` inside a relative,
+   overflow-hidden panel as a low-z layer. */
+@keyframes conic-spin { to { transform: rotate(360deg); } }
+.cta-conic {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+}
+.cta-conic::before {
+  content: ""; position: absolute;
+  left: 50%; top: 50%; width: 150%; aspect-ratio: 1; border-radius: 9999px;
+  transform: translate(-50%, -50%); transform-origin: center;
+  opacity: 0.45; filter: blur(8px); mix-blend-mode: screen;
+  background: conic-gradient(from 0deg,
+    transparent 0deg, rgba(232, 163, 23, 0.0) 70deg,
+    rgba(243, 200, 105, 0.55) 135deg, rgba(232, 163, 23, 0.22) 205deg,
+    transparent 290deg, transparent 360deg);
+  animation: conic-spin 11s linear infinite;
+  will-change: transform;
+}
+.cta-conic::after {
+  content: ""; position: absolute; inset: 20%; border-radius: 9999px;
+  filter: blur(48px); opacity: 0.65;
+  background: radial-gradient(closest-side, rgba(232, 163, 23, 0.26), transparent 72%);
+}
+
+/* Dot field — a faint, perspective-less grid of warm dots that gives a large
+   dark panel an engineered, blueprint-like depth beneath softer decoration
+   (embers / mesh). Pointer-transparent decorative layer; the radial mask fades
+   it toward the edges so it never reads as a hard tile. */
+.dot-field {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(rgba(217, 164, 95, 0.16) 1px, transparent 1.4px);
+  background-size: 26px 26px;
+  -webkit-mask: radial-gradient(120% 90% at 50% 40%, #000 30%, transparent 78%);
+  mask: radial-gradient(120% 90% at 50% 40%, #000 30%, transparent 78%);
+  opacity: 0.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v12 — Radiant finish
+   v11 made light behave like a material; v12 puts that light to work on the two
+   surfaces that still read flat: the hero's trust pill and the pricing wall.
+   A single warm photon now orbits the "zero account risk" badge — drawing the
+   eye to the one promise that matters — and the "Most popular" plan gains a
+   slow-breathing gold halo so it radiates off the page instead of merely sitting
+   in a darker box. Both are additive, self-contained, and collapse under the
+   reduced-motion guard. No JS touched: the orbit is a registered-angle keyframe,
+   the halo a blurred sibling glow.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Registered angle so the conic ring can actually animate its sweep start.
+   Browsers without @property simply hold the ring at its resting 0deg gradient —
+   a static warm accent, never a broken state. */
+@property --orbit-a {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes orbit-spin { to { --orbit-a: 360deg; } }
+
+/* Orbit ring — a thin warm photon traces the border of a pill, pooling bright
+   at its head and trailing off, so a small trust badge feels alive and earns a
+   glance. Border-gradient mask trick keeps it a true 1px ring on any radius;
+   uses the free `::before` slot (so it composes with `.badge-glint`'s `::after`
+   sweep). Drop `.orbit-ring` on a `position: relative`, rounded element. */
+.orbit-ring { position: relative; isolation: isolate; }
+.orbit-ring::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: 1;
+  padding: 1.2px; pointer-events: none;
+  background: conic-gradient(from var(--orbit-a, 0deg),
+    transparent 0 58%,
+    rgba(232, 163, 23, 0.35) 72%,
+    rgba(243, 200, 105, 0.95) 84%,
+    rgba(255, 246, 224, 1) 88%,
+    rgba(243, 200, 105, 0.5) 94%,
+    transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: orbit-spin 4.8s linear infinite;
+}
+
+/* Halo card — a soft, slow-breathing gold aura set just behind a panel so it
+   reads as genuinely radiant. Rendered as a negative-z `::before` (sits behind
+   the host's own background, glow peeking past every edge), it composes with
+   panels that already own `::after`. Intensifies and tightens on hover, so the
+   recommended plan visibly responds to attention. Drop `.halo-card` on a
+   `position: relative` panel (pair with `.lift` for the rise). */
+@keyframes halo-breathe {
+  0%, 100% { opacity: 0.40; transform: scale(0.985); }
+  50%      { opacity: 0.72; transform: scale(1.02); }
+}
+.halo-card::before {
+  content: ""; position: absolute; inset: -7px; z-index: -1; border-radius: inherit;
+  pointer-events: none; filter: blur(16px);
+  background: linear-gradient(135deg,
+    rgba(243, 200, 105, 0.6), rgba(232, 163, 23, 0.22) 42%, transparent 72%);
+  animation: halo-breathe 5.6s var(--ease-in-out) infinite;
+}
+.halo-card:hover::before { animation-duration: 3.6s; filter: blur(20px); }
+
+/* Reduced-motion: drop the always-on idle loops so motion-sensitive users get
+   the calm static finish. The global guard already neutralises durations, but
+   we also hard-hide the purely-decorative grain + breath so nothing lingers
+   mid-keyframe. */
+/* ── Composer micro-interactions (v14 · alive input) ─────────────────────────
+   The main chat composer is the product's primary surface of intent. These
+   touches give staging a file, dictating, and arming Send a little life — each
+   one a single, weighted gesture, never a loop that nags. All one-shots
+   collapse under the global reduced-motion guard; the one idle loop (the mic
+   halo) is hard-stopped in the block below. */
+
+/* Staged attachment chips spring up as they're added — a quick weighted pop so
+   a freshly-attached file announces itself, overshoots a hair, then settles. */
+@keyframes chip-pop-in {
+  0%   { opacity: 0; transform: translateY(7px) scale(0.90); }
+  62%  { opacity: 1; transform: translateY(-2px) scale(1.015); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-chip-pop { animation: chip-pop-in 0.36s var(--ease-spring) both; }
+
+/* Live "on-air" halo — twin amber rings breathe outward from the mic while
+   speech capture is active, so dictation reads as genuinely listening. The
+   host button must be `position: relative`; the rings ride ::before/::after so
+   no extra DOM is needed. */
+@keyframes mic-listen-ring {
+  0%   { transform: scale(0.80); opacity: 0.55; }
+  70%  { transform: scale(1.42); opacity: 0; }
+  100% { transform: scale(1.42); opacity: 0; }
+}
+.mic-listening::before,
+.mic-listening::after {
+  content: ""; position: absolute; inset: 0; border-radius: 9999px;
+  border: 1.5px solid rgba(232, 163, 23, 0.62); pointer-events: none;
+  animation: mic-listen-ring 1.7s var(--ease-out) infinite;
+}
+.mic-listening::after { animation-delay: 0.85s; }
+
+/* Send arms — a one-shot spring pop with a warm gold ring-pulse the instant the
+   button becomes sendable, quietly rewarding the keystroke that made the
+   message valid. No fill, so the button's own inline shadow resumes after. */
+@keyframes send-arm {
+  0%   { transform: scale(0.62); box-shadow: 0 0 0 0 rgba(232, 163, 23, 0.0); }
+  55%  { transform: scale(1.14); box-shadow: 0 0 0 7px rgba(232, 163, 23, 0.18); }
+  100% { transform: scale(1);    box-shadow: 0 2px 6px rgba(93, 48, 0, 0.22); }
+}
+.animate-send-arm { animation: send-arm 0.42s var(--ease-spring); }
+
+/* ── Living product mock (v15 · the story tells itself) ──────────────────────
+   The landing `#chat` panel *is* the pitch: a conversation where agents quietly
+   do the work. It used to sit frozen with everything pre-finished. Now, the
+   first time the panel scrolls into view, its contents assemble the way the real
+   product fills in — the ask lands, the reply arrives, each agent row slides up
+   and computes behind a one-shot light sweep, its status snaps to "done", and
+   the result card blooms last. The whole sequence is gated on the panel's own
+   `[data-reveal].revealed`, so it plays exactly once on first sight and never
+   loops. Fallbacks: with no JS the `.reveal-ready` scope never arms, so the
+   panel renders fully finished; under reduced motion the observer marks it
+   revealed immediately and the global guard collapses every step to its end
+   state — the same calm, finished panel. */
+@keyframes mock-rise {
+  0%   { opacity: 0; transform: translateY(11px) scale(0.985); filter: blur(4px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes mock-compute {
+  0%   { transform: translateX(-130%) skewX(-16deg); opacity: 0; }
+  18%  { opacity: 1; }
+  100% { transform: translateX(280%) skewX(-16deg); opacity: 0; }
+}
+@keyframes mock-done-pop {
+  0%   { transform: scale(0.5); opacity: 0; box-shadow: 0 0 0 0 rgba(76, 122, 63, 0.0); }
+  55%  { transform: scale(1.18); opacity: 1; box-shadow: 0 0 0 5px rgba(76, 122, 63, 0.16); }
+  100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(76, 122, 63, 0); }
+}
+
+/* Each tagged step is held hidden only while the reveal layer is armed, then
+   rises into place on its own `--md` delay once the panel is seen. */
+.reveal-ready [data-reveal] .mock-step { opacity: 0; }
+.reveal-ready [data-reveal].revealed .mock-step {
+  animation: mock-rise 0.62s var(--ease-out) var(--md, 0ms) both;
+}
+
+/* Agent rows clip a single warm light sweep that travels across as they "land",
+   reading as freshly computed rather than painted. Host stays relative+clipped
+   so the ::after can ride edge to edge without leaking. */
+.mock-row { position: relative; overflow: hidden; }
+.reveal-ready [data-reveal].revealed .mock-row::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(232, 163, 23, 0.22), transparent);
+  transform: translateX(-130%) skewX(-16deg); opacity: 0;
+  animation: mock-compute 0.95s var(--ease-out) var(--md, 0ms) both;
+}
+
+/* The green "done" badge stays invisible until its row has settled, then snaps
+   in with a quick confirming ring-pulse — the moment the work completes. */
+.reveal-ready [data-reveal] .mock-done { opacity: 0; }
+.reveal-ready [data-reveal].revealed .mock-done {
+  animation: mock-done-pop 0.46s var(--ease-spring) var(--md, 0ms) both;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v16 — Arrival & depth choreography
+   v4–v15 lit the surfaces, moved the light, and made controls feel physical.
+   v16 owns the *arrival*: the moment content lands. Headline words now type
+   themselves into being with a staggered rise, sections enter from their own
+   side of the page (text from the left, the mock from the right) so a layout
+   reads as composing rather than snapping flat, focal panels bloom up from a
+   confident scale, the lead hero metric counts up to its real number, and the
+   top nav assembles in a quick left-to-right cascade on first paint. Every
+   class is additive and opt-in; nothing here mutates an existing primitive.
+   The directional reveals reuse the existing `[data-reveal].revealed` switch
+   (so they share LandingMotion's observer and its no-JS / reduced-motion
+   fallbacks), and every one-shot collapses under the global reduced-motion
+   guard below — leaving the same calm, fully-arrived page.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Kinetic headline — each word rises + un-blurs into place on its own beat, so
+   a hero line reads as assembled by hand rather than pasted whole. Opacity is
+   intentionally left to the parent block's `.animate-fade-up` (or to nothing,
+   if the head isn't inside one), so words only ever drive transform + blur and
+   never fight a container fade. Wrap each word in `<span class="kw">` and set
+   inline `--kw` to its index for the cascade. */
+@keyframes kw-rise {
+  0%   { transform: translateY(0.42em) rotate(0.6deg); filter: blur(7px); }
+  100% { transform: none; filter: blur(0); }
+}
+.kinetic-head .kw {
+  display: inline-block;
+  animation: kw-rise 0.72s var(--ease-out) both;
+  animation-delay: calc(0.14s + var(--kw, 0) * 0.075s);
+  will-change: transform, filter;
+}
+
+/* Directional scroll-reveal — modifiers on `[data-reveal]` that change *where*
+   an element travels in from. They override only the resting transform (scoped
+   to `:not(.revealed)` so they never block the settle), and inherit the base
+   reveal's opacity / blur / transition + per-element `--reveal-delay`. So a
+   section can compose from its own edge: paired blocks lean in toward each
+   other, focal panels bloom up from scale. */
+.reveal-ready [data-reveal].reveal-l:not(.revealed) {
+  transform: translateX(-38px) scale(0.99);
+}
+.reveal-ready [data-reveal].reveal-r:not(.revealed) {
+  transform: translateX(38px) scale(0.99);
+}
+.reveal-ready [data-reveal].reveal-scale:not(.revealed) {
+  transform: scale(0.93) translateY(14px);
+}
+
+/* Count-up figure — a stat that animates from a lead-in to its real value reads
+   as freshly computed. The recolour + tabular figures keep the width from
+   jittering as digits change; JS (HeroConsole) writes the interim numbers. */
+.count-up { font-variant-numeric: tabular-nums; transition: color var(--dur-base) var(--ease-out); }
+
+/* Nav assemble — the brand cluster + links cascade in left-to-right on first
+   paint, so the header reads as built rather than already-there. Drive the
+   cascade with inline `--ni`; pure one-shot, so it never re-runs on scroll. */
+@keyframes nav-item-in {
+  0%   { opacity: 0; transform: translateY(-7px); filter: blur(3px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.nav-assemble { animation: nav-item-in 0.5s var(--ease-out) both; animation-delay: calc(var(--ni, 0) * 55ms); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v17 — The considered finish
+   v16 owned the arrival; v17 tightens the two surfaces that still read flat and
+   deepens the touch everywhere else. The integration strip now reads as live
+   wiring — a slow warm beam scans across the supported ATS platforms, so the
+   "fills forms on …" row feels like a connected pipeline rather than a static
+   logo list. The feature cards become physical objects: they lean toward the
+   cursor and catch a soft specular highlight (reusing the `--tlt-x/--tlt-y`
+   tilt PointerFX already writes on `[data-tilt]` — no JS change). And the
+   secondary hero action gains the same one-shot gloss as the primary, so the
+   pair reads as a matched set. Every class is additive + opt-in; nothing here
+   mutates an existing primitive, and the whole layer collapses under the
+   reduced-motion guard below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Scan strip — a wide, soft warm beam travels left→right behind a row of
+   integration logos, raking brand light across them so the strip reads as a
+   live pipeline. The host clips it and sits it on a -z layer (via isolation),
+   so the beam glows *behind* the logos without washing the text. Idle loop;
+   hard-stopped under reduced motion. */
+@keyframes scan-sweep {
+  0%   { transform: translateX(-130%); opacity: 0; }
+  14%  { opacity: 1; }
+  86%  { opacity: 1; }
+  100% { transform: translateX(130%); opacity: 0; }
+}
+.scan-strip { position: relative; isolation: isolate; overflow: hidden; }
+.scan-strip::after {
+  content: ""; position: absolute; top: -30%; bottom: -30%; left: 0; width: 32%;
+  z-index: -1; pointer-events: none; border-radius: 9999px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(232, 163, 23, 0.14) 42%,
+    rgba(243, 200, 105, 0.22) 55%,
+    transparent);
+  filter: blur(10px);
+  transform: translateX(-130%);
+  animation: scan-sweep 8s var(--ease-in-out) 1.2s infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-strip::after,
+  .grain-overlay,
+  .cta-breathe::after,
+  .avatar-gleam::after,
+  .beam,
+  .cta-conic::before,
+  .cta-conic::after,
+  .mic-listening::before,
+  .mic-listening::after,
+  .reveal-ready [data-reveal].revealed .mock-row::after,
+  .halo-card::before { display: none !important; }
+  /* Never leave a staged mock step or status badge hidden when motion is off. */
+  .reveal-ready [data-reveal] .mock-step,
+  .reveal-ready [data-reveal] .mock-done { opacity: 1 !important; }
+  .orbit-ring::before { animation: none !important; }
+  .reveal-ready [data-reveal].reveal-wipe { clip-path: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v18 — Connected & considered
+   v4–v17 lit the surfaces, moved the light, and choreographed the arrival.
+   v18 makes the page read as one connected system and finishes its flattest
+   surface. The "How it works" steps gain a warm thread that draws itself
+   across the row when the section is first seen — the opaque icon tiles mask
+   it into segments, so the five steps read as one pipeline instead of five
+   islands. The pricing wall — the conversion surface that still snapped flat —
+   gets a sliding gold thumb on its billing toggle, prices that swap with a
+   weighted rise instead of blinking, and cards that compose in on a cascade.
+   Every class is additive + opt-in; the thread reuses LandingMotion's existing
+   `[data-reveal].revealed` switch (so it shares the observer + the no-JS /
+   reduced-motion fallbacks), and the whole layer collapses under the guard
+   below — leaving the same calm, fully-arrived page.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Flow thread — a warm rail threading the How-it-works icon row. Rests fully
+   drawn with no JS (the styling below is unscoped); once the reveal layer is
+   armed it starts collapsed and draws left→right when the row is seen. A bright
+   photon rides the drawing head. Sits on z-0 so the opaque icon tiles paint
+   over it, masking the line into connector segments between the steps. */
+.flow-rail { position: absolute; left: 0; right: 0; top: 62px; height: 2px; z-index: 0; pointer-events: none; }
+.flow-rail::before {
+  content: ""; position: absolute; inset: 0; border-radius: 2px; transform-origin: left;
+  background: linear-gradient(90deg,
+    transparent, rgba(232, 163, 23, 0.16) 6%,
+    rgba(232, 163, 23, 0.55) 50%,
+    rgba(232, 163, 23, 0.16) 94%, transparent);
+}
+.reveal-ready .flow-rail::before {
+  transform: scaleX(0);
+  transition: transform 1.15s var(--ease-out) 0.15s;
+}
+.reveal-ready .flow-rail.revealed::before { transform: scaleX(1); }
+.flow-rail::after {
+  content: ""; position: absolute; top: 50%; left: 0; width: 12px; height: 12px;
+  margin-top: -6px; margin-left: -6px; border-radius: 9999px; opacity: 0;
+  background: radial-gradient(circle, #fff4d8, #f3c869 45%, transparent 72%);
+  box-shadow: 0 0 12px 2px rgba(243, 200, 105, 0.8);
+}
+@keyframes flow-spark {
+  0%   { left: 0%;   opacity: 0; }
+  12%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+.reveal-ready .flow-rail.revealed::after { animation: flow-spark 1.2s var(--ease-out) 0.15s both; }
+
+/* Sliding billing toggle — the active segment now rides under a soft raised
+   gold thumb that glides between options, instead of two buttons recolouring in
+   place. PricingSection writes the thumb's left/width from a layout effect so it
+   tracks the real label widths; the spring transition gives the slide weight. */
+.seg-track { position: relative; }
+.seg-thumb {
+  position: absolute; top: 4px; bottom: 4px; left: 0; width: 0; z-index: 0;
+  border-radius: 9999px; pointer-events: none;
+  background: linear-gradient(180deg, #6f3a02 0%, #5D3000 100%);
+  box-shadow:
+    0 6px 16px -8px rgba(93, 48, 0, 0.6),
+    inset 0 1px 0 rgba(255, 244, 216, 0.18);
+  transition:
+    left 0.42s var(--ease-spring),
+    width 0.42s var(--ease-spring);
+}
+
+/* Price swap — the figure rises + un-blurs into place when the billing period
+   flips, so a price change reads as recomputed rather than a flicker. Keyed on
+   the value in React so it remounts and replays. */
+@keyframes price-swap {
+  0%   { opacity: 0; transform: translateY(8px); filter: blur(5px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.animate-price-swap { display: inline-block; animation: price-swap 0.42s var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* One-shot decorative bits that must never linger mid-keyframe. */
+  .flow-rail.revealed::after { display: none !important; }
+  /* Never leave the thread collapsed when motion is suppressed. */
+  .reveal-ready .flow-rail::before { transform: scaleX(1) !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v19 — Pointer-lit surfaces & cascading proof
+   v4–v18 lit the surfaces, moved the light, choreographed the arrival, and
+   connected the page into one system. v19 hands the lamp to the reader on the
+   two grids that still only *responded* to a direct hover: the pricing wall and
+   the dark differentiators. A warm pool now tracks the cursor precisely as it
+   sweeps across those cards — bright where the pointer rests, fading at the
+   edges — so a whole grid reads as lit by a light the reader is holding rather
+   than each card waking only when entered. And the hero's proof list (the green
+   "it can…" rows) now cascades up on first sight instead of snapping in as a
+   block, so the promises land one weighted beat at a time. Every class is
+   additive + opt-in: the glow rests fully transparent and only the PointerFX
+   island (fine-pointer + hover only, off under reduced motion) writes
+   --gx/--gy + data-glowing, so a no-JS / touch / keyboard surface is
+   pixel-identical to its prior state. The cascade reuses LandingMotion's
+   existing [data-reveal].revealed switch, inheriting its observer and no-JS /
+   reduced-motion fallbacks.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Card glow — a warm spotlight that follows the cursor across a card. Larger,
+   brighter, and (unlike the hover-only `.spotlight`) cursor-tracked, so a grid
+   of them lights up like a swept lamp. Painted on the free `::after` slot at
+   z-index -1: per CSS painting order a negative-z child sits *above* the card's
+   own opaque fill but *below* its in-flow text, so the pool glows through a
+   white card without ever washing the copy. Rests at opacity 0 with a calm
+   top-centre fallback position, so with no JS the card is untouched. Put
+   `.card-glow` + `data-glow` on a relative, rounded surface that still has a
+   free `::after` (it composes with `.spotlight`/`.rim`/`.halo-card`, which use
+   `::before`). */
+.card-glow { position: relative; isolation: isolate; }
+.card-glow::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  pointer-events: none; opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  background: radial-gradient(260px circle at var(--gx, 50%) var(--gy, 0%),
+    rgba(232, 163, 23, 0.20), rgba(232, 163, 23, 0.05) 42%, transparent 66%);
+  will-change: opacity, background;
+}
+.card-glow[data-glowing="true"]::after { opacity: 1; }
+/* On the near-black panels the pool reads as a travelling ember: a warmer,
+   wider gold lit with `screen` so it adds light to the dark fill. */
+.card-glow.on-dark::after {
+  mix-blend-mode: screen;
+  background: radial-gradient(300px circle at var(--gx, 50%) var(--gy, 0%),
+    rgba(243, 200, 105, 0.26), rgba(217, 164, 95, 0.07) 44%, transparent 66%);
+}
+
+/* Proof cascade — the hero "it can…" rows rise + un-blur on their own beat so
+   the promise list reads as assembled one line at a time. Reuses the reveal
+   switch (so it shares the observer + no-JS / reduced-motion fallbacks); the
+   per-row delay comes from inline `--reveal-delay`. The check tile springs a
+   hair as its row lands, and warms on row hover so the list stays interactive. */
+.proof-row .proof-check {
+  transition: transform var(--dur-base) var(--ease-spring),
+    background-color var(--dur-base) var(--ease-out);
+}
+.reveal-ready [data-reveal].proof-row:not(.revealed) .proof-check { transform: scale(0.7); }
+.reveal-ready [data-reveal].proof-row.revealed .proof-check { transform: scale(1); }
+@media (hover: hover) {
+  .proof-row:hover .proof-check {
+    transform: scale(1.08);
+    background-color: var(--color-green-bg, #EBF3E5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The glow is a static following-pool, not a loop — but kill its fade so a
+     motion-sensitive reader never sees it ease, and never leave a proof check
+     shrunk if the reveal layer is armed without motion. */
+  .card-glow::after { transition: none !important; }
+  .reveal-ready [data-reveal].proof-row .proof-check { transform: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v20 — Momentum
+   v4–v19 lit the surfaces, moved the light, choreographed the arrival, connected
+   the page into one system, and handed the reader the lamp. Every one of those
+   layers reacted to *position* — where the cursor rests, how far the page has
+   scrolled. v20 adds the one dimension none of them touched: *velocity*. The
+   page now feels how fast it is being read. LandingMotion differentiates the
+   scroll position into a smoothed `--scroll-energy` (0 at rest → 1 at a hard
+   fling) that decays on its own park-when-settled loop. The progress thread
+   charges — thickening and brightening — as the reader flings down the page,
+   and the comet riding its leading edge blooms into a hot-cored streak that
+   trails *behind* the direction of travel, so a fast scroll reads as real
+   motion blur rather than a dot teleporting. At rest everything eases back to
+   the calm v7 rail. Additive + opt-in: `--scroll-energy` defaults to 0, so with
+   no JS (or under the reduced-motion guard below, which never starts the engine)
+   the rail + comet are pixel-identical to their prior v7 state.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Charged rail — the warm progress thread gains weight with reading speed. It
+   thickens a hair and its glow swells, so flinging down the page feels like
+   pouring current through the wire; it relaxes back to the calm 2.5px hairline
+   the instant the scroll settles. `--scroll-energy` rests at 0 → identical to v7. */
+.scroll-progress {
+  height: calc(2.5px + var(--scroll-energy, 0) * 1.6px);
+  transition: height var(--dur-fast) var(--ease-out);
+}
+.scroll-progress::after {
+  content: ""; position: absolute; inset: -2px 0;
+  pointer-events: none; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(243, 200, 105, 0.9) 60%, #fff4d8);
+  filter: blur(6px);
+  opacity: calc(var(--scroll-energy, 0) * 0.85);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+/* Comet bloom — the head riding the rail's leading edge stretches into a
+   streak and grows a white-hot core as energy rises. The body scales from its
+   *right* edge so the tail rakes backward (up-page) against the downward fling,
+   the way motion blur trails the thing that's moving. A soft `::before` tail
+   extends the smear further; a `::after` core whitens the centre. Both rest at
+   opacity 0 / scale 1, so a still page shows the unchanged v7 dot. */
+.scroll-comet {
+  transform-origin: right center;
+  transform: scaleX(calc(1 + var(--scroll-energy, 0) * 3.4))
+    scaleY(calc(1 + var(--scroll-energy, 0) * 0.7));
+  transition: transform var(--dur-fast) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.scroll-comet::before {
+  content: ""; position: absolute; top: 50%; right: 4px;
+  width: calc(28px + var(--scroll-energy, 0) * 120px); height: 2px;
+  margin-top: -1px; border-radius: 9999px; pointer-events: none;
+  transform-origin: right center;
+  background: linear-gradient(270deg, rgba(243, 200, 105, 0.85), transparent);
+  opacity: calc(var(--scroll-energy, 0) * 0.9);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.scroll-comet::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(circle, #ffffff 0%, #fff4d8 45%, transparent 72%);
+  opacity: calc(var(--scroll-energy, 0) * 0.95);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The engine never starts under reduced motion, but pin the resting values
+     hard so a stale custom property can never thicken the rail or smear the
+     comet for a motion-sensitive reader. */
+  .scroll-progress { height: 2.5px !important; }
+  .scroll-progress::after,
+  .scroll-comet::before,
+  .scroll-comet::after { display: none !important; }
+  .scroll-comet { transform: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v21 — Living atmosphere & idle life
+   v4–v20 lit the surfaces, moved the light, choreographed the arrival,
+   connected the page into one system, handed the reader the lamp, and let the
+   page feel its own reading *velocity*. Every one of those layers reacted to a
+   direct input — where the cursor rests, how far (and how fast) the page is
+   scrolled — and each pool of warmth was bounded to a single section. v21 adds
+   the two dimensions none of them touched: a *continuous* light field, and
+   *idle life*.
+
+   First, a single viewport-wide warm aura now glides after the reader's cursor
+   across the whole page, dissolving the seams between the per-section pools
+   into one unbroken atmosphere — the paper reads as lit by a lamp the reader
+   carries from section to section rather than each surface waking in isolation.
+   Second, the page gains a pulse of its own: hold still and the field calms and
+   slowly breathes (`html[data-idle]`); the first flick of the cursor wakes it.
+
+   Additive + opt-in, as ever. PointerFX appends the aura node to <body> and
+   drives it on the same inertial spring engine, so no existing markup opts in
+   and nothing renders without JS. The pool rests fully transparent and centred,
+   blends `multiply` over the warm paper (so it only ever *warms*, never dims
+   text), and never intercepts a pointer. The island only arms on a fine pointer
+   with hover and bails entirely under reduced motion, so touch / keyboard /
+   motion-sensitive readers get the unchanged static page; the guard below pins
+   the calm state belt-and-braces.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Page aura — the continuous warm light field. Fixed to the viewport, painted
+   behind interaction (pointer-events:none) and blended `multiply` so it warms
+   the paper without ever darkening the copy it passes over. PointerFX writes
+   --px/--py (viewport %, eased) and toggles data-active at the window edge; with
+   no JS the node is never created, so the page is pixel-identical to its prior
+   state. */
+.page-aura {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  opacity: 0; mix-blend-mode: multiply; will-change: opacity, background;
+  transition: opacity var(--dur-slow) var(--ease-out);
+  background:
+    radial-gradient(760px circle at var(--px, 50%) var(--py, 42%),
+      rgba(232, 163, 23, 0.10), rgba(232, 163, 23, 0.03) 38%, transparent 60%),
+    radial-gradient(1100px circle at var(--px, 50%) var(--py, 42%),
+      rgba(122, 63, 0, 0.025), transparent 66%);
+}
+.page-aura[data-active="true"] { opacity: 1; }
+
+/* Idle breath — once the reader holds still (root gains data-idle), the live
+   field eases into a slow, low-amplitude breath so the page never reads as
+   frozen between gestures. The first cursor move clears data-idle and the pool
+   resumes tracking. One calm idle loop; hard-stopped under reduced motion. */
+@keyframes aura-breathe {
+  0%, 100% { opacity: 0.62; }
+  50%      { opacity: 0.96; }
+}
+html[data-idle="true"] .page-aura[data-active="true"] {
+  animation: aura-breathe 6.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The island never starts under reduced motion (so the node is never even
+     appended), but pin the calm state in case a stale attribute lingers. */
+  .page-aura { opacity: 0 !important; animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v22 — Continuity & arrival. Where v7 owned the seams between states and
+   v9–v21 lit the surfaces, v22 owns the *thresholds*: the instant a page
+   arrives, the bridge between full-document routes, the leading edge of the
+   reader's scroll, and the emissive weight of the gold itself. Every rule
+   here is additive — it either targets a global element (root, body, the
+   existing scroll rail) or upgrades a shared primitive (.gradient-text) in
+   place without changing its markup. The whole layer is gated behind the
+   reduced-motion guard so motion-sensitive readers keep the calm, static
+   version.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Cross-document view transitions — when a full-page navigation happens (e.g.
+   the marketing CTAs that <a href> into /auth and /app), the outgoing and
+   incoming documents cross-fade with a gentle vertical drift instead of the
+   browser's hard white flash. Soft-SPA navigations inside the Next router
+   ignore this (they're same-document), so it only adorns the real threshold
+   crossings — exactly where the flash used to live. No-op where unsupported. */
+@view-transition { navigation: auto; }
+
+@keyframes vt-fade-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.994); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes vt-fade-sink {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(-8px) scale(0.997); }
+}
+::view-transition-old(root) {
+  animation: vt-fade-sink 0.30s var(--ease-in-out) both;
+}
+::view-transition-new(root) {
+  animation: vt-fade-rise 0.42s var(--ease-out) both;
+}
+
+/* Arrival bloom — a single warm pulse of light rakes down from the top of the
+   viewport the moment any page first paints, so every surface (marketing and
+   workspace alike) opens with the same crafted breath the hero already has.
+   Painted on `body::after`, pinned to the viewport, pointer-transparent, and
+   it settles to fully transparent so it never sits between the reader and the
+   page after its one beat. */
+body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 9990; pointer-events: none;
+  opacity: 0; mix-blend-mode: screen;
+  background:
+    radial-gradient(120% 70% at 50% -8%,
+      rgba(243, 200, 105, 0.40), rgba(232, 163, 23, 0.12) 38%, transparent 64%);
+  animation: arrival-bloom 1.15s var(--ease-out) 0.04s both;
+}
+@keyframes arrival-bloom {
+  0%   { opacity: 0; transform: translateY(-14px); }
+  28%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(0); }
+}
+
+/* Comet head on the scroll rail — the existing gold progress thread gains a
+   bright, soft-glowing dot at its leading edge so the reader's travel down the
+   page reads as a moving point of light, not just a growing bar. Rides the
+   rail's own `scaleX`, so it always sits exactly at the front of progress. */
+.scroll-progress::after {
+  content: ""; position: absolute; top: 50%; right: -1px;
+  width: 7px; height: 7px; border-radius: 9999px;
+  transform: translateY(-50%);
+  background: #fbe3a6;
+  box-shadow:
+    0 0 8px 1px rgba(243, 200, 105, 0.9),
+    0 0 16px 3px rgba(232, 163, 23, 0.55);
+}
+
+/* Lit-metal depth for gold text — the shared `.gradient-text` accent (every
+   gold headline, hero numeral, and pricing figure) gains a faint emissive
+   halo so the warm gradient reads as light caught on metal rather than flat
+   paint. drop-shadow follows the clipped glyphs, so only the letters glow. */
+.gradient-text {
+  filter: drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22));
+}
+
+/* Warm caret + a fuller two-tone selection — small global touches so even raw
+   text input and highlight-to-copy feel like they belong to the warm palette. */
+* { caret-color: var(--color-amber, #A66A00); }
+::selection { background: #F2D49A; color: #2B2822; text-shadow: none; }
+::-moz-selection { background: #F2D49A; color: #2B2822; text-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* `*` doesn't reach the ::view-transition pseudo-tree or body::after's
+     one-shot, so pin them to a calm, instant state explicitly. */
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none !important; }
+  body::after { animation: none !important; opacity: 0 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v23 — Forged finish: the gold earns a drawn edge.
+   v9–v22 lit the surfaces, moved the light, choreographed the arrival, and
+   gave the gold an emissive, lit-metal weight. v23 makes that gold feel
+   *struck* rather than printed: every highlight word now lands with a hand-
+   drawn underline stroke beneath it, that stroke breathes with the page's own
+   idle life (v21), and the text links that carry the reader through the page
+   trade their flat hover bar for a glowing gold gradient. Every rule is
+   additive — it hangs a fresh pseudo on a shared primitive (.crown) or upgrades
+   one in place (.underline-grow) without touching a line of markup — and the
+   whole layer collapses to its calm, static rest under reduced motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Struck underline — beneath every gold highlight word (.crown is worn by the
+   hero highlight and the closing-CTA highlight) a thin warm-gold stroke draws
+   itself left→right just after the word settles, so the headline reads as
+   signed by hand in gilt. The crown's existing specular `::after` sweep is
+   untouched; this rides a fresh `::before` on the same relative box. Tapered
+   ends + a soft bloom keep it reading as struck light, not a flat rule. */
+.crown::before {
+  content: ""; position: absolute; left: -1%; right: -1%; bottom: -0.12em;
+  height: 3px; border-radius: 3px; z-index: 0; pointer-events: none;
+  transform: scaleX(0); transform-origin: left;
+  background:
+    linear-gradient(90deg, transparent, #e8a317 12%, #f3c869 50%, #e8a317 88%, transparent);
+  box-shadow: 0 1px 9px -1px rgba(232, 163, 23, 0.55);
+  animation: crown-underline 0.9s var(--ease-out) 0.55s both;
+}
+@keyframes crown-underline {
+  0%   { transform: scaleX(0); opacity: 0; }
+  35%  { opacity: 1; }
+  100% { transform: scaleX(1); opacity: 1; }
+}
+/* Idle breath — once the page settles (root gains data-idle from PointerFX, the
+   same signal that calms the v21 atmosphere), the struck stroke pulses its bloom
+   so the gilt edge keeps a faint pulse of life. The one-shot draw above is long
+   finished by the time idle arrives (≥2.6s of stillness), so re-declaring the
+   animation here simply takes over while holding the line fully drawn. */
+@keyframes crown-underline-breathe {
+  0%, 100% { box-shadow: 0 1px 7px -1px rgba(232, 163, 23, 0.35); }
+  50%      { box-shadow: 0 1px 13px 0px rgba(243, 200, 105, 0.7); }
+}
+html[data-idle="true"] .crown::before {
+  transform: scaleX(1);
+  animation: crown-underline-breathe 5s var(--ease-in-out) infinite;
+}
+
+/* Glowing gold link underline — the text links that thread the page (nav, footer,
+   inline affordances all share `.underline-grow`) trade their flat amber bar for
+   a warm gold gradient that lights a soft bloom as it grows in under the hand, so
+   following a link feels like the rest of the warm-metal system rather than a
+   default text-decoration. In-place upgrade: same grow-from-left mechanic, richer
+   paint. */
+.underline-grow::after {
+  background: linear-gradient(90deg, #A66A00, #e8a317 50%, #f3c869);
+  box-shadow: 0 1px 8px -2px rgba(232, 163, 23, 0);
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.underline-grow:hover::after {
+  box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `*` doesn't reach generated pseudo content, so pin the struck stroke to its
+     calm, fully-drawn rest with no draw, no breath. */
+  .crown::before { transform: scaleX(1) !important; animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v24 — Tempered metal: gilt under the hand.
+   v23 gave the gold a *drawn* edge; v24 makes the warm-metal language respond
+   to touch and stillness everywhere the reader's hand travels. Four additive
+   rules, each hung on a primitive that already lives in the committed markup —
+   no markup moves:
+     • the big index numerals (.ghost-num) stop merely warming their outline and
+       instead *strike to solid gilt*, lifting with a forge-heat bloom, the
+       moment their step is hovered;
+     • the hero proof checks (.proof-check) kindle a soft gold halo as the row is
+       taken in, so the promise list reads as lit from within;
+     • the primary CTAs (.cta-aura) gain a thin struck-gilt inner rim on hover, so
+       the button edge looks pressed from warm metal rather than filled flat;
+     • the section eyebrow markers (.eyebrow-dot) join the v21 idle-life system —
+       once the page settles they breathe a slow ember.
+   Every rule rides existing custom properties and the shared idle signal, and
+   the whole layer pins to its calm rest under reduced motion (the `*` guard does
+   not reach generated pseudo content, so the pseudos are pinned explicitly).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Struck-to-gilt index numerals — the quiet "01…05" watermark numerals used to
+   only warm their hollow outline on hover. Now the hovered numeral fills with
+   the brand's warm-gold gradient (clipped to the glyphs, the darker gold stroke
+   still tracing the edge so it reads as forged, not painted), lifts a hair, and
+   throws a soft heat-bloom beneath it. The later same-specificity rule wins over
+   the v5 hover, so this is a clean in-place upgrade. */
+.ghost-num {
+  transition:
+    color var(--dur-base) var(--ease-out),
+    -webkit-text-stroke-color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring),
+    filter var(--dur-slow) var(--ease-out);
+}
+.group:hover .ghost-num {
+  color: transparent;
+  background-image: var(--grad-gold,
+    linear-gradient(135deg, #f0b53a 0%, #e8a317 45%, #A66A00 100%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke-color: rgba(166, 106, 0, 0.5);
+  transform: translateY(-3px) scale(1.02);
+  filter: drop-shadow(0 6px 16px rgba(232, 163, 23, 0.42));
+}
+
+/* Kindled proof checks — the hero "it can…" rows already spring their green
+   check tile as they land. v24 hangs a warm-gold halo on a fresh ::after that
+   blooms outward when the row is taken under the hand, so the promise list reads
+   as lit from within rather than ticked in flat ink. Pure overlay: pointer-
+   transparent, sits behind nothing it can obscure, scales from a hair small. */
+.proof-row .proof-check { position: relative; }
+.proof-row .proof-check::after {
+  content: ""; position: absolute; inset: -3px; border-radius: inherit;
+  pointer-events: none; opacity: 0; transform: scale(0.86);
+  box-shadow:
+    0 0 0 1px rgba(232, 163, 23, 0.45),
+    0 6px 16px -3px rgba(232, 163, 23, 0.5);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+@media (hover: hover) {
+  .proof-row:hover .proof-check::after { opacity: 1; transform: scale(1); }
+}
+
+/* Struck-gilt CTA rim — the primary brown CTAs carry the aura bloom (.cta-aura
+   ::before) on hover; v24 adds the companion ::after: a thin warm-gold inner
+   rule plus a faint inner glow that lights as the hand arrives, so the button's
+   own edge looks pressed from the same warm metal as the rest of the page. Hugs
+   the host's radius, pointer-transparent, paints only on hover. */
+.cta-aura::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; opacity: 0;
+  box-shadow:
+    inset 0 0 0 1px rgba(243, 200, 105, 0.85),
+    inset 0 0 16px -5px rgba(243, 200, 105, 0.6);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .cta-aura:hover::after { opacity: 1; }
+}
+
+/* Idle ember on section markers — the eyebrow dot already emits a constant live
+   ring; once the reader holds still (root gains data-idle from PointerFX, the
+   same signal the v21 atmosphere and v23 struck stroke ride) its core warms in a
+   slow breath, so even the quiet section labels keep a faint pulse of life while
+   the page rests. data-idle is only ever set on a fine pointer with motion
+   allowed, so this never arms under reduced motion. */
+@keyframes eyebrow-idle-ember {
+  0%, 100% { box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7); }
+  50%      { box-shadow: 0 0 17px 1px rgba(243, 200, 105, 0.95); }
+}
+html[data-idle="true"] .eyebrow-dot {
+  animation: eyebrow-idle-ember 4.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `*` !important reaches real elements but not generated pseudo content, so
+     pin the new pseudos to their calm rest and silence the idle ember. */
+  .ghost-num { transition: none !important; }
+  .proof-row .proof-check::after { transition: none !important; }
+  .cta-aura::after { transition: none !important; }
+  html[data-idle="true"] .eyebrow-dot { animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v25 — Kindled wake. The page already follows where the hand is (v21 aura)
+   and how hard it flings the scroll (v20 momentum). v25 closes the loop on the
+   *pointer's own tempo*: PointerFX differentiates cursor speed into a smoothed
+   --pointer-heat (0..1) on <html> and sheds a sparse trail of gold embers from
+   a fast cursor. The light here answers that heat — the continuous aura fans
+   wider + warmer as the hand quickens, and the shed motes burn up and out. Both
+   read as the same warm metal under a lamp the rest of the page already speaks;
+   nothing here is busy, because heat (and the mote pool) collapse to nothing the
+   instant the hand stills. Additive: --pointer-heat defaults to 0, so every rule
+   below is pixel-identical to its v21 rest state until the cursor actually moves.
+   The whole layer is gated — PointerFX never starts under reduced motion or on a
+   coarse pointer, and the guard at the foot pins the calm state belt-and-braces.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Heat-fanned aura — re-declares the v21 field's background so its inner pool
+   brightens and both pools widen as --pointer-heat rises. Every term reduces to
+   the exact v21 value at heat 0 (0.10 alpha / 760px / 1100px), so the resting
+   page is untouched; at full flick the warm core roughly doubles in weight and
+   the field opens ~55% wider, like a lamp wick turned up under the hand. A third
+   tight, near-transparent-at-rest core adds a bright kindled point only when hot. */
+.page-aura {
+  background:
+    radial-gradient(calc(420px + var(--pointer-heat, 0) * 260px) circle
+        at var(--px, 50%) var(--py, 42%),
+      rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.14)),
+      transparent 64%),
+    radial-gradient(calc(760px + var(--pointer-heat, 0) * 420px) circle
+        at var(--px, 50%) var(--py, 42%),
+      rgba(232, 163, 23, calc(0.10 + var(--pointer-heat, 0) * 0.10)),
+      rgba(232, 163, 23, 0.03) 38%, transparent 60%),
+    radial-gradient(calc(1100px + var(--pointer-heat, 0) * 620px) circle
+        at var(--px, 50%) var(--py, 42%),
+      rgba(122, 63, 0, calc(0.025 + var(--pointer-heat, 0) * 0.02)),
+      transparent 66%);
+}
+
+/* Wake motes — the embers shed from a fast cursor. PointerFX appends each as a
+   <span> inside the (already fixed, full-viewport, pointer-transparent) aura
+   node, positioned in viewport px via left/top, then self-removes on
+   animationend. Same gold radial + glow as the v9 section embers, but each rises
+   a randomised distance with a sideways drift and burns out, so a flick lays a
+   short living trail rather than a static dotted line. Pointer-transparent and
+   blended `screen` so it only ever adds light, never darkens copy underneath. */
+@keyframes wake-mote-rise {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  18%  { opacity: 0.9; }
+  100% {
+    opacity: 0;
+    transform:
+      translate(calc(-50% + var(--m-drift, 0px)), calc(-50% - var(--m-rise, 48px)))
+      scale(0.3);
+  }
+}
+.wake-mote {
+  position: fixed; z-index: 1; pointer-events: none;
+  width: var(--m-size, 4px); height: var(--m-size, 4px); border-radius: 9999px;
+  margin: 0; mix-blend-mode: screen;
+  background: radial-gradient(circle, #f7d488, rgba(232, 163, 23, 0.35) 55%, transparent 72%);
+  box-shadow: 0 0 9px 1px rgba(243, 200, 105, 0.55);
+  animation: wake-mote-rise var(--m-dur, 1.1s) var(--ease-out) forwards;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* PointerFX never arms under reduced motion, so neither the heat nor any mote
+     is ever produced; pin the field to its calm v21 background and neutralise a
+     stray mote belt-and-braces. */
+  .page-aura {
+    background:
+      radial-gradient(760px circle at var(--px, 50%) var(--py, 42%),
+        rgba(232, 163, 23, 0.10), rgba(232, 163, 23, 0.03) 38%, transparent 60%),
+      radial-gradient(1100px circle at var(--px, 50%) var(--py, 42%),
+        rgba(122, 63, 0, 0.025), transparent 66%) !important;
+  }
+  .wake-mote { animation: none !important; opacity: 0 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v26 — Settled finish. v9–v25 built the lit, living surface; v26 tunes the
+   ground it all rests on, so the loud layers read as *considered* rather than
+   busy. Four moves, all additive and zero-specificity (`:where`) where they
+   touch shared tags, so nothing here can outrank a component rule: (1) type is
+   set with kerning, ligatures and contextual alternates, headings balance and
+   body copy wraps "pretty" — no orphans, no jagged ragged edges; (2) every
+   animated counter and stat is pinned to tabular numerals so a number that
+   counts up no longer reflows its neighbours mid-tick; (3) the keyboard focus
+   ring now *arrives* — it blooms out on a spring instead of snapping, the one
+   moment of warmth a keyboard user actually waits on; (4) the scrollbar thumb
+   warms to brand gold the instant it's grabbed, and anchored scrolls leave
+   breathing room up top. The whole layer collapses under the reduced-motion
+   guard at the foot (and the global `*` guard already pins durations to ~0).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Considered type — global finish, zero-specificity so components win.
+   optimizeLegibility + the feature set turn on the font's real kerning and
+   ligature tables; balanced headings keep a two-line title from dropping a
+   lonely last word; pretty body wrapping kills single-word orphan lines. */
+body {
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+:where(h1, h2, h3, .h-balance) { text-wrap: balance; }
+:where(p, li, blockquote, figcaption, dd) { text-wrap: pretty; }
+
+/* (2) Stable numerals — any number that animates or sits in a stat slot holds
+   a fixed advance width, so a counting tick or a changing figure never nudges
+   the layout around it. Joins the v-earlier .num-flow / .count-up pair. */
+.num-rise,
+.count-pop,
+.stat-cell,
+.stat-value,
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* (3) A focus ring that arrives — re-states the base :focus-visible's final
+   geometry as the end of a spring bloom (offset eases 5px→2px, the soft gold
+   halo expands from nothing), so the ring lands with the same confident
+   overshoot every other motion in the app shares. Rest state is pixel-identical
+   to the base rule; only the entrance is new. */
+@keyframes focus-bloom {
+  from { outline-offset: 5px; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+  to   { outline-offset: 2px; box-shadow: 0 0 0 4px rgba(232, 163, 23, 0.18); }
+}
+:focus-visible { animation: focus-bloom var(--dur-base) var(--ease-spring) both; }
+
+/* (4) Kindled scrollbar + anchored breathing room — the thumb you're actively
+   dragging warms from stone to brand gold (the one scrollbar moment with real
+   intent behind it); smooth-scrolled anchors stop 5rem short so a target never
+   hides under a sticky header. */
+::-webkit-scrollbar-thumb:active { background: var(--grad-gold); }
+html { scroll-padding-top: 5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the calm version: the ring appears at rest with no bloom. The global
+     `*` guard already flattens durations, but pin the animation off explicitly
+     so the entrance never plays even partially. */
+  :focus-visible { animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v27 — Tempered lustre. v9–v26 lit the surface and tuned the ground it rests
+   on; v27 is the polish pass that makes the *same warm metal* speak through
+   four small, often-touched moments — the text you select, the card grid you
+   sweep, the wordmark you glance back at, the quiet section labels. Every move
+   is additive and rides a signal the page already publishes (PointerFX's
+   smoothed `--pointer-heat` 0..1 on <html>, the `html[data-idle]` rest flag,
+   the per-card `--gx/--gy` pool position, the `[data-glowing]` switch), so each
+   rule collapses to a *pixel-identical* rest state at heat 0 / no idle / no
+   hover — nothing here paints until the hand actually does something. The whole
+   layer sits under the reduced-motion guard at the foot, and the live signals
+   it reads are themselves only ever produced on a fine pointer with motion
+   allowed, so it is doubly dark for keyboard + reduced-motion users.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Heat-warmed selection — the highlight is cream at rest (identical to the
+   v-earlier ::selection), but because you can only select text *while the
+   cursor is moving*, --pointer-heat is naturally up at the exact moment the
+   highlight is drawn. So the band warms cream→gold under an active drag and
+   settles back to cream the instant you let go: the selection reads as struck
+   from the same lamp as everything else, not a flat browser blue. color-mix's
+   second-colour percentage is driven by heat (0% → pure cream), and
+   --pointer-heat inherits from <html> down into the ::selection pseudo. */
+::selection {
+  background: color-mix(in oklab,
+    #F2D49A,
+    #EBB54A calc(var(--pointer-heat, 0) * 100%));
+  color: #2B2822;
+  text-shadow: none;
+}
+
+/* (2) Heat-fanned card pool — re-states the v19 .card-glow::after background so
+   the travelling spotlight intensifies and widens as the hand quickens, exactly
+   as the v25 page aura answers heat. Every term reduces to the v19 value at
+   heat 0 (260px / 0.20 alpha), so a still grid is untouched; under a fast sweep
+   the pool grows ~40% and warms, and a tight bright core kindles in only when
+   hot — so sweeping a wall of cards feels like running a lamp across forged
+   metal rather than toggling eight identical glows. Selector + pseudo match the
+   v19 rule, later same-specificity wins, so the on-dark `screen` variant and
+   the `[data-glowing]` opacity switch below it are inherited untouched. */
+.card-glow::after {
+  background:
+    radial-gradient(calc(120px + var(--pointer-heat, 0) * 120px) circle
+        at var(--gx, 50%) var(--gy, 0%),
+      rgba(247, 212, 136, calc(var(--pointer-heat, 0) * 0.22)),
+      transparent 60%),
+    radial-gradient(calc(260px + var(--pointer-heat, 0) * 110px) circle
+        at var(--gx, 50%) var(--gy, 0%),
+      rgba(232, 163, 23, calc(0.20 + var(--pointer-heat, 0) * 0.08)),
+      rgba(232, 163, 23, 0.05) 42%, transparent 66%);
+}
+
+/* (3) Idle wordmark breath — the VANTAGE wordmark carries a periodic gleam
+   sweep (v5); v27 hangs a slow warm halo on it that only kindles once the
+   reader holds still (root gains data-idle from PointerFX — the same rest
+   signal the v24 eyebrow ember rides), so the brand mark keeps a faint pulse of
+   life while the page rests, then drops to nothing the moment the hand moves.
+   Pure text-shadow breath: no layout, no colour change to the glyphs. */
+@keyframes wordmark-idle-breath {
+  0%, 100% { text-shadow: 0 0 0 rgba(232, 163, 23, 0); }
+  50%      { text-shadow: 0 1px 16px rgba(243, 200, 105, 0.45); }
+}
+html[data-idle="true"] .wordmark-gleam {
+  animation: wordmark-idle-breath 5s var(--ease-in-out) infinite;
+}
+
+/* (4) Kindled eyebrow rule — the section-label rule already grows + pans a gold
+   gradient on arrival (v-earlier). v27 lets it answer the room: it lengthens a
+   touch and lifts a soft gilt glow when the cursor rests over its section
+   (`:hover` on the label's group) and breathes that same glow slowly while the
+   whole page is idle, so even the quiet eyebrows read as lit from within rather
+   than printed flat. Glow only — width eases by a few px, the arrival animation
+   and gradient pan are untouched. */
+.eyebrow-rule {
+  transition:
+    width var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .group:hover .eyebrow-rule,
+  .eyebrow-row:hover .eyebrow-rule {
+    width: 40px;
+    box-shadow: 0 0 12px -1px rgba(243, 200, 105, 0.8);
+  }
+}
+@keyframes eyebrow-rule-breath {
+  0%, 100% { box-shadow: 0 0 6px -2px rgba(232, 163, 23, 0.5); }
+  50%      { box-shadow: 0 0 14px 0 rgba(243, 200, 105, 0.85); }
+}
+html[data-idle="true"] .eyebrow-rule {
+  animation:
+    underline-grow 0.7s var(--ease-out) both,
+    gradient-pan 4s linear infinite,
+    eyebrow-rule-breath 4.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* PointerFX never arms under reduced motion, so heat stays 0 and data-idle is
+     never set — every move above is already at rest. Pin the two idle
+     animations off explicitly (the `*` guard flattens durations but can't stop
+     a named keyframe mid-cycle) and drop selection back to flat cream so no
+     color-mix is evaluated against a stray heat value. */
+  ::selection { background: #F2D49A; }
+  html[data-idle="true"] .wordmark-gleam { animation: none !important; }
+  html[data-idle="true"] .eyebrow-rule {
+    animation: underline-grow 0.7s var(--ease-out) both !important;
+  }
+  .eyebrow-rule { transition: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v28 — Grounded lustre. v9–v27 lit the surface, taught the light to follow the
+   hand, and tuned the metal it's struck from. v28 is the *grounding* pass: it
+   settles the type so headlines read as set, not stacked; lets the gold the
+   page already speaks reach two surfaces it had missed (the reader's scroll
+   thread, and any text selected on the dark panel); and hangs one quiet idle
+   gleam on the brand mark itself. Every rule is additive + opt-in, rides a
+   signal the page already publishes (PointerFX's `--pointer-heat`, the
+   `html[data-idle]` rest flag) or is pure static refinement, and collapses to a
+   pixel-identical rest state under the reduced-motion guard at the foot below.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Set type — balanced headline wrapping + sharper rendering. `text-wrap:
+   balance` evens the ragged right edge of a multi-line heading so a title reads
+   as *composed* rather than reflowed; optical kerning + legibility hinting firm
+   up the small print. Opt-in via `.balance`; both properties degrade to a
+   silent no-op where unsupported, so nothing regresses on older engines. */
+.balance { text-wrap: balance; }
+body { text-rendering: optimizeLegibility; font-kerning: normal; }
+
+/* (2) Heat-kindled scroll thread — the v20 gold progress rail reads where the
+   reader *is* on the page; v28 lets it answer how fast they move. Its glow
+   swells and warms with `--pointer-heat` (inherited from <html>), so flicking
+   down a long page brightens the thread like a wire under current, then it
+   settles to its calm ember as the hand stills. Restates box-shadow only — the
+   scaleX fill written from rAF is untouched — and at heat 0 it resolves to the
+   exact v20 resting glow, so a still page is pixel-identical. */
+.scroll-progress {
+  box-shadow:
+    0 0 calc(12px + var(--pointer-heat, 0) * 16px) -1px
+      rgba(232, 163, 23, calc(0.7 + var(--pointer-heat, 0) * 0.3));
+}
+
+/* (3) Struck-gold selection on the dark panel — the v27 heat-warmed selection
+   is a warm cream tuned for the paper field; dragged across the near-black
+   differentiators section it reads as a pale smudge. Here the same gesture
+   lands as lit gold ink on dark, so selecting the manifesto copy feels struck
+   from the section's own embers. Scoped to `.bg-dark`; paper selection is
+   untouched. */
+.bg-dark ::selection {
+  background: rgba(232, 163, 23, 0.30);
+  color: #FBF2E1;
+  text-shadow: none;
+}
+
+/* (4) Brand-mark idle gleam — the wordmark already breathes on idle (v27); v28
+   lets the little brown logo tile beside it answer too, with a slow gold rim
+   that kindles only while the page rests (`html[data-idle]`) and is dark the
+   instant the hand moves. A masked gradient ring sits behind the tile (same
+   technique as `.grad-border`), so the tile fill and the check glyph are
+   untouched — only a 1.5px gilt halo bleeds past the corners. */
+.logo-spark { position: relative; isolation: isolate; }
+.logo-spark::before {
+  content: ""; position: absolute; inset: -1.5px; z-index: -1; border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(120deg,
+    rgba(232, 163, 23, 0) 18%, rgba(243, 200, 105, 0.95) 50%, rgba(232, 163, 23, 0) 82%);
+  background-size: 220% auto;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0; transition: opacity var(--dur-base) var(--ease-out);
+}
+html[data-idle="true"] .logo-spark::before {
+  opacity: 1;
+  animation: border-pan 4.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Heat never rises and data-idle is never set under reduced motion, so both
+     effects above already rest — pin them to their static values explicitly so
+     no heat term is evaluated and the idle ring stays dark. */
+  .scroll-progress { box-shadow: 0 0 12px -1px rgba(232, 163, 23, 0.7); }
+  html[data-idle="true"] .logo-spark::before { animation: none !important; opacity: 0 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v29 — Quickened gold. v21 taught the atmosphere *where* the hand is; v25 let
+   it feel *how fast*. So far only the page's light field and selection answered
+   that tempo — the words themselves stayed still. v29 carries the same forge
+   signal up into the content: the gold a headline is struck from flares brighter
+   and wider the quicker the reader moves, and a link followed at speed lights a
+   hotter bloom under the hand. One static type-craft refinement rides along —
+   the lede copy stops orphaning its last word. Every rule is additive + opt-in,
+   reads only signals the page already publishes (PointerFX's `--pointer-heat`
+   inherited from <html>), composes onto — never replaces — the resting value of
+   the primitive it upgrades, and collapses to a pixel-identical rest state under
+   the reduced-motion guard at the foot.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Set the lede — `text-wrap: pretty` lets the engine look ahead a few lines
+   to avoid a stranded one-word last line in a paragraph, the body-copy partner
+   to v28's headline `.balance`. Opt-in via `.text-pretty`; a no-op on engines
+   that don't support it, so nothing regresses. */
+.text-pretty { text-wrap: pretty; }
+
+/* (2) Quickened crown — the shared `.gradient-text` accent already wears a v22
+   emissive halo so the gold reads as lit metal at rest; v29 hangs a *second*
+   drop-shadow on top that swells and warms with `--pointer-heat`, so flicking
+   around the hero fans the headline word like a coal under breath, then it
+   settles back to the v22 glow as the hand stills. The v22 term is restated
+   first so it is preserved (filter does not cascade additively), and the heat
+   term resolves to `drop-shadow(0 0 0 transparent)` at heat 0 — pixel-identical
+   to v22 on a still page. */
+.gradient-text {
+  filter:
+    drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22))
+    drop-shadow(0 0 calc(var(--pointer-heat, 0) * 16px)
+      rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.55)));
+}
+
+/* (3) Hotter link bloom — the v23 gold underline lights a fixed bloom on hover;
+   v29 lets that bloom answer the reader's tempo, so a link chased at speed
+   flares warmer and wider than one met at a drift. Restates the v23 hover
+   box-shadow with its exact value as the base term plus a `--pointer-heat`
+   addend, so at heat 0 it is identical to v23. Must sit after v23 in source
+   order — it does, appended here at the foot. */
+.underline-grow:hover::after {
+  box-shadow: 0 1px calc(8px + var(--pointer-heat, 0) * 11px) -1px
+    rgba(232, 163, 23, calc(0.6 + var(--pointer-heat, 0) * 0.35));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `--pointer-heat` never rises under reduced motion (PointerFX bails before it
+     publishes), so every heat term above already evaluates to its rest value.
+     Pin the two upgraded primitives to their exact static glow anyway, so no
+     heat custom-property is read and the surfaces are provably frozen. */
+  .gradient-text { filter: drop-shadow(0 1px 6px rgba(232, 163, 23, 0.22)); }
+  .underline-grow:hover::after { box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.6); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v30 — Carried filament. v21 taught the page that the reader carries a lamp;
+   v25 taught that lamp to flare with the hand's tempo. But the light has only
+   ever been a *broad field* — there has been no bright point where the hand
+   actually is. v30 hangs the lamp's filament under the cursor: a tight warm core
+   (the PointerFX `.cursor-filament` node, trailed on its own inertial spring)
+   that the page already reaches for. Two moves carry the same forge signal one
+   step further: the filament kindles brighter and tighter as `--pointer-heat`
+   rises, mirroring the v25 aura; and a primary CTA now *pre-warms* its aura from
+   the same heat, so a button approached at speed is already glowing before the
+   pointer lands. Every rule is additive, rides only signals the page already
+   publishes (the `data-lit` switch + `--pointer-heat`, both inherited from the
+   gated PointerFX island), composes onto — never replaces — the value it
+   upgrades, and collapses to a pixel-identical rest state under the
+   reduced-motion guard at the foot. The filament node only exists on a fine
+   pointer with motion allowed; keyboard, touch and reduced-motion users never
+   see it built.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) The filament itself — a small, soft warm core pinned to the cursor in
+   viewport px (`--fx`/`--fy`, written from the v30 spring). It rests dark
+   (opacity 0) and fades in via `data-lit` once the hand is in the window, so a
+   still or just-loaded page is untouched. `screen` blend means it only ever adds
+   light — copy under it is never darkened — and `pointer-events: none` keeps it
+   out of every hit-test. Two stacked radials give it a bright kindled point and
+   a softer falloff, like the wick of the broad v21 aura the reader carries. */
+.cursor-filament {
+  position: fixed; inset: 0; z-index: 2;
+  margin: 0; pointer-events: none;
+  mix-blend-mode: screen; opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out);
+  /* The node spans the viewport, so `--fx`/`--fy` (viewport px) address screen
+     space directly. Two stacked radials: a bright kindled core + a softer
+     falloff, both tightening and warming as `--pointer-heat` rises. */
+  background:
+    radial-gradient(calc(16px + var(--pointer-heat, 0) * 10px) circle
+        at var(--fx, 50%) var(--fy, 50%),
+      rgba(247, 212, 136, calc(0.30 + var(--pointer-heat, 0) * 0.45)),
+      transparent 62%),
+    radial-gradient(calc(64px + var(--pointer-heat, 0) * 40px) circle
+        at var(--fx, 50%) var(--fy, 50%),
+      rgba(232, 163, 23, calc(0.10 + var(--pointer-heat, 0) * 0.16)),
+      transparent 70%);
+}
+.cursor-filament[data-lit="true"] { opacity: 1; }
+
+/* (2) Heat-pre-warmed CTA aura — the v4 `.cta-aura` bloom only wakes on direct
+   hover; v30 lets it answer the room's tempo, so a CTA approached at speed is
+   already kindling before the pointer arrives. Restates the bloom's opacity as a
+   `--pointer-heat` term that resolves to 0 at rest (pixel-identical to v4) and
+   lifts to a soft pre-glow under a fast hand; the existing `:hover` rule still
+   wins to full strength on contact. A faint heat-scaled spread keeps the bloom
+   from looking switched rather than warmed. */
+.cta-aura::before {
+  opacity: calc(var(--pointer-heat, 0) * 0.4);
+}
+@media (hover: hover) {
+  .cta-aura:hover::before { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The filament node is never created under reduced motion (PointerFX bails),
+     and `--pointer-heat` never rises — so both moves already rest. Pin them
+     explicitly: keep the filament dark even if a stray node exists, and drop the
+     CTA aura back to its v4 hover-only behaviour with no heat term evaluated. */
+  .cursor-filament { opacity: 0 !important; }
+  .cta-aura::before { opacity: 0; }
+  .cta-aura:hover::before { opacity: 0.85; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v31 — Answered relief. v9–v30 lit the surface, taught the light to follow the
+   hand (v21 aura), feel its tempo (v25/v29 heat) and hang a filament under the
+   cursor (v30); the scroll engine (v20) gave the rail velocity. What was left
+   were a handful of surfaces that still sat *outside* that vocabulary — the
+   paper's own grain didn't react to a fling, the "agents live" badge pulsed at
+   a fixed warmth no matter the tempo, the icon tiles only woke on a direct
+   hover, and the ATS-logo row was the one interactive strip with no drawn gold
+   under the hand. v31 brings each into the language the rest of the page already
+   speaks. Every rule is additive + opt-in, reads only signals the page already
+   publishes (`--scroll-energy` + `--pointer-heat`, inherited from <html>),
+   composes onto — never replaces — the resting value of the primitive it
+   upgrades, and collapses to a pixel-identical rest state under the
+   reduced-motion guard at the foot.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Velocity-lifted grain — the v10 film grain is a fixed sub-perceptual veil
+   that makes the warm paper read as material. v31 lets that material *answer a
+   fling*: its opacity gains a small `--scroll-energy` term so flicking down the
+   page momentarily deepens the tactile grain (a surface catching motion), then
+   it settles to its exact v10 rest. At energy 0 the term is 0 → opacity 0.5,
+   pixel-identical. The grain-shift animation is untouched. */
+.grain-overlay {
+  opacity: calc(0.5 + var(--scroll-energy, 0) * 0.13);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* (2) Heat-fanned live badge — the hero "agents live" status dot pulses on a
+   fixed green keyframe. v31 lets it breathe with the reader's tempo: a
+   `--pointer-heat`-scaled green drop-shadow blooms around it as the hand
+   quickens, so the live signal reads hotter under motion and calms as the hand
+   stills. `filter` is a separate channel from the keyframe's `box-shadow`, so
+   the pulse is preserved; at heat 0 it resolves to a 0px transparent shadow —
+   a no-op. */
+.animate-pulse-dot {
+  filter: drop-shadow(0 0 calc(var(--pointer-heat, 0) * 7px)
+    rgba(76, 122, 63, calc(var(--pointer-heat, 0) * 0.75)));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+
+/* (3) Heat-pre-warmed icon tiles — the v9 `.icon-glow` bloom only wakes on a
+   direct group hover. v31 lets a *fast hand sweeping the grid* pre-kindle the
+   tiles, so the features/steps rows feel lit before the pointer settles on any
+   one. Restates only the bloom's resting opacity as a `--pointer-heat` term
+   (0 at rest → pixel-identical to v9); the `.group:hover` rule has higher
+   specificity and still wins to full strength on contact. The blur/colour and
+   the hover transition are inherited from the v9 declaration above. */
+.icon-glow::before {
+  opacity: calc(var(--pointer-heat, 0) * 0.3);
+}
+
+/* (4) Drawn gold under the ATS logos — the trust strip's wordmarks lift + warm
+   to brown on hover but were the one interactive row with no struck-gold mark,
+   the language every other link on the page speaks (v23/v29 underline-grow).
+   v31 draws a thin gilt rule under each logo that grows from the centre on
+   hover and brightens with `--pointer-heat`, so a name met at speed lights a
+   hotter stroke. Rests fully collapsed (scaleX 0 / no glow), so the static row
+   is untouched. */
+.scan-strip .press { position: relative; }
+.scan-strip .press::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 2px;
+  border-radius: 9999px; pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent, rgba(232, 163, 23, 0.95), transparent);
+  transform: scaleX(0); transform-origin: center;
+  opacity: 0;
+  transition: transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+@media (hover: hover) {
+  .scan-strip .press:hover::after {
+    transform: scaleX(1); opacity: 1;
+    box-shadow: 0 1px calc(8px + var(--pointer-heat, 0) * 10px) -1px
+      rgba(232, 163, 23, calc(0.55 + var(--pointer-heat, 0) * 0.35));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine runs under reduced motion (`--scroll-energy`/`--pointer-heat`
+     stay 0), so every term above already evaluates to its rest value. Pin them
+     explicitly anyway so no custom property is read: the grain holds its v10
+     opacity, the badge sheds its filter, the tiles rest dark, and the ATS rule
+     stays collapsed even on hover. */
+  .grain-overlay { opacity: 0.5; transition: none !important; }
+  .animate-pulse-dot { filter: none !important; }
+  .icon-glow::before { opacity: 0; }
+  .scan-strip .press::after { display: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v32 — Lit seams. v9–v31 lit the surfaces, taught the light to follow the hand
+   (v21 aura), feel its tempo (v25/v29/v30 heat) and answer a fling (v20/v31
+   energy) — and v31 swept the last *interactive* strips into that language. But
+   one structural element still sat outside it: `.edge-light`, the thin gilt rule
+   the page draws across its joins — the top of the footer and the lip of the
+   final-CTA card. It was the one piece of gold that never breathed: a flat
+   hairline no matter how fast the hand moved or how hard the page was flung. v32
+   brings the seam itself into the vocabulary. As `--pointer-heat` rises the rule
+   *fans* — its bright band widens out from centre and warms — and as the reader
+   arrives at the foot of the page with momentum (`--scroll-energy`) the join
+   blooms a soft downward gold light, so reaching the bottom with speed lights the
+   seam like a struck wire. Every rule is additive, reads only signals the page
+   already publishes on <html> (`--pointer-heat` + `--scroll-energy`, inherited
+   everywhere), composes onto — never replaces — the resting hairline, and
+   collapses to a pixel-identical rest state under the reduced-motion guard at the
+   foot: at heat 0 / energy 0 every term below resolves to the exact v9 rule.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Heat-fanned seam + (2) warm bloom. The v9 rule was a single bright point
+   at 50% fading to transparent at the inset edges. v32 restates that same band
+   with two bright stops that *spread outward* from centre as the hand quickens
+   (both pinned to 50% at rest, so the gradient is byte-for-byte the v9 single-
+   point band) and lifts their opacity with the same heat. A heat-scaled warm
+   drop-shadow rides alongside on a separate channel so the rule reads as a wire
+   catching light rather than a line being recoloured; at heat 0 the shadow is a
+   0px transparent no-op. The rule's own colour never changes, so a still page is
+   untouched. */
+.edge-light::before {
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(243, 200, 105, calc(0.65 + var(--pointer-heat, 0) * 0.33))
+      calc(50% - var(--pointer-heat, 0) * 24%),
+    rgba(243, 200, 105, calc(0.65 + var(--pointer-heat, 0) * 0.33))
+      calc(50% + var(--pointer-heat, 0) * 24%),
+    transparent);
+  filter: drop-shadow(0 0 calc(var(--pointer-heat, 0) * 6px)
+    rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.7)));
+  /* (3) Fling bloom — the join casts a soft gold light downward as the page is
+     flung toward it, hottest when a fast hand and a hard fling coincide. Rests
+     at 0-spread transparent, a no-op, so the static seam is pixel-identical. */
+  box-shadow: 0 calc(var(--scroll-energy, 0) * 2px)
+    calc(var(--scroll-energy, 0) * 16px + var(--pointer-heat, 0) * 8px) 0
+    rgba(232, 163, 23,
+      calc(var(--scroll-energy, 0) * 0.5 + var(--pointer-heat, 0) * 0.25));
+  transition: background var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine runs under reduced motion (`--pointer-heat`/`--scroll-energy`
+     stay 0), so every term above already evaluates to the v9 hairline. Pin it
+     hard anyway so no custom property is ever read: restore the exact single-
+     point band and shed the heat/energy channels and their transition. */
+  .edge-light::before {
+    background: linear-gradient(90deg,
+      transparent, rgba(243, 200, 105, 0.65), transparent) !important;
+    filter: none !important;
+    box-shadow: none !important;
+    transition: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v33 — Carried afterglow & lit pipeline
+   v9–v32 lit every surface, taught the light to follow the hand (v21 aura),
+   feel its tempo (v25/v29/v30 heat), answer a fling (v20/v31/v32 energy) and
+   hang a filament under the cursor (v30) — and swept the page's strips, cards,
+   text and seams into that one warm language. Two things still sat outside it.
+   First, the warmth lived *inside* the column: the four margins the eye frames
+   the page against stayed cool no matter how hard the reader worked the page.
+   Second, the How-it-works pipeline — `.flow-rail`, the one structural rail
+   that draws the five steps into a single line — drew itself once on arrival
+   and then went inert, the last warm wire that never breathed.
+
+   v33 closes both. The whole viewport now wears a *carried afterglow*: a warm
+   light blooms inward from the four edges as `--pointer-heat` crests, so moving
+   fast frames the page in the same gold the cursor already trails — then bleeds
+   back to nothing the instant the hand stills. And the pipeline rail joins the
+   living-light vocabulary at last: it kindles a warm glow with the hand's tempo,
+   pulses brighter when the page is flung, and keeps a slow idle breath when the
+   whole page is still, exactly as the section eyebrows already do (v24).
+
+   Additive + signal-only, as ever. Both read only the `--pointer-heat` /
+   `--scroll-energy` / `html[data-idle]` channels the page already publishes on
+   <html> (inherited everywhere) — no new markup, no new JS. The afterglow is a
+   single `body::before` pinned to the viewport, pointer-transparent and
+   `screen`-blended so it only ever *adds* light, never darkens a glyph; it sits
+   below the v22 arrival bloom so that one beat still crowns it. Every term
+   resolves to a transparent / zero-spread no-op at heat 0 / energy 0, so a
+   still page is byte-for-byte v32, and the guard at the foot pins that rest
+   state hard for motion-sensitive readers (where neither engine ever runs).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* (1) Carried afterglow — a warm frame of light that blooms in from the four
+   viewport edges with the hand's tempo. The gradient is transparent across the
+   whole centre (62%) and only warms in the outer rim, so it lights the margins
+   the reader frames the column against without ever touching the copy. `screen`
+   blend = pure addition; `opacity` rides `--pointer-heat` so the entire layer is
+   absent at rest and bleeds away the moment the hand stills. z-index sits just
+   under the v22 arrival bloom (9990) so first paint still crowns the page. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 9989; pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: var(--pointer-heat, 0);
+  background:
+    radial-gradient(135% 100% at 50% 50%,
+      transparent 62%,
+      rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.11)) 84%,
+      rgba(232, 163, 23, calc(var(--pointer-heat, 0) * 0.18)) 100%);
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* (2) Lit pipeline — the How-it-works rail finally answers the room. A heat- and
+   energy-scaled warm drop-shadow is applied to `.flow-rail` (so it lifts the
+   rendered output of the rail's own `::before` thread + `::after` photon without
+   touching their draw transform), kindling the wire as the hand quickens and
+   pulsing it brighter when the page is flung toward the section. At heat 0 /
+   energy 0 the shadow is a 0px transparent no-op, so the drawn rail is
+   unchanged. */
+.flow-rail {
+  filter: drop-shadow(
+    0 0 calc(var(--pointer-heat, 0) * 6px + var(--scroll-energy, 0) * 5px)
+      rgba(243, 200, 105,
+        calc(var(--pointer-heat, 0) * 0.5 + var(--scroll-energy, 0) * 0.45)));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+/* Idle breath — when the whole page holds still the rail keeps a slow pulse of
+   life, mirroring the v24 eyebrow ember, so the pipeline never reads as frozen
+   between gestures. Heat is naturally 0 while idle, so this never fights (1). */
+@keyframes flow-rail-breath {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 5px rgba(243, 200, 105, 0.32)); }
+}
+html[data-idle="true"] .flow-rail {
+  animation: flow-rail-breath 5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither the pointer-heat nor the scroll-energy engine runs under reduced
+     motion, so both terms above already evaluate to their rest no-ops. Pin them
+     hard anyway so a stale custom property can never light the frame or the rail
+     for a motion-sensitive reader. */
+  body::before { opacity: 0 !important; background: none !important; }
+  .flow-rail {
+    filter: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v34 — Quickened atmosphere
+   v9–v33 lit every surface and swept the page's foreground — strips, cards,
+   text, seams, the viewport frame and the pipeline rail — into one warm
+   living-light language driven by the hand's tempo (`--pointer-heat`), the
+   page's momentum (`--scroll-energy`) and its stillness (`html[data-idle]`).
+   One whole register still sat outside it: the *atmosphere*. The decorative
+   fields the page floats its content over — the hero's drifting aurora blobs,
+   the dark panel's two-tone aurora-mesh, and the column of rising embers that
+   makes the "bets" section read as a banked fire — all drifted at a single
+   fixed pace and brightness no matter how hard the reader worked the page. The
+   foreground answered the room; the air it hung in did not.
+
+   v34 quickens the air. As the hand picks up speed the aurora pools *saturate
+   and brighten*, so the warmth behind the hero swells with the reader's tempo
+   and settles back the instant they still. And the banked fire on the dark
+   panel is now fanned by the reader's draft: each ember's core flares hotter as
+   the hand quickens and — most of all — as the page is flung down toward the
+   section, exactly like a real fire breathed on. Nothing moves on a new path;
+   the established drifts (aurora/mesh-drift/ember-rise) are untouched, so the
+   choreography is byte-for-byte v33 and only the *intensity* breathes.
+
+   Additive + signal-only, as ever. Every rule reads only the channels the page
+   already publishes on <html> (inherited everywhere), composes onto a separate
+   visual channel (`filter` / `box-shadow`) so it never replaces the layer's own
+   drift, and resolves to a no-op at heat 0 / energy 0 — saturate(1)/brightness(1)
+   and a 0px transparent shadow — so a still page is pixel-identical to v33. The
+   blobs drive `filter` (not `opacity`), so the page's inline opacity tuning on
+   individual blobs is left intact. The guard at the foot pins every term to its
+   rest value for motion-sensitive readers, where neither engine ever arms. */
+
+/* (1) Warmed aurora — the hero's drifting gold pools (and any other
+   `.aurora-blob`) gain saturation + a touch of brightness with the hand's
+   tempo, so the warmth behind the headline swells as the reader moves and eases
+   back as they still. The base `blur(60px)` is restated so the heat terms layer
+   onto it rather than dropping the blur; at heat 0 the added factors are
+   saturate(1)/brightness(1) — exact no-ops — so the resting field is unchanged,
+   and because this drives `filter` (not `opacity`) the inline opacity tuning on
+   the second/CTA blobs is preserved. */
+.aurora-blob {
+  filter: blur(60px)
+    saturate(calc(1 + var(--pointer-heat, 0) * 0.6))
+    brightness(calc(1 + var(--pointer-heat, 0) * 0.22));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+
+/* (2) Warmed mesh — the dark panel's two-tone aurora-mesh pools answer the same
+   tempo. Its base `blur(80px)` is restated with the heat-scaled saturate/
+   brightness so the embered backdrop deepens as the hand quickens. Both pseudos
+   share the rule; at heat 0 it collapses to the exact v-earlier `blur(80px)`. */
+.aurora-mesh::before,
+.aurora-mesh::after {
+  filter: blur(80px)
+    saturate(calc(1 + var(--pointer-heat, 0) * 0.5))
+    brightness(calc(1 + var(--pointer-heat, 0) * 0.18));
+  transition: filter var(--dur-base) var(--ease-out);
+}
+
+/* (3) Fanned embers — the banked fire is breathed on by the reader's draft.
+   Each rising mote's halo swells and warms with the hand's tempo and, above
+   all, with the page's downward momentum toward the section (`--scroll-energy`),
+   so flinging down to the dark panel fans the fire like a real bellows; a
+   heat-scaled drop-shadow rides a separate channel to brighten the core. The
+   v-earlier resting glow `0 0 8px 1px rgba(232,163,23,0.45)` is restated as the
+   zero-signal floor, so a still page keeps the exact banked ember. (The
+   `ember-rise` keyframe animates `transform`/`opacity` only, so neither added
+   channel collides with it.) */
+.ember {
+  box-shadow: 0 0
+    calc(8px + var(--pointer-heat, 0) * 10px + var(--scroll-energy, 0) * 9px) 1px
+    rgba(232, 163, 23,
+      calc(0.45 + var(--pointer-heat, 0) * 0.32 + var(--scroll-energy, 0) * 0.28));
+  filter: drop-shadow(0 0 calc(var(--pointer-heat, 0) * 5px)
+    rgba(243, 200, 105, calc(var(--pointer-heat, 0) * 0.7)));
+  transition: box-shadow var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine arms under reduced motion, so every heat/energy term above is
+     already at its rest no-op. Pin them hard anyway so a stale custom property can
+     never warm the atmosphere for a motion-sensitive reader: restore each layer's
+     exact resting filter/shadow and drop the transitions. */
+  .aurora-blob { filter: blur(60px) !important; transition: none !important; }
+  .aurora-mesh::before,
+  .aurora-mesh::after { filter: blur(80px) !important; transition: none !important; }
+  .ember {
+    box-shadow: 0 0 8px 1px rgba(232, 163, 23, 0.45) !important;
+    filter: none !important;
+    transition: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v35 — Caught lamp
+   v9–v34 swept the whole page into one warm living-light language driven by the
+   hand's tempo (`--pointer-heat`), the page's momentum (`--scroll-energy`) and
+   its stillness (`html[data-idle]`): surfaces, text, seams, the viewport frame,
+   the pipeline rail and — last turn — the very atmosphere the content floats in.
+   One thing still stood apart, and it was the most literal object on the page:
+   the hero *device mock* — the one rendered product the page actually shows off.
+   v-earlier gave it real physicality (it tips toward the cursor in 3D and a
+   broad specular slides across its glass), but that gloss only ever woke on a
+   *direct hover*, and it caught a fixed, cool white light no matter how hard the
+   reader worked the page. The lamp the reader carries — fanned brighter and
+   wider across every other surface as the hand quickens — never reached the
+   product on display. The showcased object sat in its own still pool of light
+   while the room around it breathed.
+
+   v35 hands it the room's lamp. The mock's specular now *glints with the hand's
+   tempo* even with the cursor nowhere near it — so the gloss across the screen
+   swells as the carried lamp is fanned and eases back the instant the hand
+   stills, while a direct hover still crowns it at full as before. And the whole
+   device now casts a warm gold halo that swells with that same heat and pulses
+   when the page is flung toward the hero (`--scroll-energy`), so the product
+   floats in exactly the gold the cursor trails everywhere else. When the page
+   holds still the halo keeps a slow ember breath, mirroring the eyebrow (v24)
+   and the pipeline (v33), so the one object the page is selling never reads as
+   frozen between gestures.
+
+   Additive + signal-only, as ever. Every rule reads only the channels the page
+   already publishes on <html> (inherited everywhere), composes onto a separate
+   visual channel (specular `opacity` / a `filter` halo) so it never disturbs the
+   mock's own tilt transform or its tilt-derived gloss *position*, and resolves
+   to a no-op at heat 0 / energy 0 — opacity 0 and a 0px transparent halo — so a
+   resting page is pixel-identical to v34. The hover crown keeps the higher
+   specificity it always had, so pointing at the mock still lights it fully. The
+   guard at the foot pins every term to rest for motion-sensitive readers, where
+   neither engine ever arms. */
+
+/* (1) Heat-glinted specular — the mock's broad gloss no longer waits for a
+   direct hover. Its resting opacity now rides `--pointer-heat`, so the highlight
+   across the glass brightens as the carried lamp is fanned and bleeds back to
+   nothing the moment the hand stills. Only `opacity` is touched — the gloss's
+   tilt-derived *position* and its screen blend are left exactly as set earlier,
+   and the transition declared on the base rule still carries this easing. At
+   heat 0 the opacity is a hard 0 (exact no-op); the higher-specificity hover
+   rule above still crowns it to full when the cursor lands on the mock. */
+.tilt-shine::after {
+  opacity: calc(var(--pointer-heat, 0) * 0.55);
+}
+
+/* (2) Caught-lamp halo — the device mock casts a warm gold glow that swells with
+   the hand's tempo and pulses when the page is flung toward the hero, so the
+   showcased product floats in the same gold the cursor trails. A `filter`
+   drop-shadow rides its own channel (the v-earlier `box-shadow` hover lift and
+   the 3D tilt transform are untouched); its transition is restated to ease both
+   the lifted box-shadow and this halo. At heat 0 / energy 0 the shadow is a 0px
+   transparent no-op, so the resting mock is unchanged. */
+.tilt-pointer {
+  filter: drop-shadow(
+    0 0 calc(var(--pointer-heat, 0) * 16px + var(--scroll-energy, 0) * 11px)
+      rgba(243, 200, 105,
+        calc(var(--pointer-heat, 0) * 0.5 + var(--scroll-energy, 0) * 0.4)));
+  transition: box-shadow var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out);
+}
+
+/* (3) Idle ember — when the whole page holds still the halo keeps a slow breath,
+   mirroring the v24 eyebrow and the v33 pipeline rail, so the product never
+   reads as frozen. Heat is naturally 0 while idle, so this never fights (2). */
+@keyframes tilt-lamp-breath {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 10px rgba(243, 200, 105, 0.3)); }
+}
+html[data-idle="true"] .tilt-pointer {
+  animation: tilt-lamp-breath 5.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Neither engine arms under reduced motion, so every heat/energy term above is
+     already at its rest no-op. Pin them hard anyway so a stale custom property can
+     never light the mock for a motion-sensitive reader. The higher-specificity
+     hover rule is left intact — a hover is not motion — so pointing at the mock
+     still lights its gloss. */
+  .tilt-shine::after { opacity: 0; }
+  .tilt-pointer {
+    filter: none !important;
+    animation: none !important;
+    transition: box-shadow var(--dur-base) var(--ease-out) !important;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   v36 — threaded run. The hero console's running phase is the page's one real
+   product demo (and the v-earlier auto-play exists solely to show it off), yet
+   the three agent steps land as disconnected rows. This layer makes the run
+   read as a single flowing pipeline: a warm gold thread draws *down* the icon
+   column in step with the agents, each tile kindles to gold the instant it
+   fires, and every check pops a beat after its row settles — so completion
+   reads as a struck note, not a painted-in tick. Everything is additive and
+   timed off the same delays the rows already use; all of it rests at its lit
+   final state, so the prefers-reduced-motion `*` guard above leaves a fully
+   drawn, fully checked pipeline rather than a blank or half-built one.
+   ─────────────────────────────────────────────────────────────────────── */
+@keyframes thread-draw {
+  from { transform: scaleY(0); opacity: 0; }
+  20%  { opacity: 1; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+.pipeline-thread {
+  position: absolute;
+  left: 12px;            /* centre of the 26px icon-tile column */
+  top: 13px;             /* centre of the first tile */
+  bottom: 13px;          /* centre of the last tile */
+  width: 2px;
+  border-radius: 2px;
+  transform-origin: top center;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(232, 163, 23, 0) 0%,
+    rgba(232, 163, 23, 0.5) 14%,
+    rgba(243, 200, 105, 0.62) 50%,
+    rgba(232, 163, 23, 0.5) 86%,
+    rgba(232, 163, 23, 0) 100%);
+  box-shadow: 0 0 8px rgba(232, 163, 23, 0.35);
+  animation: thread-draw 1.7s var(--ease-out) 0.45s both;
+}
+
+/* Tile kindle — a cold brown tile flares to lit gold as its agent fires, then
+   settles back. Background/colour/shadow all return to the resting `#352d22` /
+   dark-gold the markup already paints, so the keyframe is a self-erasing pulse
+   that never leaves a tile mis-coloured once it has played. */
+@keyframes tile-kindle {
+  0%   { background-color: #352d22; color: #d9a45f; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+  38%  { background-color: #4a3a1d; color: #f0b53a; box-shadow: 0 0 0 4px rgba(232, 163, 23, 0.16), 0 0 18px rgba(232, 163, 23, 0.5); }
+  100% { background-color: #352d22; color: #d9a45f; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+}
+.tile-kindle { animation: tile-kindle 1.2s var(--ease-out) both; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v37 — carried marker. The header anchors were lit only under the hand; once
+   the reader scrolled past the fold the nav stopped telling them where they
+   were. This layer makes the nav a live position indicator: the link whose
+   section fills the viewport lights to ink with its gold underline already
+   struck (driven by the scroll-spy observer in LandingMotion, which sets
+   `data-active-section` on exactly one link at a time), and jumping to a
+   section via its anchor blooms the destination's eyebrow so the landing reads
+   as an arrival rather than a silent teleport. All of it is state + a one-shot
+   bloom hung on primitives already in the markup — no layout moves, and the
+   reduced-motion guard at the foot strips the bloom while keeping the marker,
+   since a position indicator is information, not motion.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* (1) Active marker — the spied link settles to full ink and carries its gold
+   underline struck at rest (the v23 gradient + bloom the hover already paints),
+   so the current section's tab glows without the reader touching it. A leading
+   gold tick fades in to the left as a travelling cursor between tabs. The
+   underline transition is inherited from `.underline-grow::after`, so the bar
+   eases in and out as the marker moves down the page rather than snapping. */
+.nav-link { transition: color var(--dur-base) var(--ease-out); }
+.nav-link[data-active-section] { color: var(--color-ink, #2B2822); }
+.nav-link[data-active-section]::after {
+  transform: scaleX(1);
+  box-shadow: 0 1px 8px -1px rgba(232, 163, 23, 0.55);
+}
+.nav-link::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  background: var(--grad-gold, #e8a317);
+  box-shadow: 0 0 7px -1px rgba(232, 163, 23, 0.8);
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+.nav-link[data-active-section]::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* (2) Arrival bloom — following an anchor lands the section under the sticky
+   nav (scroll-padding already offsets it); this gives that landing a beat of
+   warmth by flaring the destination section's eyebrow dot. A self-erasing
+   pulse: it returns to the resting dot the markup already paints, so a section
+   that stays `:target` in the URL is left in its calm state, not stuck lit. */
+@keyframes arrival-eyebrow {
+  0%   { box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7); transform: scale(1); }
+  30%  { box-shadow: 0 0 0 5px rgba(232, 163, 23, 0.22), 0 0 18px 2px rgba(243, 200, 105, 0.75); transform: scale(1.5); }
+  100% { box-shadow: 0 0 8px -1px rgba(232, 163, 23, 0.7); transform: scale(1); }
+}
+section[id]:target .eyebrow-dot {
+  animation: arrival-eyebrow 1.5s var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the marker (it's positional information), drop every animated flourish:
+     the leading tick snaps rather than springs, and the arrival bloom is pinned
+     off so a motion-sensitive reader gets a calm, fully-resolved nav. */
+  .nav-link::before { transition: none !important; }
+  section[id]:target .eyebrow-dot { animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v38 — Struck heading rule. v9–v37 lit the surfaces, carried the lamp, and
+   taught the nav to mark the read — but the three eyebrow-led section titles
+   (How it works / Features / The bets) still landed as bare type. The eyebrow
+   above each gets a tiny gold rule; the title itself got nothing, so the heads
+   read lighter than the labels that introduce them. v38 strikes a short gilt
+   rule under each of those titles the moment it scrolls into view: the bar draws
+   from the left on the page's gold gradient while a single bright spark rides its
+   leading edge and burns out at the end — the same comet/forge-light vocabulary
+   the scroll rail and pipeline already speak, now signing each section heading.
+   Discipline matches the rest of the layer: the rule's *resting* state is the
+   drawn gilt bar, so a no-JS page shows it fully struck; it is only hidden once
+   `html.reveal-ready` arms and before the heading is `.revealed`; and the spark
+   lives only inside the keyframe, so the prefers-reduced-motion `*` guard leaves
+   a calm, fully-drawn rule with no travelling light. Hung on `[data-reveal]`'s
+   existing `.revealed` switch + per-element `--reveal-delay`, so it cascades with
+   the heading it underlines and adds no JS and no layout.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes rule-strike {
+  0%   { transform: scaleX(0); opacity: 0; box-shadow: 0 0 0 0 rgba(232, 163, 23, 0); }
+  55%  { opacity: 1; box-shadow: 0 0 15px 1px rgba(243, 200, 105, 0.72); }
+  100% { transform: scaleX(1); opacity: 1; box-shadow: 0 1px 7px -1px rgba(232, 163, 23, 0.5); }
+}
+@keyframes rule-spark {
+  0%   { opacity: 0; transform: translateX(0) scale(0.5); }
+  22%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(var(--rule-w, 56px)) scale(1.05); }
+}
+.head-rule { position: relative; }
+/* (1) The rule itself — rests fully drawn (no-JS / reduced-motion safe). */
+.head-rule::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  width: var(--rule-w, 56px);
+  height: 2px;
+  border-radius: 2px;
+  transform-origin: left center;
+  background: var(--grad-gold, #e8a317);
+  box-shadow: 0 1px 7px -1px rgba(232, 163, 23, 0.5);
+  pointer-events: none;
+}
+/* (2) The spark that rides the drawing edge — exists only inside the keyframe,
+   so it rests invisible and never shows for a reduced-motion reader. */
+.head-rule::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: calc(100% + 3px);
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #fff3d6 0%, #f3c869 42%, rgba(232, 163, 23, 0) 72%);
+  opacity: 0;
+  pointer-events: none;
+}
+/* Armed: hide the rule until its heading is seen. Without JS this scope never
+   exists, so the rule is left in its resting drawn state. */
+.reveal-ready .head-rule:not(.revealed)::after {
+  transform: scaleX(0);
+  opacity: 0;
+}
+.reveal-ready .head-rule.revealed::after {
+  animation: rule-strike 0.85s var(--ease-out) calc(var(--reveal-delay, 0ms) + 0.12s) both;
+}
+.reveal-ready .head-rule.revealed::before {
+  animation: rule-spark 0.85s var(--ease-out) calc(var(--reveal-delay, 0ms) + 0.12s) both;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v39 — Banked hearth. v9–v38 lit the surfaces, carried the lamp across the
+   read, struck rules under the heads, and let the nav mark the read — but the
+   page still *ended* flat: the footer was a bare white seam, so the warm light
+   the whole page speaks simply stopped. v39 closes the loop on the page's own
+   metaphor — the lamp the hero carries (v35) is set down here to bank as embers
+   at the foot of the read. A soft, wide ember-gold pool rests against the
+   footer's top seam, a brighter core sits in its centre, and the wordmark + ©
+   read inside that warm light. The hearth's *resting* state is the lit pool, so
+   a no-JS page closes warm; it only kindles (cold → warm swell) once when the
+   footer is reached (hung on the footer's existing `[data-reveal]` switch), then
+   breathes slowly while the reader holds still (the shared `html[data-idle]`
+   signal the aura/eyebrows already answer). Discipline matches the layer: the
+   element is decorative (`aria-hidden`), sits behind the content (its own stack
+   context, content lifted with `position: relative`), adds no layout, and pins
+   to a calm, fully-lit rest under reduced motion. Two custom rules only; no JS.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.hearth-host { position: relative; }
+/* The banked pool — rests lit (no-JS / reduced-motion safe). A wide soft
+   ember-gold wash rising from the footer's top seam, with a hotter core. */
+.footer-hearth {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: min(820px, 92%);
+  height: 168px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(58% 132% at 50% 0%,
+      rgba(243, 200, 105, 0.30) 0%,
+      rgba(232, 163, 23, 0.16) 34%,
+      rgba(232, 163, 23, 0.06) 60%,
+      rgba(232, 163, 23, 0) 82%),
+    radial-gradient(22% 90% at 50% 0%,
+      rgba(255, 240, 205, 0.42) 0%,
+      rgba(243, 200, 105, 0) 70%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 100%);
+  will-change: opacity, transform;
+}
+@keyframes hearth-kindle {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.92); }
+  60%  { opacity: 1; }
+  /* Brief over-bright as the embers catch, then settle to the resting pool. */
+  72%  { opacity: 1; filter: brightness(1.16) saturate(1.05); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); filter: none; }
+}
+@keyframes hearth-breath {
+  0%, 100% { opacity: 0.82; transform: translateX(-50%) scale(0.985); }
+  50%      { opacity: 1;    transform: translateX(-50%) scale(1.018); }
+}
+/* Armed: hold the hearth cold (unlit) until the footer is actually reached.
+   More specific than the base `.reveal-ready [data-reveal]` hide rule, and it
+   neutralises that rule's blur/translate so the pool only fades + kindles —
+   it never blur-rises like a content block. Without JS this scope never
+   exists, so the hearth is left in its resting lit state. */
+.reveal-ready .footer-hearth:not(.revealed) {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px) scale(0.92);
+  filter: none;
+}
+.reveal-ready .footer-hearth.revealed {
+  animation: hearth-kindle 1.15s var(--ease-out) 0.1s both;
+}
+/* Banked breath — once the page settles, the embers swell and ebb slowly.
+   Lower priority than the kindle (kindle runs once on arrival, then this idles). */
+html[data-idle="true"] .footer-hearth.revealed {
+  animation: hearth-breath 6.5s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No kindle, no breath — a motion-sensitive reader still gets the warm pool,
+     just held perfectly still and fully lit. The `*` guard does not reach this
+     element's resting paint, so the hearth keeps its glow; we only ensure the
+     armed/idle animation rules can never leave it cold or moving. */
+  .footer-hearth { animation: none !important; opacity: 1 !important; transform: translateX(-50%) !important; filter: none !important; }
+  .reveal-ready .footer-hearth:not(.revealed) { opacity: 1 !important; transform: translateX(-50%) !important; }
+}
