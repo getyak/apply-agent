@@ -32,11 +32,21 @@ pytest.importorskip(
     reason="langchain-mcp-adapters not installed — install the experimental extra",
 )
 
+def _has_real_openrouter_key() -> bool:
+    """Same logic as test_openrouter_tool_calling._has_real_openrouter_key:
+    CI's dummy-for-unit-tests placeholder counts as 'absent' so we don't
+    actually hit OpenRouter and 401."""
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key:
+        return False
+    return not key.lower().startswith(("dummy", "test", "fake", "placeholder"))
+
+
 pytestmark = [
     pytest.mark.smoke,
     pytest.mark.skipif(
-        not os.environ.get("OPENROUTER_API_KEY"),
-        reason="OPENROUTER_API_KEY not set — live e2e needs OpenRouter",
+        not _has_real_openrouter_key(),
+        reason="OPENROUTER_API_KEY not set or is a dummy/test placeholder — live e2e needs real OpenRouter",
     ),
 ]
 

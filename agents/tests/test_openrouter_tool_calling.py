@@ -37,9 +37,19 @@ def dummy_lookup(query: str) -> str:
     return f"Looked up: {query.upper()}"
 
 
+def _has_real_openrouter_key() -> bool:
+    """CI sets OPENROUTER_API_KEY=dummy-for-unit-tests to satisfy code that
+    requires the env var to be present; treat that placeholder as 'absent'
+    so smoke tests don't actually hit OpenRouter and 401."""
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key:
+        return False
+    return not key.lower().startswith(("dummy", "test", "fake", "placeholder"))
+
+
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("OPENROUTER_API_KEY"),
-    reason="OPENROUTER_API_KEY not set — skip OpenRouter smoke tests",
+    not _has_real_openrouter_key(),
+    reason="OPENROUTER_API_KEY not set or is a dummy/test placeholder — skip OpenRouter smoke tests",
 )
 
 
