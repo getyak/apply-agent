@@ -14,10 +14,60 @@
 // list line, in work/highlight order. That 1:1 line mapping is what lets
 // bullet_index stable IDs anchor to a Markdown line for vibe edits (§4.3).
 
+import type { SupportedLocale } from "./locale";
+import { DEFAULT_LOCALE } from "./locale";
 import type { JsonResume } from "./resume-parse";
 
 /** One résumé section as Markdown lines. Joined with blank lines between blocks. */
 type Block = string;
+
+/**
+ * Localized labels for section headings and structural date words.
+ * The résumé *content* (bullets, company names, JD text) is never translated
+ * — that's the artifact-locale axis (vantage-ui-mapping.md). What we localize
+ * here is the canonical chrome the renderer adds around that content:
+ * section titles ("## Experience" vs "## 工作经历"), the open-ended date
+ * sentinel ("Present" vs "至今"), and month abbreviations on parsed YYYY-MM
+ * inputs (free-text dates are passed through verbatim — see formatDate).
+ */
+type LabelSet = {
+  summary: string;
+  experience: string;
+  skills: string;
+  projects: string;
+  education: string;
+  present: string;
+  months: readonly string[];
+};
+
+const LABELS: Record<SupportedLocale, LabelSet> = {
+  en: {
+    summary: "Summary",
+    experience: "Experience",
+    skills: "Skills",
+    projects: "Projects",
+    education: "Education",
+    present: "Present",
+    months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  },
+  zh: {
+    summary: "概览",
+    experience: "工作经历",
+    skills: "技能",
+    projects: "项目",
+    education: "教育",
+    present: "至今",
+    months: ["1 月", "2 月", "3 月", "4 月", "5 月", "6 月", "7 月", "8 月", "9 月", "10 月", "11 月", "12 月"],
+  },
+};
+
+export type RenderOptions = {
+  /**
+   * UI locale for chrome labels (section titles, "Present", month names).
+   * Defaults to "en" so existing callers and tests keep their current output.
+   */
+  locale?: SupportedLocale;
+};
 
 /**
  * Render a JSON Resume document to canonical GFM Markdown.
@@ -48,30 +98,34 @@ type Block = string;
  *   description
  *   - highlight
  */
-export function jsonResumeToMarkdown(resume: JsonResume | undefined | null): string {
+export function jsonResumeToMarkdown(
+  resume: JsonResume | undefined | null,
+  opts: RenderOptions = {},
+): string {
   if (!resume || typeof resume !== "object") return "";
+  const labels = LABELS[opts.locale ?? DEFAULT_LOCALE];
   const blocks: Block[] = [];
 
   const header = renderHeader(resume.basics);
   if (header) blocks.push(header);
 
-  const summary = renderSummary(resume.basics);
+  const summary = renderSummary(resume.basics, labels);
   if (summary) blocks.push(summary);
 
-  const work = renderWork(resume.work);
+  const work = renderWork(resume.work, labels);
   if (work) blocks.push(work);
 
   // Skills before Projects: when a recruiter scans the document, "what stack
   // does this person use" answers itself in one glance after Experience.
   // Projects (a smaller, optional section) then leads the reader into the
   // proof. Education anchors the tail.
-  const skills = renderSkills(resume.skills);
+  const skills = renderSkills(resume.skills, labels);
   if (skills) blocks.push(skills);
 
-  const projects = renderProjects(resume.projects);
+  const projects = renderProjects(resume.projects, labels);
   if (projects) blocks.push(projects);
 
-  const education = renderEducation(resume.education);
+  const education = renderEducation(resume.education, labels);
   if (education) blocks.push(education);
 
   // Forward-compat: render common JSON Resume extensions we don't model
@@ -131,15 +185,15 @@ function renderLocation(loc: NonNullable<JsonResume["basics"]>["location"]): str
   return bits.join(", ");
 }
 
-function renderSummary(basics: JsonResume["basics"]): Block {
+function renderSummary(basics: JsonResume["basics"], labels: LabelSet): Block {
   const summary = clean(basics?.summary);
   if (!summary) return "";
-  return `## Summary\n\n${summary}`;
+  return `## ${labels.summary}\n\n${summary}`;
 }
 
-function renderWork(work: JsonResume["work"]): Block {
+function renderWork(work: JsonResume["work"], labels: LabelSet): Block {
   if (!Array.isArray(work) || work.length === 0) return "";
-  const out: string[] = ["## Experience"];
+  const out: string[] = [`## ${labels.experience}`];
   for (const w of work) {
     if (!w || typeof w !== "object") continue;
     const company = clean(w.name) || clean((w as Record<string, unknown>).company as string);
@@ -148,7 +202,7 @@ function renderWork(work: JsonResume["work"]): Block {
     const title = [position, company].filter(Boolean).join(" — ");
     if (title) out.push(`\n### ${title}`);
 
-    const meta = renderDateRange(w.startDate, w.endDate);
+    const meta = renderDateRange(w.startDate, w.endDate, labels);
     if (meta) out.push(`_${meta}_`);
 
     const wsummary = clean(w.summary);
@@ -162,9 +216,9 @@ function renderWork(work: JsonResume["work"]): Block {
   return out.join("\n");
 }
 
-function renderProjects(projects: JsonResume["projects"]): Block {
+function renderProjects(projects: JsonResume["projects"], labels: LabelSet): Block {
   if (!Array.isArray(projects) || projects.length === 0) return "";
-  const out: string[] = ["## Projects"];
+  const out: string[] = [`## ${labels.projects}`];
   for (const p of projects) {
     if (!p || typeof p !== "object") continue;
     const name = clean(p.name);
@@ -179,9 +233,9 @@ function renderProjects(projects: JsonResume["projects"]): Block {
   return out.join("\n");
 }
 
-function renderSkills(skills: JsonResume["skills"]): Block {
+function renderSkills(skills: JsonResume["skills"], labels: LabelSet): Block {
   if (!Array.isArray(skills) || skills.length === 0) return "";
-  const lines: string[] = ["## Skills"];
+  const lines: string[] = [`## ${labels.skills}`];
   for (const s of skills) {
     if (!s || typeof s !== "object") {
       const bare = clean(String(s));
@@ -209,9 +263,9 @@ function renderSkills(skills: JsonResume["skills"]): Block {
   return lines.length > 1 ? lines.join("\n") : "";
 }
 
-function renderEducation(education: JsonResume["education"]): Block {
+function renderEducation(education: JsonResume["education"], labels: LabelSet): Block {
   if (!Array.isArray(education) || education.length === 0) return "";
-  const out: string[] = ["## Education"];
+  const out: string[] = [`## ${labels.education}`];
   for (const e of education) {
     if (!e || typeof e !== "object") continue;
     const study = clean(e.studyType);
@@ -220,7 +274,7 @@ function renderEducation(education: JsonResume["education"]): Block {
     const degree = [study, area].filter(Boolean).join(", ");
     const title = [degree, inst].filter(Boolean).join(" — ");
     if (title) out.push(`\n### ${title}`);
-    const meta = renderDateRange(e.startDate, e.endDate);
+    const meta = renderDateRange(e.startDate, e.endDate, labels);
     if (meta) out.push(`_${meta}_`);
   }
   return out.join("\n");
@@ -280,28 +334,27 @@ function renderExtras(resume: JsonResume): Block {
 
 /**
  * Render a human date range from ISO-ish JSON Resume dates.
- * "2021-06" + "2024-03"  → "Jun 2021 – Mar 2024"
- * "2021"    + ""         → "2021 – Present"
+ * "2021-06" + "2024-03"  → "Jun 2021 – Mar 2024"   (en)
+ *                       → "2021 6 月 – 2024 3 月"   (zh)
+ * "2021"    + ""         → "2021 – Present" / "2021 – 至今"
  * Unparseable input is passed through verbatim (never fabricate a date).
  */
-function renderDateRange(start?: string, end?: string): string {
-  const s = formatDate(start);
-  const e = end ? formatDate(end) : "";
+function renderDateRange(start: string | undefined, end: string | undefined, labels: LabelSet): string {
+  const s = formatDate(start, labels);
+  const e = end ? formatDate(end, labels) : "";
   if (!s && !e) return "";
-  if (s && !clean(end)) return `${s} – Present`;
+  if (s && !clean(end)) return `${s} – ${labels.present}`;
   if (s && e) return `${s} – ${e}`;
   return s || e;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function formatDate(date?: string): string {
+function formatDate(date: string | undefined, labels: LabelSet): string {
   const d = clean(date);
   if (!d) return "";
-  // YYYY-MM or YYYY-MM-DD → "Mon YYYY"
+  // YYYY-MM or YYYY-MM-DD → localized "Mon YYYY"
   const ym = /^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/.exec(d);
   if (ym) {
-    const month = MONTHS[Number(ym[2]) - 1];
+    const month = labels.months[Number(ym[2]) - 1];
     return month ? `${month} ${ym[1]}` : ym[1];
   }
   // YYYY → "YYYY"

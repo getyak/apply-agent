@@ -113,7 +113,7 @@ describe("POST /api/applications/prepare-from-jd", () => {
     const res = await req({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" });
     expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error.code).toBe("CONFLICT");
+    expect(body.error.code).toBe("RESOURCE_CONFLICT");
     // No agent call should have happened.
     expect(fetchCalls.length).toBe(0);
   });
@@ -150,7 +150,7 @@ describe("POST /api/applications/prepare-from-jd", () => {
     const res = await req({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" });
     expect(res.status).toBe(502);
     const body = await res.json();
-    expect(body.error.code).toBe("UPSTREAM");
+    expect(body.error.code).toBe("UPSTREAM_UNAVAILABLE");
   });
 
   it("returns 401 when no JWT is presented", async () => {

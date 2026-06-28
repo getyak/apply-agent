@@ -16,6 +16,7 @@ import { cache } from "../cache";
 import { llm, LLMUnavailableError } from "../llm";
 import { parseResumeText } from "../resume-parse";
 import { jsonResumeToMarkdown } from "../resume-markdown";
+import { resolveLocale } from "../locale";
 import {
   EXPORT_MIME,
   exportFilename,
@@ -85,6 +86,11 @@ interface ResumeAnalysis {
 app.post("/", validateBody(CreateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const { content, isBase } = c.get("validatedBody") as CreateResume;
+  // Render the canonical Markdown in the locale of the writing request so a
+  // zh user's first impression of "Optimized" matches their UI chrome (no
+  // mid-document English EXPERIENCE heading). The persisted markdown is the
+  // contract; the unwrap fallback below uses the same per-request locale.
+  const locale = resolveLocale(c);
 
   // Wrap the incoming JSON Resume in the envelope shape (design §11.3) so the
   // row carries a Markdown main track from the very first write. Without this
@@ -94,7 +100,7 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
   const wrapped = {
     raw: "",
     parsed: content,
-    markdown: jsonResumeToMarkdown(content),
+    markdown: jsonResumeToMarkdown(content, { locale }),
     warnings: [] as string[],
     parsedAt: new Date().toISOString(),
   };
@@ -106,7 +112,7 @@ app.post("/", validateBody(CreateResumeSchema), async (c) => {
      RETURNING id, user_id, content, version, is_base, created_at`,
     [userId, JSON.stringify(wrapped), isBase ?? true],
   );
-  return c.json({ resume: unwrapResumeRow(result.rows[0]) }, 201);
+  return c.json({ resume: unwrapResumeRow(result.rows[0], locale) }, 201);
 });
 
 // POST /api/resumes/parse — raw resume text → structured JSON Resume. This is
@@ -142,7 +148,7 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
     });
   }
 
-  const row = await saveBaseResume(userId, parsed, sourceFileId);
+  const row = await saveBaseResume(userId, parsed, sourceFileId, resolveLocale(c));
   return c.json(
     {
       resume: row,
@@ -168,7 +174,8 @@ app.post("/parse", validateBody(ParseResumeSchema), async (c) => {
 async function saveBaseResume(
   userId: string,
   parsed: ParseResult,
-  sourceFileId?: string,
+  sourceFileId: string | undefined,
+  locale: "en" | "zh" = "en",
 ) {
   // If the caller pointed us at an uploaded file, fetch its metadata so the
   // saved résumé can show a "Source · resume.pdf" chip in the studio without
@@ -209,7 +216,7 @@ async function saveBaseResume(
   // always matches the JSON. The "Markdown main, JSON side" contract holds as
   // long as both come from the same parse. Future writers (optimize_general,
   // customize) keep the contract by updating both on every write.
-  const markdown = jsonResumeToMarkdown(parsed.resume);
+  const markdown = jsonResumeToMarkdown(parsed.resume, { locale });
   const content = {
     raw: parsed.raw,
     parsed: parsed.resume,
@@ -252,12 +259,24 @@ async function saveBaseResume(
  * onboarding must not block on it. The agent persists the suggestion stack +
  * optimized sibling itself; we don't await a body.
  */
-async function triggerResumeOptimize(userId: string, resumeId: string): Promise<void> {
+async function triggerResumeOptimize(
+  userId: string,
+  resumeId: string,
+  traceId?: string,
+  requestId?: string,
+): Promise<void> {
   try {
     const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/optimize`;
     const resp = await fetch(target, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-relay-user-id": userId },
+      headers: {
+        "content-type": "application/json",
+        "x-relay-user-id": userId,
+        // W4.1: keep the trace alive across the fire-and-forget hop so
+        // a later support investigation can follow it.
+        ...(traceId ? { "X-Trace-Id": traceId } : {}),
+        ...(requestId ? { "X-Request-Id": requestId } : {}),
+      },
       body: JSON.stringify({ base_resume_id: resumeId }),
     });
     if (!resp.ok) {
@@ -290,6 +309,16 @@ app.post("/parse-async", parseAsyncLimiter, validateBody(ParseResumeAsyncSchema)
   const { text, markdown, save, sourceFileId } = c.get(
     "validatedBody",
   ) as ParseResumeAsync;
+  // Capture the request-scoped trace + request ids before the worker
+  // detaches. We thread them into the fire-and-forget optimize chain so
+  // the agent's structlog binding keeps the same id (W4.1).
+  const traceId = c.get("traceId");
+  const requestId = c.get("requestId");
+  // Pin the user's UI locale at request time and close over it. The async
+  // worker runs after we've returned the 202, so by the time it persists
+  // the résumé there's no Context to ask any more — but the canonical
+  // markdown still needs to be rendered in the user's language.
+  const locale = resolveLocale(c);
   // Prefer the Markdown middle state (richer structure → better parse); fall
   // back to raw text. The upload route already produced Markdown for files.
   const sourceText = (markdown ?? text ?? "").trim();
@@ -306,7 +335,7 @@ app.post("/parse-async", parseAsyncLimiter, validateBody(ParseResumeAsyncSchema)
     if (save) {
       // Always persist — even when AI parsing failed, the raw text is the user's
       // v1 base. Warnings ride along so the UI can prompt the user to fill gaps.
-      const row = await saveBaseResume(userId, parsed, sourceFileId);
+      const row = await saveBaseResume(userId, parsed, sourceFileId, locale);
       saved = true;
       resumeId = row.id as string;
       // Chain an AI optimize pass (design §6.2): the original is now saved, so
@@ -316,7 +345,7 @@ app.post("/parse-async", parseAsyncLimiter, validateBody(ParseResumeAsyncSchema)
       // parse actually produced structure (a fallback raw-text v1 has nothing to
       // optimize yet).
       if (!parsed.usedFallback && (resumeId as string)) {
-        void triggerResumeOptimize(userId, resumeId as string);
+        void triggerResumeOptimize(userId, resumeId as string, traceId, requestId);
       }
     }
     return {
@@ -373,7 +402,7 @@ app.get("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
   const resume = await requireOwnership("resumes", id, userId);
-  return c.json({ resume: unwrapResumeRow(resume) });
+  return c.json({ resume: unwrapResumeRow(resume, resolveLocale(c)) });
 });
 
 app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
@@ -401,7 +430,7 @@ app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
     ? {
         ...(existing.rows[0].content as Record<string, unknown>),
         parsed: content,
-        markdown: jsonResumeToMarkdown(content),
+        markdown: jsonResumeToMarkdown(content, { locale: resolveLocale(c) }),
         parsedAt: new Date().toISOString(),
       }
     : content;
@@ -423,7 +452,7 @@ app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
   // Echo `mode` so the client status chip can say "Draft saved" vs "Saved as
   // v4" without comparing version numbers — that's brittle when other tabs
   // race the same row.
-  return c.json({ resume: unwrapResumeRow(result.rows[0]), mode });
+  return c.json({ resume: unwrapResumeRow(result.rows[0], resolveLocale(c)), mode });
 });
 
 /** True when `content` is the new wrapper shape (parse output + raw text). */
@@ -457,10 +486,17 @@ function isWrappedResume(content: unknown): content is {
  *  `_markdown` is the canonical GFM main track (§11.3) the front-end renders
  *  by default; if a legacy row pre-dates the dual-format envelope we re-render
  *  it on read so the client never has to do JSON-to-MD itself. */
-function unwrapResumeRow(row: Record<string, unknown>): Record<string, unknown> {
+function unwrapResumeRow(
+  row: Record<string, unknown>,
+  locale: "en" | "zh" = "en",
+): Record<string, unknown> {
   if (!isWrappedResume(row.content)) return row;
   const { raw, parsed, markdown, warnings, parsedAt, source } = row.content;
-  const md = markdown && markdown.length > 0 ? markdown : jsonResumeToMarkdown(parsed);
+  // Prefer the persisted markdown — it was rendered in the writer's locale
+  // (see the create / parse / put routes above). Only re-render when the row
+  // predates the envelope; then we use the *reader's* locale so a zh user
+  // sees zh chrome even on a legacy row.
+  const md = markdown && markdown.length > 0 ? markdown : jsonResumeToMarkdown(parsed, { locale });
   return {
     ...row,
     content: {
@@ -511,7 +547,7 @@ app.get("/:id/export", async (c) => {
     userId,
     "id, content, version",
   );
-  const unwrapped = unwrapResumeRow(row);
+  const unwrapped = unwrapResumeRow(row, resolveLocale(c));
   // unwrapResumeRow flattens the envelope so content has _markdown/_raw/_source
   // alongside the JSON Resume fields. We need the strict JSON Resume shape for
   // export (no underscore-prefixed metadata sneaking into JSON output), and
@@ -533,7 +569,7 @@ app.get("/:id/export", async (c) => {
       const md =
         typeof _markdown === "string" && _markdown.length > 0
           ? _markdown
-          : exportMarkdown(parsed);
+          : exportMarkdown(parsed, resolveLocale(c));
       return new Response(md, {
         status: 200,
         headers: {
@@ -568,7 +604,7 @@ app.get("/:id/export", async (c) => {
       const md =
         typeof _markdown === "string" && _markdown.length > 0
           ? _markdown
-          : exportMarkdown(parsed);
+          : exportMarkdown(parsed, resolveLocale(c));
       const pdf = await renderResumePdf(md);
       // pdf is a Node Buffer; copy into a fresh ArrayBuffer so it lands as
       // a BodyInit lib.dom accepts. Cheap (a single allocation + memcpy).
@@ -595,7 +631,7 @@ app.get("/:id/export", async (c) => {
       const md =
         typeof _markdown === "string" && _markdown.length > 0
           ? _markdown
-          : exportMarkdown(parsed);
+          : exportMarkdown(parsed, resolveLocale(c));
       const docx = await renderResumeDocx(md);
       if (!docx) {
         throw new UpstreamError(
@@ -840,9 +876,18 @@ app.post("/:id/bullet-edit", async (c) => {
     throw new ConflictError("bulletStableId and instruction are required");
   }
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/propose-bullet-edit`;
+  const beTraceId = c.get("traceId");
+  const beRequestId = c.get("requestId");
   const resp = await fetch(target, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-relay-user-id": userId },
+    headers: {
+      "content-type": "application/json",
+      "x-relay-user-id": userId,
+      // W4.1: forward trace headers so the agent's structlog binding
+      // gets the same id the gateway used.
+      ...(beTraceId ? { "X-Trace-Id": beTraceId } : {}),
+      ...(beRequestId ? { "X-Request-Id": beRequestId } : {}),
+    },
     body: JSON.stringify({
       resume_id: id,
       bullet_stable_id: body.bulletStableId,
@@ -873,9 +918,17 @@ app.post("/suggestions/:sid/decision", async (c) => {
     throw new ConflictError("decision must be 'accept' or 'reject'");
   }
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/suggestions/${sid}/decision`;
+  const decTraceId = c.get("traceId");
+  const decRequestId = c.get("requestId");
   const resp = await fetch(target, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-relay-user-id": userId },
+    headers: {
+      "content-type": "application/json",
+      "x-relay-user-id": userId,
+      // W4.1: forward trace headers.
+      ...(decTraceId ? { "X-Trace-Id": decTraceId } : {}),
+      ...(decRequestId ? { "X-Request-Id": decRequestId } : {}),
+    },
     body: JSON.stringify({
       decision: body.decision,
       decided_via: body.decidedVia ?? "dock_inline",

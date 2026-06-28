@@ -184,7 +184,7 @@ describe("SEC-009 IDOR — cross-user (User B on User A resources) → 404 only"
     const res = await req("GET", `/api/resumes/${RESUME_ID}`, { userId: USER_B });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("NOT_FOUND");
+    expect(body.error.code).toBe("RESOURCE_NOT_FOUND");
   });
 
   it("PUT /api/resumes/:id → 404", async () => {

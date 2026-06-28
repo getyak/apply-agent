@@ -34,6 +34,10 @@ export async function requestLogger(c: Context<AppEnv>, next: Next) {
       path: new URL(c.req.url).pathname,
       status: c.res.status,
       latencyMs,
+      // traceId spans all calls in one user action (see error-handling
+      // §5); requestId is per-HTTP. Logging both lets us go from a
+      // user-visible R-XXXX → traceId → all related requests.
+      traceId: c.get("traceId"),
       requestId: c.get("requestId"),
       // userId is only set after authMiddleware; undefined on public routes.
       userId: c.get("userId"),

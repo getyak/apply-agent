@@ -35,7 +35,7 @@ describe("validate middleware", () => {
     });
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error: { code: string; details: unknown } };
-    expect(json.error.code).toBe("VALIDATION");
+    expect(json.error.code).toBe("VALIDATION_FAILED");
     expect(Array.isArray(json.error.details)).toBe(true);
   });
 
@@ -46,7 +46,7 @@ describe("validate middleware", () => {
       body: "{not json",
     });
     expect(res.status).toBe(400);
-    expect((await res.json()).error.code).toBe("VALIDATION");
+    expect((await res.json()).error.code).toBe("VALIDATION_FAILED");
   });
 
   test("validateQuery coerces and validates query params", async () => {
