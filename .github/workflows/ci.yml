@@ -192,14 +192,14 @@ jobs:
         run: uv run ruff format --check .
 
       # mypy 当前是 advisory（continue-on-error: true）。
-      # 历史代码有 47 pre-existing 类型不匹配（已大幅放宽 strict 子集后的
-      # 剩余真错），不在 PR#14 scope 内一次性清零。每条债 → docs/cicd-mypy-debt.md
-      # 跟踪；PR#14 之后逐步收紧 disallow_incomplete_defs / 修真错。
+      # 历史代码有 ~47 pre-existing 类型不匹配（已大幅放宽 strict 子集后的
+      # 剩余真错），不在 PR#14 scope 内一次性清零。
+      # 后续 PR 修一批 → 重新开 disallow_incomplete_defs / disallow_untyped_defs。
       # ruff lint/format 仍是 hard gate（运行时 bug 信号优先于类型签名）。
       - name: Mypy (advisory)
         working-directory: agents
         continue-on-error: true
-        run: uv run mypy . || true
+        run: uv run mypy .
 
       - name: Pytest
         working-directory: agents
