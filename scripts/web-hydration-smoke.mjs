@@ -89,15 +89,28 @@ async function probeHydration(route) {
         // Give React a beat to flush its first hydrate pass.
         await page.waitForLoadState("networkidle", { timeout: ${TIMEOUT_MS} }).catch(() => {});
         const hydrated = await page.evaluate(() => {
-          const btn = document.querySelector("button");
-          if (!btn) return { ok: false, reason: "no <button> on page" };
           // React injects a __reactFiber\$randomKey + __reactProps\$randomKey
           // on every host DOM node it owns. Either is sufficient evidence
-          // that the client took ownership of the SSR'd markup.
-          const keys = Object.keys(btn).filter((k) =>
-            k.startsWith("__reactFiber") || k.startsWith("__reactProps"),
-          );
-          return { ok: keys.length > 0, reason: keys.length ? null : "no fiber keys" };
+          // that the client took ownership of the SSR'd markup. Walk a
+          // broad set of candidate nodes — header pages have <button>,
+          // legal/privacy pages don't, so fall through to <main>/<a>/<h1>/body.
+          const candidates = [
+            document.querySelector("button"),
+            document.querySelector("main"),
+            document.querySelector("a"),
+            document.querySelector("h1"),
+            document.body,
+          ].filter(Boolean);
+          if (candidates.length === 0) {
+            return { ok: false, reason: "no candidate element on page" };
+          }
+          for (const node of candidates) {
+            const keys = Object.keys(node).filter((k) =>
+              k.startsWith("__reactFiber") || k.startsWith("__reactProps"),
+            );
+            if (keys.length > 0) return { ok: true, reason: null };
+          }
+          return { ok: false, reason: "no fiber keys on any candidate (button/main/a/h1/body)" };
         });
         const durationMs = Date.now() - started;
         await browser.close();

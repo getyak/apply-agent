@@ -11,6 +11,7 @@ No PG required — the persist() path under RELAY_PG_DSN is exercised in the
 T3 integration tests once the prepare workflow lands. Here we lock down the
 in-memory record + the dsn-absent log fallback.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +39,14 @@ async def test_record_to_jsonb_shape_matches_migration_014():
 
     blob = rec.to_jsonb()
     # Required keys per migration 014 schema.
-    for key in ("started_at", "completed_at", "latency_ms", "success", "stages", "fabrication_attempts"):
+    for key in (
+        "started_at",
+        "completed_at",
+        "latency_ms",
+        "success",
+        "stages",
+        "fabrication_attempts",
+    ):
         assert key in blob, f"missing required key: {key}"
     assert blob["stages"]["parse_jd_ms"] == 2400
     assert blob["stages"]["customize_ms"] == 18000
