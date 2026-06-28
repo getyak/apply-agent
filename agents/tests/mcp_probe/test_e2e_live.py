@@ -32,6 +32,7 @@ pytest.importorskip(
     reason="langchain-mcp-adapters not installed — install the experimental extra",
 )
 
+
 def _has_real_openrouter_key() -> bool:
     """Same logic as test_openrouter_tool_calling._has_real_openrouter_key:
     CI's dummy-for-unit-tests placeholder counts as 'absent' so we don't
