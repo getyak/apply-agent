@@ -1,6 +1,27 @@
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
+import type { Context } from "hono";
 import { config } from "../config";
+import { Errors, toErrorResponse } from "../errors";
+
+/**
+ * bodyLimit's onError must RETURN a Response (it can't throw and trust
+ * an app-level onError to catch — it sits at a layer before Hono's
+ * usual error handling). So we run the same toErrorResponse pipeline
+ * inline to keep the envelope v2 contract intact even on these
+ * pre-route 413s.
+ */
+function payloadTooLargeResponse(c: Context, msg: string): Response {
+  const traceId = (c.get("traceId" as never) as string | undefined) ?? crypto.randomUUID();
+  const requestId = c.get("requestId" as never) as string | undefined;
+  const { body, status } = toErrorResponse(Errors.payloadTooLarge(msg), {
+    traceId,
+    requestId,
+  });
+  c.header("X-Trace-Id", traceId);
+  if (requestId) c.header("X-Request-Id", requestId);
+  return c.json(body, status);
+}
 
 // Security hardening middleware (API-026): defense-in-depth response headers,
 // a request body-size cap, and a CORS origin resolver that also admits the
@@ -64,18 +85,18 @@ export const securityHeaders = secureHeaders({
   },
 });
 
-/** Reject oversized bodies with a 413 (Hono's bodyLimit handles the response). */
+/**
+ * Reject oversized bodies with a 413. Routes through the standard
+ * AppError → onError pipeline so the response carries the envelope v2
+ * fields (traceCode, action, etc.) instead of a one-off hand-rolled
+ * shape (see docs/architecture/error-handling.md §4.1.4).
+ */
 export const bodySizeLimit = bodyLimit({
   maxSize: MAX_BODY_BYTES,
   onError: (c) =>
-    c.json(
-      {
-        error: {
-          code: "VALIDATION",
-          message: `Request body exceeds ${MAX_BODY_BYTES} bytes`,
-        },
-      },
-      413,
+    payloadTooLargeResponse(
+      c,
+      `Request body exceeds ${MAX_BODY_BYTES} bytes`,
     ),
 });
 
@@ -90,14 +111,9 @@ export const bodySizeLimit = bodyLimit({
 export const largeBodySizeLimit = bodyLimit({
   maxSize: MAX_LARGE_BODY_BYTES,
   onError: (c) =>
-    c.json(
-      {
-        error: {
-          code: "VALIDATION",
-          message: `Upload body exceeds ${MAX_LARGE_BODY_BYTES} bytes`,
-        },
-      },
-      413,
+    payloadTooLargeResponse(
+      c,
+      `Upload body exceeds ${MAX_LARGE_BODY_BYTES} bytes`,
     ),
 });
 

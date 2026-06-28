@@ -108,7 +108,11 @@ describe("resumes.ts — edit/save draft-vs-snapshot guards", () => {
 
   it("response echoes mode so the client status chip can branch", () => {
     // Without this, the client has to compare version numbers to know whether
-    // a save bumped — which is racy across tabs (§5).
-    expect(SRC).toMatch(/resume:\s*unwrapResumeRow[^,]+,\s*mode/);
+    // a save bumped — which is racy across tabs (§5). The unwrap helper
+    // can take extra args (e.g. resolveLocale(c)); we only assert that the
+    // response object pairs an unwrapped resume with the literal `mode`.
+    // Match the call AND the literal `, mode` that follows, allowing for
+    // nested parens like `unwrapResumeRow(result.rows[0], resolveLocale(c))`.
+    expect(SRC).toMatch(/resume:\s*unwrapResumeRow\([^()]*(?:\([^()]*\)[^()]*)*\)\s*,\s*mode/);
   });
 });

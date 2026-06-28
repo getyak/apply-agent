@@ -18,6 +18,7 @@ import { stream } from "hono/streaming";
 import { z } from "zod";
 import { config } from "../config";
 import { query } from "../db";
+import { coerceLocale, localeFromHeader } from "../locale";
 import { authMiddleware } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
 import type { AppEnv } from "../types";
@@ -43,13 +44,6 @@ const AskBody = z.object({
   // Accept-Language header, then "en" downstream.
   locale: z.enum(LOCALES).optional(),
 });
-
-// Map an Accept-Language header to a supported locale. Anything Chinese → zh,
-// else en. Used only when the body omits an explicit locale.
-function localeFromHeader(acceptLanguage: string | undefined): "en" | "zh" {
-  if (!acceptLanguage) return "en";
-  return /(^|[,;\s])zh/i.test(acceptLanguage) ? "zh" : "en";
-}
 
 const AGENT_HUMAN_LABEL: Record<string, string> = {
   resume_agent: "RÉSUMÉ AGENT",
@@ -141,11 +135,15 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
   const { prompt, thread_id, surface, locale } = c.get(
     "validatedBody",
   ) as z.infer<typeof AskBody>;
-  // Resolve the locale once: explicit body choice wins, else fall back to the
-  // browser's Accept-Language, else "en". Forwarded downstream so the agent
-  // reply language is pinned to the user's UI language (not re-guessed).
+  // Resolve the locale once. Precedence: explicit body field → X-Relay-Locale
+  // header → Accept-Language → "en". Forwarded downstream so the agent reply
+  // language is pinned to the user's UI language (not re-guessed). The shared
+  // resolver lives in ../locale.ts so résumé-markdown rendering uses the same
+  // order — there is exactly one place to teach Relay about new locales.
   const resolvedLocale =
-    locale ?? localeFromHeader(c.req.header("accept-language"));
+    coerceLocale(locale) ??
+    coerceLocale(c.req.header("x-relay-locale")) ??
+    localeFromHeader(c.req.header("accept-language"));
   const userId = c.get("userId") as string;
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/ask/stream`;
 
@@ -189,6 +187,11 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
   // it through here lets server.py rebind structlog context and write
   // it into audit rows.
   const requestId = c.get("requestId");
+  // W4.1 (error-handling.md §5): forward X-Trace-Id so the FastAPI
+  // middleware binds the SAME trace into structlog + LangGraph state.
+  // One trace, three layers. The middleware on the gateway is what
+  // mints the id; we just relay it.
+  const traceId = c.get("traceId");
   let upstream: Response;
   try {
     upstream = await fetch(target, {
@@ -210,6 +213,7 @@ routes.post("/stream", validateBody(AskBody), async (c) => {
         // UI locale — pins the agent's reply language (en/zh). Always sent.
         "X-Relay-Locale": resolvedLocale,
         ...(requestId ? { "X-Request-Id": requestId } : {}),
+        ...(traceId ? { "X-Trace-Id": traceId } : {}),
       },
       body: JSON.stringify({ message: prompt }),
     });
@@ -579,6 +583,16 @@ function toNdjson(
 ): string[] {
   const event = payload.event as string | undefined;
   if (!event) return [];
+
+  // Heartbeat from the agent layer (round-12 dock-double-card audit).
+  // FastAPI's _with_heartbeat emits one ``event: "ping"`` every 10 s while
+  // the dock is alive but quiet (long ReAct thinking before any tool
+  // call). Forward as a typed dock frame so the web watchdog can reset
+  // and old / probe clients keep ignoring unknown kinds.
+  if (event === "ping") {
+    const ts = typeof payload.ts === "number" ? payload.ts : undefined;
+    return [JSON.stringify({ kind: "ping", ...(ts !== undefined ? { ts } : {}) })];
+  }
 
   if (event === "thinking") {
     const agent = (payload.agent as string) || "coordinator";
@@ -1312,6 +1326,7 @@ routes.post("/resume", validateBody(AskResumeBody), async (c) => {
   >;
   const userId = c.get("userId") as string;
   const requestId = c.get("requestId");
+  const traceId = c.get("traceId");
   const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/ask/resume`;
 
   let upstream: Response;
@@ -1322,6 +1337,7 @@ routes.post("/resume", validateBody(AskResumeBody), async (c) => {
         "Content-Type": "application/json",
         "X-Relay-User-Id": userId,
         ...(requestId ? { "X-Request-Id": requestId } : {}),
+        ...(traceId ? { "X-Trace-Id": traceId } : {}),
       },
       body: JSON.stringify({ resume_token, value }),
     });

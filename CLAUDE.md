@@ -35,6 +35,7 @@ make db-health         # 8-point health check
 @docs/architecture/cicd-aiops-harness.md
 @docs/architecture/client-side-delivery.md
 @docs/architecture/vantage-ui-mapping.md
+@docs/architecture/error-handling.md
 @docs/data-model.md
 @docs/product-spec.md
 @docs/vision.md

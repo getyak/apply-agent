@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { query } from "../db";
 import { signToken, authMiddleware } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
+import { Errors } from "../errors";
 import type { AppEnv } from "../types";
 
 const app = new Hono<AppEnv>();
@@ -35,17 +36,31 @@ const LoginSchema = z.object({
   password: z.string(),
 });
 
+// Why we don't use shared validateBody middleware here: auth routes are
+// the EARLIEST surface a brand-new user hits, so spending the bytes on a
+// crisp inline error is a UX win — and we want fix-input action hints
+// pointing at specific fields, which validateBody doesn't synthesize.
+function fieldsFromZod(issues: z.ZodIssue[]): { name: string; msg: string }[] {
+  return issues
+    .map((i) => ({ name: i.path.join("."), msg: i.message }))
+    .filter((f) => f.name.length > 0);
+}
+
 app.post("/register", authLimiter, async (c) => {
   const body = await c.req.json();
   const parsed = RegisterSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: "Invalid input", details: parsed.error.issues }, 400);
+    throw Errors.validation(
+      "Invalid registration input",
+      parsed.error.issues,
+      fieldsFromZod(parsed.error.issues),
+    );
   }
   const { email, password, displayName } = parsed.data;
 
   const existing = await query("SELECT id FROM users WHERE email = $1", [email]);
   if (existing.rows.length > 0) {
-    return c.json({ error: "Email already registered" }, 409);
+    throw Errors.conflict("Email already registered");
   }
 
   const hash = await bcrypt.hash(password, 10);
@@ -63,7 +78,11 @@ app.post("/login", authLimiter, async (c) => {
   const body = await c.req.json();
   const parsed = LoginSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: "Invalid input" }, 400);
+    throw Errors.validation(
+      "Invalid login input",
+      parsed.error.issues,
+      fieldsFromZod(parsed.error.issues),
+    );
   }
   const { email, password } = parsed.data;
 
@@ -71,16 +90,19 @@ app.post("/login", authLimiter, async (c) => {
     "SELECT id, email, display_name, password_hash, created_at FROM users WHERE email = $1",
     [email],
   );
+  // We deliberately surface the same code (AUTH_INVALID_CREDENTIALS) for
+  // both "user doesn't exist" and "password mismatch" — disclosing which
+  // one is wrong is a user-enumeration vector.
   if (result.rows.length === 0) {
-    return c.json({ error: "Invalid email or password" }, 401);
+    throw Errors.invalidCreds();
   }
   const user = result.rows[0];
   if (!user.password_hash) {
-    return c.json({ error: "Invalid email or password" }, 401);
+    throw Errors.invalidCreds();
   }
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) {
-    return c.json({ error: "Invalid email or password" }, 401);
+    throw Errors.invalidCreds();
   }
   const token = await signToken(user.id);
   const { password_hash: _, ...safeUser } = user;
@@ -94,7 +116,9 @@ app.get("/me", authMiddleware, async (c) => {
     [userId],
   );
   if (result.rows.length === 0) {
-    return c.json({ error: "User not found" }, 404);
+    // A valid JWT for a missing user means the row was deleted
+    // out-of-band — force a re-auth instead of returning a vague 404.
+    throw Errors.sessionExpired();
   }
   return c.json({ user: result.rows[0] });
 });

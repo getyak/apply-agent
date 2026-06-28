@@ -104,4 +104,48 @@ describe("jsonResumeToMarkdown", () => {
     });
     expect(md).toContain("### Eng — Linear");
   });
+
+  describe("locale=zh chrome", () => {
+    // Round-12 i18n fix: zh users were seeing English EXPERIENCE on their own
+    // résumé. The renderer now localizes the chrome (section titles, "Present",
+    // month abbreviations) while leaving the user's content verbatim — the
+    // artifact-locale axis in vantage-ui-mapping.md.
+    const resume: JsonResume = {
+      basics: { name: "王祥", summary: "Backend engineer." } as JsonResume["basics"],
+      work: [
+        {
+          name: "Stripe",
+          position: "Engineer",
+          startDate: "2021-06",
+          endDate: "",
+          highlights: ["Owned the payments rewrite."],
+        } as never,
+      ],
+      skills: [{ name: "Languages", keywords: ["Go", "TypeScript"] } as never],
+      education: [
+        { studyType: "BS", area: "CS", institution: "NJU", startDate: "2017", endDate: "2021" } as never,
+      ],
+      projects: [{ name: "Demo", description: "A side project." } as never],
+    };
+
+    it("renders zh section titles and 至今 sentinel for open-ended ranges", () => {
+      const md = jsonResumeToMarkdown(resume, { locale: "zh" });
+      expect(md).toContain("## 概览");
+      expect(md).toContain("## 工作经历");
+      expect(md).toContain("## 技能");
+      expect(md).toContain("## 项目");
+      expect(md).toContain("## 教育");
+      expect(md).toContain("6 月 2021 – 至今");
+      // Content (name, company, bullet) stays verbatim — never translated.
+      expect(md).toContain("# 王祥");
+      expect(md).toContain("### Engineer — Stripe");
+      expect(md).toContain("- Owned the payments rewrite.");
+    });
+
+    it("defaults to en when no locale is supplied (backward-compatible)", () => {
+      const md = jsonResumeToMarkdown(resume);
+      expect(md).toContain("## Experience");
+      expect(md).toContain("Jun 2021 – Present");
+    });
+  });
 });

@@ -128,7 +128,7 @@ describe("idempotency middleware", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("VALIDATION");
+    expect(body.error.code).toBe("VALIDATION_FAILED");
   });
 
   test("key too long (> 128 chars) → 400", async () => {
@@ -141,7 +141,7 @@ describe("idempotency middleware", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("VALIDATION");
+    expect(body.error.code).toBe("VALIDATION_FAILED");
   });
 
   test("exactly 16-char key → accepted", async () => {

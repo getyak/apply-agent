@@ -74,7 +74,7 @@ describe("bodySizeLimit middleware", () => {
       body: JSON.stringify({ big }),
     });
     expect(res.status).toBe(413);
-    expect((await res.json()).error.code).toBe("VALIDATION");
+    expect((await res.json()).error.code).toBe("VALIDATION_FAILED");
   });
 
   test("allows a small body through", async () => {

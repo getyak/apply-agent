@@ -5,6 +5,7 @@ import { installDbShutdownHandlers, pingDbAtBoot } from "./db";
 import { installRedisShutdownHandlers, pingRedisAtBoot } from "./redis";
 import { errorHandler } from "./errors";
 import { requestId, requestLogger } from "./middleware/observability";
+import { traceId } from "./middleware/trace-id";
 import {
   bodySizeLimit,
   resolveCorsOrigin,
@@ -27,6 +28,10 @@ import todayRoutes from "./routes/today";
 
 const app = new Hono<AppEnv>();
 
+// traceId BEFORE requestId so a single trace can span multiple
+// requests (SSE stream + the agent calls it spawns) and so the
+// requestLogger and errorHandler both see the trace context.
+app.use("*", traceId);
 app.use("*", requestId);
 app.use("*", requestLogger);
 app.use("*", securityHeaders);
