@@ -211,7 +211,13 @@ export function ResumeView() {
   const [baseDoc, setBaseDoc] = useState<JsonResume | null>(null);
   const [baseDocLoading, setBaseDocLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [compareOn, setCompareOn] = useState(true); // diff on by default (§5.1)
+  // Compare mode is fully derived from the active presentation tab. We used
+  // to keep an independent `compareOn` toggle in the header chrome, but it
+  // drifted out of sync (e.g. Exit-compare staying lit while Optimized was
+  // active). Collapsing the two into one source of truth removes the bug
+  // class entirely — Compare ↔ PresentationTabs `"compare"` are one and the
+  // same. See vantage-ui-mapping.md §11.2 and the round-12 audit.
+  const compareOn = presentation === "compare";
   const [error, setError] = useState<string | null>(null);
   // The proposed AI suggestion stack for the current original (design §6).
   // Rendered as accept/reject cards in the right pane's suggestions panel and
@@ -431,11 +437,12 @@ export function ResumeView() {
     setSuggestionsRefresh((n) => n + 1);
   }
 
-  function askToTailor() {
-    const dock = useDock.getState();
-    dock.open();
-    dock.setInput(t("prompt.tailor"));
-  }
+  // (Round-12 audit) The left-rail "Tailor for a new role" button was
+  // removed because it duplicated the dock's "Tailor this résumé to a JD"
+  // chip — and per vantage-ui-mapping.md §2.6, the dock is the single
+  // conversational entry point in the Résumé surface. The previous
+  // `askToTailor()` helper (which simply primed the dock with t("prompt.tailor"))
+  // is no longer referenced.
 
   // "Help me fill the gaps" CTA from the parse-warnings banner. Drops the
   // user into the dock with a focused prompt that hands the AI the list of
@@ -675,11 +682,12 @@ export function ResumeView() {
             value={presentation}
             onChange={(next) => {
               setPresentation(next);
-              setCompareOn(next === "compare");
               // The "Extracted" advanced toggle still lives inside Compare;
               // outside of Compare we always render the rich pane.
               if (next !== "compare") setViewMode("document");
             }}
+            compareDisabled={!isDerivedSelected}
+            compareDisabledHint={t("presentation.compareDisabledHint")}
             t={t}
           />
           {doc?._raw && doc._raw.trim().length > 0 && presentation === "compare" ? (
@@ -703,25 +711,13 @@ export function ResumeView() {
             <span style={{ width: 6, height: 6, borderRadius: 999, background: "#4C7A3F" }} />
             {t("header.saved")}
           </span>
-          <button
-            onClick={() => setCompareOn((v) => !v)}
-            style={chromeBtnStyle(compareOn)}
-            // A11Y2 (round-5): the visible label flips ("Compare" ↔ "Exit
-            // compare") so sighted users see state; screen-reader users
-            // need aria-pressed to be told the same thing. Without it, a
-            // user toggles once and the SR just announces the new label,
-            // not the fact that they just turned a *mode* on or off.
-            // (Round-5 a11y audit, WCAG 2.1 AA § 1.3.1.)
-            aria-pressed={compareOn}
-            aria-label={compareOn ? t("header.exitCompareAria") : t("header.enterCompareAria")}
-          >
-            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 3v18" />
-              <path d="M5 7l-2 2 2 2M19 7l2 2-2 2" />
-              <path d="M3 9h6M15 9h6" />
-            </svg>
-            {compareOn ? t("header.exitCompare") : t("header.compare")}
-          </button>
+          {/* The standalone Compare/Exit-compare button used to live here
+              alongside PresentationTabs. Round-12 audit found it caused a
+              persistent UX bug: its `compareOn` state drifted from the
+              active tab (e.g. Exit-compare lit while Optimized was active).
+              Compare now has exactly one entry point — the "对照" tab in
+              PresentationTabs — and the in-pane Compare/Exit affordance is
+              the tab itself. Less chrome, no drift. */}
           <button onClick={askToUpload} style={chromeBtnStyle(false)}>
             <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 16V4M6 10l6-6 6 6" />
@@ -752,7 +748,6 @@ export function ResumeView() {
           tailored={tailoredVersions}
           selectedId={selectedId}
           onSelect={(id) => setSelectedId(id)}
-          onTailorPrompt={askToTailor}
         />
         {/* Design §11.2: the presentation tab controls the main-pane layout.
             ─ optimized → single-pane DocumentPane (renders the Markdown main
@@ -1121,14 +1116,12 @@ function VersionRail({
   tailored,
   selectedId,
   onSelect,
-  onTailorPrompt,
 }: {
   originals: VersionRow[];
   optimized: VersionRow[];
   tailored: VersionRow[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onTailorPrompt: () => void;
 }) {
   const t = useTranslations("resume");
   return (
@@ -1160,6 +1153,7 @@ function VersionRail({
         selectedId={selectedId}
         onSelect={onSelect}
         labelFor={(v) => `v${v.version}`}
+        latestBadge={t("rail.latestBadge")}
         emptyHint={t("rail.optimized.emptyHint")}
       />
 
@@ -1170,42 +1164,14 @@ function VersionRail({
         selectedId={selectedId}
         onSelect={onSelect}
         labelFor={(v) => t("rail.tailored.rowLabel", { v: v.version })}
+        latestBadge={t("rail.latestBadge")}
       />
 
-      <button
-        onClick={onTailorPrompt}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-          width: "100%",
-          border: "1px dashed #D6CEC0",
-          background: "transparent",
-          borderRadius: 11,
-          padding: 11,
-          marginTop: 10,
-          cursor: "pointer",
-          fontFamily: "Inter",
-          fontWeight: 500,
-          fontSize: 12.5,
-          color: "#6B6560",
-          transition: "all .14s",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#5D3000";
-          e.currentTarget.style.color = "#5D3000";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = "#D6CEC0";
-          e.currentTarget.style.color = "#6B6560";
-        }}
-      >
-        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        {t("rail.tailorCta")}
-      </button>
+      {/* Round-12 audit: the "Tailor for a new role" CTA that used to live
+          here was removed. Per vantage-ui-mapping.md §2.6 the dock is the
+          single conversational entry point, and the dock already exposes a
+          "Tailor this résumé to a JD" chip. Two equivalent CTAs in the
+          same surface forced the user to pick which one to trust. */}
 
       <div style={{ marginTop: 22, padding: 13, background: "#FFFBF4", border: "1px solid #E8DCCA", borderRadius: 11 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
@@ -1230,6 +1196,7 @@ function RailSection({
   onSelect,
   labelFor,
   emptyHint,
+  latestBadge,
 }: {
   label: string;
   caption: string;
@@ -1238,6 +1205,12 @@ function RailSection({
   onSelect: (id: string) => void;
   labelFor: (v: VersionRow, index: number) => string;
   emptyHint?: string;
+  // Optional "newest" pip. Renders only on the first row when there are
+  // ≥ 2 entries — a single-entry section has nothing to disambiguate.
+  // The Original rail anchors on its own "current" label so it omits
+  // this; here we use it to separate "the latest AI-generated version"
+  // from "the one currently being edited" when both axes diverge.
+  latestBadge?: string;
 }) {
   const t = useTranslations("resume");
   return (
@@ -1290,10 +1263,27 @@ function RailSection({
               />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" }}>
                 <span style={{ fontFamily: "JetBrains Mono", fontWeight: 500, fontSize: 12, color: "#2B2822" }}>
                   {labelFor(v, i)}
                 </span>
+                {latestBadge && i === 0 && rows.length >= 2 ? (
+                  <span
+                    style={{
+                      fontFamily: "JetBrains Mono",
+                      fontSize: 9,
+                      letterSpacing: 0.6,
+                      textTransform: "uppercase",
+                      color: "#5D3000",
+                      background: "#F5EDE3",
+                      border: "1px solid #E8DCCA",
+                      borderRadius: 999,
+                      padding: "1px 6px",
+                    }}
+                  >
+                    {latestBadge}
+                  </span>
+                ) : null}
                 <span className="ds-mono-10">{relativeTime(t, v.createdAt)}</span>
               </div>
               <div className="ds-body-sm" style={{ fontSize: 12, color: "#6B6560" }}>
@@ -2099,7 +2089,17 @@ function ParseWarningsBanner({
 // drawer is the heavy view (iframe preview, download, re-upload). No new
 // route — we stay inside Resume Studio per vantage-ui-mapping.md §2.7.
 
+// Display size used on the Source chip. The exact byte count is preserved on
+// the chip's `title` attribute (see SourceChip below) so power users can
+// diagnose suspect uploads without us widening the chip itself.
+//
+// Why we round at KB but show 1-decimal at MB: a résumé PDF realistically
+// lives in the 50 KB ~ 5 MB band (a Chinese PDF with embedded font subsets
+// happily lands at 600–900 KB — that is not a bug). Whole-KB precision is
+// enough for the lower band; the MB tier is where a user actually wants
+// "1.4 MB vs 4.7 MB" granularity to spot scans of paper résumés.
 function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "—";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -2117,7 +2117,10 @@ function SourceChip({
     <button
       type="button"
       onClick={onClick}
-      title={source.fileName}
+      // Surface the precise byte count + full file name in the tooltip so a
+      // suspicious chip value ("Why 740 KB?") can be reconciled against the
+      // file system / upload at a glance — without crowding the chip itself.
+      title={`${source.fileName} · ${source.sizeBytes.toLocaleString()} bytes`}
       style={{
         display: "flex",
         alignItems: "center",
@@ -2388,17 +2391,24 @@ function SourceDrawer({
 function PresentationTabs({
   value,
   onChange,
+  compareDisabled = false,
+  compareDisabledHint,
   t,
 }: {
   value: "optimized" | "original" | "compare";
   onChange: (v: "optimized" | "original" | "compare") => void;
+  compareDisabled?: boolean;
+  compareDisabledHint?: string;
   t: Translate;
 }) {
   // Three-state segmented control. Default selection is "optimized" so the
   // user's first impression of the document area is the AI-cleaned résumé
-  // (design §11.2 — "AI 先做"). "Compare" hooks into the existing diff path
-  // by side-effect in the parent (setCompareOn). "Original" anchors on the
-  // upload contract — never AI-touched.
+  // (design §11.2 — "AI 先做"). "Compare" is the only entry point into the
+  // diff view (round-12 audit removed the redundant header toggle). "Compare"
+  // is also auto-disabled when the active selection has nothing to diff
+  // against (e.g. an isolated original) — keeping the affordance visible but
+  // un-clickable explains *why* it's not available without hiding the
+  // capability altogether.
   const modes: Array<{ key: "optimized" | "original" | "compare"; labelKey: string }> = [
     { key: "optimized", labelKey: "presentation.optimized" },
     { key: "original", labelKey: "presentation.original" },
@@ -2419,25 +2429,40 @@ function PresentationTabs({
     >
       {modes.map(({ key, labelKey }) => {
         const active = value === key;
+        const disabled = key === "compare" && compareDisabled && !active;
+        // Active uses the brand brown so the segmented control reads as a
+        // real segmented control (not three loose chips). Inactive keeps the
+        // soft on-tan label color; disabled fades further and changes the
+        // cursor so the affordance is unmistakable.
+        const background = active ? "#5D3000" : "transparent";
+        const color = active ? "#FFFFFF" : disabled ? "#B5AEA3" : "#5D3000";
         return (
           <button
             key={key}
             role="tab"
+            type="button"
             aria-selected={active}
-            onClick={() => onChange(key)}
+            aria-disabled={disabled || undefined}
+            disabled={disabled}
+            title={disabled ? compareDisabledHint : undefined}
+            onClick={() => {
+              if (disabled) return;
+              onChange(key);
+            }}
             style={{
-              cursor: "pointer",
+              cursor: disabled ? "not-allowed" : "pointer",
               border: "none",
-              background: active ? "#FFFFFF" : "transparent",
-              color: active ? "#2B2822" : "#6B6560",
+              background,
+              color,
               fontFamily: "Inter",
               fontWeight: active ? 600 : 500,
               fontSize: 12.5,
               padding: "6px 12px",
               borderRadius: 7,
-              boxShadow: active ? "0 1px 2px rgba(43,40,34,0.06)" : "none",
+              boxShadow: active ? "0 1px 2px rgba(93,48,0,0.18)" : "none",
               transition: "background .14s, color .14s",
               whiteSpace: "nowrap",
+              opacity: disabled ? 0.7 : 1,
             }}
           >
             {t(labelKey)}

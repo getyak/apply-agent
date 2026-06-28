@@ -794,6 +794,7 @@
         "rowLabel": "面向某职位 · v{v}"
       },
       "tailorCta": "为新职位定制",
+      "latestBadge": "最新",
       "editWithVantage": "用 VANTAGE 编辑",
       "editHint": "用 dock 来精修、定制或重写。你的原稿始终保持不变。"
     },
@@ -849,7 +850,8 @@
       "tablistAria": "展示模式",
       "optimized": "优化版",
       "original": "原版",
-      "compare": "对照"
+      "compare": "对照",
+      "compareDisabledHint": "在左侧选一个优化版或定制版，才能与原版进行对照。"
     },
     "editor": {
       "dirtyCount": "{n, plural, one {# 项未保存} other {# 项未保存}}",
@@ -1282,6 +1284,158 @@
       "fullNamePlaceholder": "你的全名",
       "email": "邮箱",
       "phone": "电话"
+    }
+  },
+  "errors": {
+    "_common": {
+      "referenceLabel": "参考编号",
+      "copyDetails": "复制详情",
+      "copied": "已复制",
+      "showDetails": "查看详情",
+      "hideDetails": "收起详情",
+      "reportProblem": "反馈问题",
+      "retry": "立即重试",
+      "signIn": "重新登录",
+      "learnMore": "了解更多",
+      "dismiss": "知道了",
+      "contact": "联系我们",
+      "backHome": "回到 Today",
+      "unknownTitle": "出了点问题",
+      "unknownBody": "我们遇到了一个未知错误。请再试一次,如果反复出现,复制下方的参考编号给我们。"
+    },
+    "validation": {
+      "failed": {
+        "title": "请检查标红的字段",
+        "body": "有一两个输入需要小修一下才能继续。"
+      }
+    },
+    "input": {
+      "formatUnsupported": {
+        "title": "我们读不了这个文件",
+        "body": "文件格式不支持,或文件已损坏。请试试 PDF 或 DOCX 导出。"
+      },
+      "payloadTooLarge": {
+        "title": "文件有点大",
+        "body": "上传超过了我们的大小上限。试着压缩一下,或者拆成几份再上传。"
+      }
+    },
+    "auth": {
+      "required": {
+        "title": "请先登录",
+        "body": "这个页面需要先登录。登录后会直接带你回到刚才的位置。"
+      },
+      "invalidCredentials": {
+        "title": "登录没成功",
+        "body": "这个邮箱和密码组合和我们的记录对不上。"
+      },
+      "sessionExpired": {
+        "title": "登录态已过期",
+        "body": "为了你的账号安全,长时间无操作后我们会自动退出。重新登录即可继续。"
+      },
+      "forbidden": {
+        "title": "你没有权限访问",
+        "body": "这个操作在你的账号上不可用。如果你觉得这是误判,联系我们。"
+      },
+      "emailNotVerified": {
+        "title": "请查收邮箱",
+        "body": "确认你的邮箱地址,才能完成账号设置。"
+      }
+    },
+    "resource": {
+      "notFound": {
+        "title": "我们找不到它",
+        "body": "你查找的内容可能被移走或删除了。刷新一下列表试试。"
+      },
+      "conflict": {
+        "title": "中间被改动过了",
+        "body": "另一个标签页或设备更新了这一条。刷新看看最新版,再试一次。"
+      },
+      "gone": {
+        "title": "这条内容已被删除",
+        "body": "它已经被永久删除,无法再访问。"
+      }
+    },
+    "throttling": {
+      "limited": {
+        "title": "请求太频繁",
+        "body": "我们在防止账号被自动化攻击。请等 {seconds, number} 秒后再试。"
+      },
+      "exceeded": {
+        "title": "你的配额已用完",
+        "body": "当前套餐的请求次数已经用完。升级套餐,或等下一个周期开始。"
+      }
+    },
+    "upstream": {
+      "unavailable": {
+        "title": "依赖的服务暂时不可用",
+        "body": "Relay 依赖的某个服务暂时没响应。我们会自动重试 — 一般几秒就好。"
+      },
+      "timeout": {
+        "title": "等得有点久",
+        "body": "服务器没有在合理时间内回应。检查一下网络,再试一次。"
+      }
+    },
+    "system": {
+      "dbUnavailable": {
+        "title": "我们暂时打了个嗝",
+        "body": "数据库要花点时间才能回应。我们会自动重试 — 一般几秒就好。"
+      },
+      "cacheUnavailable": {
+        "title": "降级模式,服务还在",
+        "body": "缓存暂时下线,可能比平时慢一点。你可以继续使用。"
+      },
+      "internal": {
+        "title": "未知错误",
+        "body": "我们这边出了点问题。已经记录下来 — 请稍后重试,如果反复出现,复制下方的参考编号给我们。"
+      }
+    },
+    "llm": {
+      "unavailable": {
+        "title": "推理引擎离线",
+        "body": "我们的 LLM 服务暂时联不上。Relay 大部分功能仍可用,这个操作请稍后再试。"
+      },
+      "budgetExhausted": {
+        "title": "本次会话预算已用完",
+        "body": "这次会话的 AI 预算已经用完。联系我们,我们帮你放开。"
+      },
+      "contentRefused": {
+        "title": "这个我们拦了",
+        "body": "模型拒绝回答这个提问。换个说法,或避开敏感内容再试。"
+      },
+      "fabricationBlocked": {
+        "title": "我们拦住了一次「编经历」",
+        "body": "这一稿会加上你简历里没有的内容,所以我们没让它过。如果是真实经历,请先去简历里补上。"
+      }
+    },
+    "agent": {
+      "timeout": {
+        "title": "这一步超时了",
+        "body": "Agent 跑过了我们给单次回合的时间上限。再试一次 — 通常第二次会快很多。"
+      },
+      "interruptPending": {
+        "title": "等你点个头",
+        "body": "Vantage 暂停了,等你审一下下一步要做什么。在 dock 里批准或调整就能继续。"
+      },
+      "taskFailed": {
+        "title": "这一步没成功",
+        "body": "Agent 的一步没能完成。再试一次 — 如果反复失败,复制参考编号联系我们。"
+      }
+    },
+    "network": {
+      "offline": {
+        "title": "你似乎掉线了",
+        "body": "检查一下网络,再试一次。"
+      },
+      "blocked": {
+        "title": "网络在拦截 Relay",
+        "body": "可能是代理、VPN 或浏览器插件挡了请求。把 localhost 加进代理的 bypass 名单,再试一次。"
+      }
+    },
+    "client": {
+      "versionStale": {
+        "title": "有新版本可用",
+        "body": "刷新页面来加载最新版。"
+      }
     }
   }
 }

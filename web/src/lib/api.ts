@@ -4,6 +4,8 @@
 // here and the SSE client in ask-stream.ts can never drift onto different
 // bases / different env var names again.
 import { API_BASE } from "./api-base";
+import { reportApiHealth } from "./health-store";
+import { getClientLocale } from "../i18n/locale-client";
 
 // Token name is shared with web/src/middleware.ts; keep them in sync.
 export const TOKEN_COOKIE = "vantage_token";
@@ -81,13 +83,62 @@ export function clearChatSessionId() {
 // Callers can opt out with `signal` in options.
 const DEFAULT_TIMEOUT_MS = 15000;
 
+/**
+ * Codes for which one safe retry helps:
+ *   - DB_UNAVAILABLE / CACHE_UNAVAILABLE — gateway just restarted a pool
+ *   - UPSTREAM_TIMEOUT — first attempt warmed a cold container
+ * We retry only idempotent verbs (GET/HEAD). POST / PATCH / PUT / DELETE
+ * are never auto-retried — duplicate mutations are worse than a clean
+ * error the user explicitly retries.
+ */
+const RETRYABLE_CODES = new Set([
+  "DB_UNAVAILABLE",
+  "CACHE_UNAVAILABLE",
+  "UPSTREAM_TIMEOUT",
+]);
+
+function isIdempotent(method: string | undefined): boolean {
+  const m = (method ?? "GET").toUpperCase();
+  return m === "GET" || m === "HEAD";
+}
+
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  try {
+    return await apiOnce<T>(path, options);
+  } catch (err) {
+    if (
+      err instanceof ApiError &&
+      err.code &&
+      RETRYABLE_CODES.has(err.code) &&
+      isIdempotent(options.method)
+    ) {
+      // Exponential backoff: server hinted via action.after (seconds);
+      // we cap at 2 s so the user isn't watching a frozen UI for 5s.
+      const hintMs =
+        err.action?.kind === "retry" && err.action.after
+          ? Math.min(err.action.after * 1000, 2000)
+          : 600;
+      await new Promise((r) => setTimeout(r, hintMs));
+      return apiOnce<T>(path, options);
+    }
+    throw err;
+  }
+}
+
+async function apiOnce<T>(path: string, options: RequestInit): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    // Stamp the user's UI locale on every API call. The Hono layer reads
+    // X-Relay-Locale (api/src/locale.ts) and forwards it into résumé-markdown
+    // rendering, the agents proxy, etc. — so chrome the server generates
+    // (section titles, system messages) always matches the chrome the web
+    // shell is rendering. Caller-supplied options.headers wins for the rare
+    // case where a request needs to pin a different locale.
+    "X-Relay-Locale": getClientLocale(),
     ...(options.headers as Record<string, string>),
   };
   if (token) {
@@ -115,40 +166,83 @@ export async function api<T = unknown>(
   } catch (err) {
     if (timeoutId !== null) clearTimeout(timeoutId);
     // fetch() rejects with TypeError on transport failure (offline, DNS,
-    // CORS preflight rejection) and AbortError on our timeout. Both surface
-    // as ApiError(status=0) with a hint that points the user at the right
-    // remedy instead of the raw "Failed to fetch" browser string.
+    // CORS preflight rejection, or a local proxy / VPN dropping
+    // localhost — the classic Clash / v2ray story) and AbortError on
+    // our timeout. We branch on `navigator.onLine` to tell genuine
+    // offline apart from "online but the request can't get through":
+    //   - offline           → NETWORK_OFFLINE
+    //   - online + timeout  → UPSTREAM_TIMEOUT
+    //   - online + reject   → NETWORK_BLOCKED   (proxy/extension/CORS)
     const aborted = err instanceof DOMException && err.name === "AbortError";
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      throw new ApiError(0, "You appear to be offline. Reconnect and try again.");
+      throw new ApiError(0, "You appear to be offline. Reconnect and try again.", {
+        code: "NETWORK_OFFLINE",
+        messageKey: "errors.network.offline",
+      });
     }
     if (aborted) {
       throw new ApiError(
         0,
         "The request took longer than expected. Check your connection and try again.",
+        { code: "UPSTREAM_TIMEOUT", messageKey: "errors.upstream.timeout" },
       );
     }
     throw new ApiError(
       0,
-      "Couldn't reach the server. Check your connection or try again in a moment.",
+      "Couldn't reach the server. A proxy or VPN may be blocking localhost.",
+      { code: "NETWORK_BLOCKED", messageKey: "errors.network.blocked" },
     );
   }
   if (timeoutId !== null) clearTimeout(timeoutId);
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    // API_E1 (round-10): parse the envelope twice — extractErrorMessage
-    // returns the user-safe string we've always shown, extractErrorMeta
-    // pulls the structured fields so callers can branch on `.code` and
-    // surface `.traceId` in support copy.
-    throw new ApiError(
-      res.status,
-      extractErrorMessage(body),
-      extractErrorMeta(body),
-    );
+    // Envelope v2 (docs/architecture/error-handling.md §2.1): extract
+    // every field the server gave us, plus the trace/health headers so
+    // callers can surface a Reference code and a global health banner
+    // without re-parsing.
+    const meta = { ...extractErrorMeta(body), ...readTraceHeaders(res) };
+    if (meta.healthStatus === "degraded") {
+      reportApiHealth("degraded", { code: meta.code, traceId: meta.traceId });
+    }
+    throw new ApiError(res.status, extractErrorMessage(body), meta);
+  }
+
+  // Clean 2xx clears the degraded flag — the world's healthy again.
+  // (We're conservative: only happens when the gateway's response shape
+  // looks normal, so an isolated 200 from a static endpoint can clear
+  // a real outage. That's a feature: we don't want a stale banner.)
+  if (res.headers.get("x-relay-health") !== "degraded") {
+    reportApiHealth("ok");
   }
 
   return res.json();
+}
+
+/**
+ * Pull X-Trace-Id / X-Request-Id / X-Relay-Health off the Response.
+ * These are envelope v2 sidechannels: present on every response (not
+ * just errors) so the global health banner can light up on any 503,
+ * and the support copy can quote a trace even if the JSON body was
+ * stripped by a proxy.
+ */
+function readTraceHeaders(res: Response): {
+  traceId?: string;
+  requestId?: string;
+  healthStatus?: "ok" | "degraded";
+} {
+  const out: {
+    traceId?: string;
+    requestId?: string;
+    healthStatus?: "ok" | "degraded";
+  } = {};
+  const tid = res.headers.get("x-trace-id");
+  if (tid) out.traceId = tid;
+  const rid = res.headers.get("x-request-id");
+  if (rid) out.requestId = rid;
+  const h = res.headers.get("x-relay-health");
+  if (h === "degraded") out.healthStatus = "degraded";
+  return out;
 }
 
 /** True when an error came from fetch's transport layer (offline, DNS,
@@ -176,55 +270,125 @@ function extractErrorMessage(body: unknown): string {
   return "Request failed";
 }
 
-// API_E1 (round-10): the round-5 (API1/API2) Python error envelope and the
-// round-9 (SSE4) frontend SSE handler already plumb `code` + `trace_id` end
-// to end on the streaming path. Plain JSON responses still got the round-3
-// `extractErrorMessage` summary string and dropped the structured fields,
-// so anything that fetched with `apiRequest` (which is most of the app)
-// lost the ability to branch on a stable machine-readable error class.
-// Extract them once here and stash on ApiError so every caller can pick
-// them up — and surface the trace id in support copy without having to
-// quiz the user. The envelope from the Bun gateway is one of:
-//   { error: { code, message, traceId } }   (newer routes)
-//   { error: "..." }                         (auth/older routes — no code)
-// Both shapes flow through; missing fields become undefined.
-function extractErrorMeta(body: unknown): {
+// envelope v2 — see docs/architecture/error-handling.md §2.1.
+// Tolerant parser: accepts the v2 shape from the gateway alongside any
+// legacy `{ error: "string" }` shape that might still be floating
+// around (older Python routes, third-party integrations). Missing
+// fields become undefined; the consumer's resolver fills them in.
+export type ErrorAction =
+  | { kind: "retry"; after?: number }
+  | { kind: "reauth"; redirect: string }
+  | { kind: "contact"; channel: "email" | "in-app" }
+  | { kind: "wait"; until: string; reason: string }
+  | {
+      kind: "fix-input";
+      fields: { name: string; msg: string }[];
+    }
+  | { kind: "none" };
+
+interface ErrorMeta {
   code?: string;
+  messageKey?: string;
   traceId?: string;
-} {
+  traceCode?: string;
+  requestId?: string;
+  timestamp?: string;
+  action?: ErrorAction;
+  details?: unknown;
+}
+
+function extractErrorMeta(body: unknown): ErrorMeta {
   if (!body || typeof body !== "object" || !("error" in body)) return {};
   const e = (body as { error: unknown }).error;
   if (!e || typeof e !== "object") return {};
-  const obj = e as { code?: unknown; traceId?: unknown; trace_id?: unknown };
-  const code = typeof obj.code === "string" ? obj.code : undefined;
-  const traceId =
+  const obj = e as Record<string, unknown>;
+  const out: ErrorMeta = {};
+  if (typeof obj.code === "string") out.code = obj.code;
+  if (typeof obj.messageKey === "string") out.messageKey = obj.messageKey;
+  // Accept both camelCase (Bun gateway) and snake_case (older Python paths).
+  const tid =
     typeof obj.traceId === "string"
       ? obj.traceId
       : typeof obj.trace_id === "string"
         ? obj.trace_id
         : undefined;
-  return { ...(code ? { code } : {}), ...(traceId ? { traceId } : {}) };
+  if (tid) out.traceId = tid;
+  if (typeof obj.traceCode === "string") out.traceCode = obj.traceCode;
+  const rid =
+    typeof obj.requestId === "string"
+      ? obj.requestId
+      : typeof obj.request_id === "string"
+        ? obj.request_id
+        : undefined;
+  if (rid) out.requestId = rid;
+  if (typeof obj.timestamp === "string") out.timestamp = obj.timestamp;
+  if (obj.details !== undefined) out.details = obj.details;
+  if (obj.action && typeof obj.action === "object") {
+    out.action = obj.action as ErrorAction;
+  }
+  return out;
+}
+
+/**
+ * Derive the user-facing short code locally if the server didn't send
+ * one. Mirror of api/src/errors.ts traceCodeFromTraceId so the same
+ * traceId always renders the same code, regardless of which side
+ * computes it.
+ */
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+export function traceCodeFromTraceId(traceId: string): string {
+  const hex = traceId.replace(/-/g, "").slice(0, 10);
+  if (hex.length < 10) return "R-0000";
+  const high = parseInt(hex.slice(0, 5), 16);
+  const low = parseInt(hex.slice(5, 10), 16);
+  const folded = high ^ low;
+  let out = "";
+  let n = folded;
+  for (let i = 0; i < 4; i++) {
+    out = CROCKFORD[n & 0x1f] + out;
+    n = n >>> 5;
+  }
+  return `R-${out}`;
 }
 
 export class ApiError extends Error {
-  // API_E1 (round-10): `code` and `traceId` are populated from the
-  // server's `{ error: { code, message, traceId } }` envelope when the
-  // gateway provides them. Callers that don't care about them can keep
-  // reading `.message` exactly as before; callers that do — the auth
-  // page already branches on `status === 429`, settings on negative-
-  // salary errors, etc. — can branch on `.code === "budget_exhausted"`
-  // / "http_403" / "rate_limited" without regexing the message text.
+  // Envelope v2 fields; all optional so legacy `{ error: "string" }`
+  // responses still hydrate a working error object.
   public code?: string;
+  public messageKey?: string;
   public traceId?: string;
+  public traceCode?: string;
+  public requestId?: string;
+  public timestamp?: string;
+  public action?: ErrorAction;
+  public details?: unknown;
+  /**
+   * "degraded" when the gateway flagged this response with
+   * X-Relay-Health=degraded — drives the global HealthBanner. Absent
+   * means "no opinion" (the banner stays in whatever state it's in;
+   * a fresh "ok" only comes from a clean 2xx).
+   */
+  public healthStatus?: "ok" | "degraded";
+
   constructor(
     public status: number,
     message: string,
-    meta?: { code?: string; traceId?: string },
+    meta?: ErrorMeta & { healthStatus?: "ok" | "degraded" },
   ) {
     super(message);
     this.name = "ApiError";
     if (meta?.code) this.code = meta.code;
+    if (meta?.messageKey) this.messageKey = meta.messageKey;
     if (meta?.traceId) this.traceId = meta.traceId;
+    // Compute traceCode lazily if the server didn't ship it (older
+    // gateways pre-W1.2 don't, and the agents host gets W3.2 later).
+    this.traceCode =
+      meta?.traceCode ?? (meta?.traceId ? traceCodeFromTraceId(meta.traceId) : undefined);
+    if (meta?.requestId) this.requestId = meta.requestId;
+    if (meta?.timestamp) this.timestamp = meta.timestamp;
+    if (meta?.action) this.action = meta.action;
+    if (meta?.details !== undefined) this.details = meta.details;
+    if (meta?.healthStatus) this.healthStatus = meta.healthStatus;
   }
 }
 

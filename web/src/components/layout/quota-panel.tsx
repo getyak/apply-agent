@@ -144,7 +144,24 @@ export function QuotaPanel({ collapsed = false, data }: QuotaPanelProps) {
   const remaining = Math.max(0, effectiveData.total - effectiveData.used);
   const percent = Math.min(100, Math.round((effectiveData.used / effectiveData.total) * 100));
 
-  // Pace math — kept simple and pure. Phase 2 will swap in real history.
+  // Pace math — projects "~N days at your current pace" for the italic
+  // line under the bar (i18n key: sidebar.quota.paceDays).
+  //
+  //   perDay = used / daysElapsedInCycle           [auto-applies / day]
+  //   paceDays = max(1, round(remaining / perDay)) [days until quota runs out]
+  //
+  // Notes:
+  // - Returns null when either input is non-positive (no cycle history yet,
+  //   or the user hasn't sent anything). The UI omits the italic line in
+  //   that state — silent is correct, an "Infinity days" projection isn't.
+  // - Rounded, then floored at 1 day so a sub-day rate still reads as
+  //   "~1 day at your current pace" instead of "0 days" (which the user
+  //   would read as "already empty").
+  // - daysElapsedInCycle is the user's elapsed days within the *current*
+  //   cycle (NOT account age) — pacing has to be relative to the same
+  //   cycle the quota resets against, otherwise the projection drifts.
+  // - Phase 2 will swap MOCK_QUOTA_DATA for a real selector over
+  //   agent_tasks aggregates; the formula stays the same.
   const paceDays = useMemo(() => {
     if (effectiveData.daysElapsedInCycle <= 0 || effectiveData.used <= 0) return null;
     const perDay = effectiveData.used / effectiveData.daysElapsedInCycle;

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getTranslations } from "next-intl/server";
+import { ErrorToastContainer } from "@/components/errors";
+import { HealthBanner } from "@/components/layout/HealthBanner";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -44,7 +46,17 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="bg-paper text-ink">
-        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+        <NextIntlClientProvider>
+          {/* HealthBanner sits before children so a degraded gateway
+              announces itself at the top of every page (W5.1). It's a
+              no-op when status === "ok". */}
+          <HealthBanner />
+          {children}
+          {/* Toasts mount once at the root so any client component can
+              call emitErrorToast() without prop-drilling. The container
+              renders fixed bottom-right and stacks. */}
+          <ErrorToastContainer />
+        </NextIntlClientProvider>
       </body>
     </html>
   );
