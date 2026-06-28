@@ -285,16 +285,16 @@ jobs:
 
       # Install playwright + bundled chromium *next to* the script (not into
       # web/package.json) — the smoke spawns `node <tmpfile>` which requires
-      # "playwright" via the runner's global npm prefix.
+      # "playwright" via the runner's global npm prefix. NODE_PATH is queried
+      # via `npm root -g` because the prefix varies across runner images
+      # (Ubuntu 22.04 = /usr/lib/node_modules, hosted = /opt/hostedtoolcache/...).
       - name: Install playwright (for hydration smoke)
         run: |
           npm install -g playwright@1
           npx --yes playwright@1 install --with-deps chromium
+          echo "NODE_PATH=$(npm root -g)" >> "$GITHUB_ENV"
 
       - name: Hydration smoke — assert __reactFiber* on /, /auth, /legal/privacy
-        env:
-          # npm global install path so node can resolve require("playwright").
-          NODE_PATH: /usr/lib/node_modules
         run: node scripts/web-hydration-smoke.mjs --base-url http://127.0.0.1:3010
 
       # HTTP-only smoke (P0-E). Catches the 2026-06-19 audit's `/auth`

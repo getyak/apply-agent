@@ -13,8 +13,8 @@ in-memory record + the dsn-absent log fallback.
 """
 from __future__ import annotations
 
+import asyncio
 import os
-import time
 from uuid import uuid4
 
 import pytest
@@ -54,7 +54,8 @@ async def test_timing_context_records_elapsed_ms():
         # Sleep 50ms — generous floor so a fast CI runner (GH Actions hosted)
         # never clocks the sleep below the assertion. The ≥ 40 guard still
         # catches "timer didn't run at all" without flaking on jitter.
-        time.sleep(0.05)
+        # Use asyncio.sleep (this is an async test fn — ruff ASYNC251).
+        await asyncio.sleep(0.05)
     assert rec.stages["parse_jd_ms"] >= 40
     # And not absurdly high — guard against unit confusion (sec vs ms).
     assert rec.stages["parse_jd_ms"] < 500
@@ -64,7 +65,7 @@ async def test_measure_ttar_success_path():
     app_id = uuid4()
     async with measure_ttar(app_id) as t:
         with t.timing("parse_jd_ms"):
-            time.sleep(0.01)
+            await asyncio.sleep(0.01)
         t.fabrication_attempts = 0
         t.success = True
     # After exit the record should reflect what we set inside.
