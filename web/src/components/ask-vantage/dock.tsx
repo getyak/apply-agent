@@ -264,9 +264,11 @@ function AgentCardRow({ id }: { id: string }) {
   });
   // Auto-expand once we cross the "did this hang?" threshold. Don't auto-
   // collapse afterwards — once the user sees the metadata they probably
-  // want it to stay visible. Manual toggle still wins.
+  // want it to stay visible. Manual toggle still wins. This effect syncs
+  // an "is the card open?" UI state with the external elapsed-clock signal.
   useEffect(() => {
     if (running && elapsedMs >= AUTO_EXPAND_AFTER_MS) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync with external elapsed-clock crossing AUTO_EXPAND_AFTER_MS.
       setOpen((cur) => cur || true);
     }
   }, [running, elapsedMs]);

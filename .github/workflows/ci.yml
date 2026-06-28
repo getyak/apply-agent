@@ -149,18 +149,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      minio:
-        image: minio/minio:latest
-        ports:
-          - 9000:9000
-        env:
-          MINIO_ROOT_USER: relay
-          MINIO_ROOT_PASSWORD: relay-test-secret
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+      # NOTE: minio 没在 agents 测试里出现（grep agents/ 无 boto3 / S3_ENDPOINT 引用），
+      # 之前 services 块挂 minio 是死代码，且其默认 entrypoint 不带 server 子命令
+      # （GitHub Actions services 不支持 cmd override），所以容器永远 unhealthy →
+      # 整 job fail。S3 相关测试需要时由 api job 自己挂（api/src/storage.ts 才依赖）。
 
     env:
       DATABASE_URL: postgres://relay:relay@localhost:5433/relay_test

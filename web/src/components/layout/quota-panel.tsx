@@ -124,6 +124,7 @@ function useQuotaOverride(): { data: QuotaData; forceCollapsed: boolean } {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const value = new URLSearchParams(window.location.search).get("quota");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs mock override with external URL query (?quota=critical|full|collapsed) for dev/preview demos.
     if (value === "critical") setOverride({ data: MOCK_QUOTA_CRITICAL, forceCollapsed: false });
     else if (value === "full") setOverride({ data: MOCK_QUOTA_FULL, forceCollapsed: false });
     else if (value === "collapsed") setOverride({ data: MOCK_QUOTA_DATA, forceCollapsed: true });
