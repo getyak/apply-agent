@@ -51,9 +51,11 @@ async def test_record_to_jsonb_shape_matches_migration_014():
 async def test_timing_context_records_elapsed_ms():
     rec = TTARRecord(application_id=uuid4())
     with rec.timing("parse_jd_ms"):
-        # Sleep 20ms — should round to ≥ 15ms after timer overhead.
-        time.sleep(0.02)
-    assert rec.stages["parse_jd_ms"] >= 15
+        # Sleep 50ms — generous floor so a fast CI runner (GH Actions hosted)
+        # never clocks the sleep below the assertion. The ≥ 40 guard still
+        # catches "timer didn't run at all" without flaking on jitter.
+        time.sleep(0.05)
+    assert rec.stages["parse_jd_ms"] >= 40
     # And not absurdly high — guard against unit confusion (sec vs ms).
     assert rec.stages["parse_jd_ms"] < 500
 
