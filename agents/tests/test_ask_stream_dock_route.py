@@ -868,11 +868,12 @@ def test_ask_stream_rejects_foreign_thread_id(client):
     )
     assert resp.status_code == 403
     body = resp.json()
-    # The FastAPI exception envelope nests under "message" (not "detail")
-    # via the global http_exception handler installed in server.py.
-    assert "not yours" in body.get("message", "") or "not yours" in body.get(
-        "detail", ""
-    )
+    # Envelope v2 (docs/architecture/error-handling.md §2.1) nests every
+    # error field under `error`. We accept the legacy top-level shape as
+    # a fallback only for the brief migration window.
+    err = body.get("error") or body
+    msg = err.get("message", "") if isinstance(err, dict) else ""
+    assert "not yours" in msg, body
 
 
 def test_ask_stream_rejects_unknown_thread_shape(client):

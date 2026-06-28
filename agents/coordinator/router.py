@@ -312,9 +312,28 @@ async def llm_intent_classifier(message: str) -> Intent:
 
 REGEX_ACCEPT_THRESHOLD = 0.85
 
+# Below this length the message is almost certainly a slip (the classic
+# "hji" autocomplete miss). We short-circuit before paying the LLM cost
+# and route it to the smalltalk reply, which gives a "What would you like
+# me to do?" copy — much faster than a thinking spinner. The threshold
+# matches the web composer's client-side guard so the two layers stay
+# in lockstep.
+SHORT_INPUT_MIN_CHARS = 2
+
 
 async def classify_intent(message: str) -> Intent:
     """Layer 1 → Layer 2 fallback."""
+    stripped = (message or "").strip()
+    # Defense-in-depth: the web composer drops these before they ever leave
+    # the browser (dock.tsx submit()), but raw curl, extension, or older
+    # clients can still send them. Skip LLM entirely.
+    if len(stripped) < SHORT_INPUT_MIN_CHARS:
+        return Intent(
+            intent="other",
+            confidence=1.0,
+            args={},
+            via="short_input_guard",
+        )
     cheap = cheap_intent_classifier(message)
     if cheap and cheap.confidence >= REGEX_ACCEPT_THRESHOLD:
         return cheap

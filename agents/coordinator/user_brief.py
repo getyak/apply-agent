@@ -82,14 +82,16 @@ async def build_user_brief(user_id: UUID) -> str:
 async def _resume_section(user_id: UUID) -> str:
     from agents.tools.auto import pg_query
 
+    # NB: `resumes` only has `created_at` (no updated_at / deleted_at — see
+    # infra/postgres/migrations/004_resumes.sql + 017_dual_track). Soft-delete
+    # lives at the file layer (`user_files.deleted_at`), not on the résumé row.
     try:
         rows = await pg_query(
             """
-            SELECT id, version, content, track, is_base, updated_at
+            SELECT id, version, content, track, is_base, created_at
             FROM resumes
             WHERE user_id = %s
-              AND deleted_at IS NULL
-            ORDER BY COALESCE(updated_at, created_at) DESC
+            ORDER BY created_at DESC
             LIMIT 1
             """,
             (str(user_id),),
