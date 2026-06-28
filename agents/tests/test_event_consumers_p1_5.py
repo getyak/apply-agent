@@ -7,6 +7,7 @@ Locks down:
   - start_all_in_background spawns 4 named tasks
   - missing user_id silently skipped (defensive)
 """
+
 from __future__ import annotations
 
 import asyncio

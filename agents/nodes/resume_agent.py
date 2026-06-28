@@ -13,6 +13,7 @@ endpoints the router invokes:
   analyze(content)         → {skills, missing_against_jd, suggestions}
   build_from_scratch(...)  → first draft from guided Q&A
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -110,9 +111,7 @@ async def customize(
             fab = fabrication_guard(base_resume, tailored)
             if not fab:
                 break
-            log.warning(
-                "resume.fabrication_detected", attempt=attempt, fabricated_entities=fab[:5]
-            )
+            log.warning("resume.fabrication_detected", attempt=attempt, fabricated_entities=fab[:5])
             if attempt == 2:
                 # Final attempt failed — refuse to write.
                 return {
@@ -120,9 +119,7 @@ async def customize(
                     "reason": "fabrication_guard_failed",
                     "fabricated": fab,
                 }
-            envelope = await _generate_tailored(
-                base_resume, jd_text, fabrication_warning=fab
-            )
+            envelope = await _generate_tailored(base_resume, jd_text, fabrication_warning=fab)
             tailored = envelope["tailored"]
             change_log = envelope["change_log"]
 
@@ -197,7 +194,10 @@ async def _generate_tailored(
         )
     payload = {"base": base_resume, "jd": jd_text[:8000]}
     resp = await model.ainvoke(
-        [SystemMessage(content=sys_prompt), HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
+        [
+            SystemMessage(content=sys_prompt),
+            HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+        ]
     )
     parsed = _safe_json(resp.content)
     return _normalise_customize_envelope(parsed)
@@ -441,7 +441,10 @@ async def build_from_scratch(
             "top_3_wins": top_3_wins,
         }
         resp = await model.ainvoke(
-            [SystemMessage(content=prompt), HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+            ]
         )
         draft = _safe_json(resp.content)
 
@@ -485,7 +488,9 @@ def assign_bullet_ids(parsed_resume: dict[str, Any]) -> dict[str, Any]:
     return index
 
 
-def _find_bullet(parsed: dict[str, Any], bullet_index: dict[str, Any], stable_id: str) -> str | None:
+def _find_bullet(
+    parsed: dict[str, Any], bullet_index: dict[str, Any], stable_id: str
+) -> str | None:
     """Resolve a stable_id back to current bullet text.
 
     Tries the recorded path first; falls back to anchor_text fuzzy match if the
@@ -630,8 +635,11 @@ async def optimize_general(base_resume_id: UUID, user_id: UUID) -> dict[str, Any
                     )
                 await publish(
                     "resume:updated",
-                    {"user_id": str(user_id), "version": optimized_version,
-                     "resume_id": str(optimized_id)},
+                    {
+                        "user_id": str(user_id),
+                        "version": optimized_version,
+                        "resume_id": str(optimized_id),
+                    },
                 )
 
         return {
@@ -649,15 +657,15 @@ async def _run_optimize_general(
     prompt = _load_prompt("optimize_general.v1.md")
     payload = {"resume": parsed, "bullet_index": bullet_index}
     resp = await model.ainvoke(
-        [SystemMessage(content=prompt),
-         HumanMessage(content=json.dumps(payload, ensure_ascii=False)[:24_000])]
+        [
+            SystemMessage(content=prompt),
+            HumanMessage(content=json.dumps(payload, ensure_ascii=False)[:24_000]),
+        ]
     )
     return _safe_json(resp.content)
 
 
-def _validate_suggestions(
-    parsed: dict[str, Any], raw: dict[str, Any]
-) -> list[dict[str, Any]]:
+def _validate_suggestions(parsed: dict[str, Any], raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Coerce + risk-annotate model output into clean suggestion records.
 
     Reuses change_log_guard's vocabulary: a 'safe' change_type whose after_text
@@ -684,15 +692,17 @@ def _validate_suggestions(
             risk = "needs_review" if _has_new_quantitative_token(after, base_text) else "safe"
         else:
             risk = "unsupported"
-        out.append({
-            "bullet_stable_id": entry.get("bullet_stable_id"),
-            "section": entry.get("section") or "work",
-            "change_type": change_type,
-            "before_text": before,
-            "after_text": after,
-            "rationale": entry.get("rationale"),
-            "risk_level": risk,
-        })
+        out.append(
+            {
+                "bullet_stable_id": entry.get("bullet_stable_id"),
+                "section": entry.get("section") or "work",
+                "change_type": change_type,
+                "before_text": before,
+                "after_text": after,
+                "rationale": entry.get("rationale"),
+                "risk_level": risk,
+            }
+        )
     return out
 
 
@@ -716,8 +726,10 @@ def _apply_suggestions_to_parsed(
                 highlights[idx] = repl
     # summary-level suggestions (no bullet match) — apply to basics.summary
     for s in suggestions:
-        if (s.get("section") == "summary"
-                and new.get("basics", {}).get("summary", "").strip() == s["before_text"].strip()):
+        if (
+            s.get("section") == "summary"
+            and new.get("basics", {}).get("summary", "").strip() == s["before_text"].strip()
+        ):
             new["basics"]["summary"] = s["after_text"]
     return new
 
@@ -817,8 +829,10 @@ async def propose_bullet_edit(
             "resume_context": _flatten_text(parsed)[:4000],
         }
         resp = await model.ainvoke(
-            [SystemMessage(content=prompt),
-             HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+            ]
         )
         edit = _safe_json(resp.content)
         after = (edit.get("after_text") or "").strip()
@@ -845,8 +859,11 @@ async def propose_bullet_edit(
         stored = await resume_store.insert_suggestions(
             user_id, resume_id, [suggestion], proposed_by="vibe_chat"
         )
-        return {"ok": True, "suggestion": stored[0] if stored else suggestion,
-                "note": edit.get("note")}
+        return {
+            "ok": True,
+            "suggestion": stored[0] if stored else suggestion,
+            "note": edit.get("note"),
+        }
 
 
 # ───────────────────────────────────────────────────────────────────────

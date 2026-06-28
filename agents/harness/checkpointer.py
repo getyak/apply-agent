@@ -28,6 +28,7 @@ loop on first access and hold the underlying saver for the process
 lifetime. Reentrant ``get_checkpointer()`` calls return the cached saver
 directly (sync), preserving the old call site signature.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -60,6 +61,7 @@ def _close_held_cms() -> None:
     """
     global _HELD_LOOP, _HELD_THREAD
     if _HELD_LOOP is not None and _HELD_LOOP.is_running():
+
         async def _close_all() -> None:
             while _HELD_CMS:
                 cm = _HELD_CMS.pop()
@@ -75,9 +77,7 @@ def _close_held_cms() -> None:
                     pass
 
         try:
-            asyncio.run_coroutine_threadsafe(_close_all(), _HELD_LOOP).result(
-                timeout=5
-            )
+            asyncio.run_coroutine_threadsafe(_close_all(), _HELD_LOOP).result(timeout=5)
         except Exception:  # noqa: BLE001 — best-effort shutdown
             pass
         try:
@@ -126,9 +126,7 @@ def _start_background_loop() -> asyncio.AbstractEventLoop:
         asyncio.set_event_loop(loop)
         loop.run_forever()
 
-    t = threading.Thread(
-        target=_run, name="relay-checkpointer-loop", daemon=True
-    )
+    t = threading.Thread(target=_run, name="relay-checkpointer-loop", daemon=True)
     t.start()
     _HELD_LOOP = loop
     _HELD_THREAD = t

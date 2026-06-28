@@ -12,6 +12,7 @@ Exposes three core endpoints for the Vantage UI:
 
 Caller: Bun api/ layer proxies user requests here over HTTP.
 """
+
 from __future__ import annotations
 
 import asyncio  # used by _with_heartbeat (round-12 SSE ping)
@@ -85,9 +86,7 @@ _DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "0") == "1"
 # the dock LLM as free-form turns. 0.85 matches router.REGEX_ACCEPT_THRESHOLD,
 # so every regex-confident intent now goes straight to dispatch via the same
 # rule. Override with RELAY_DOCK_FAST_PATH to be stricter / looser per env.
-_DOCK_REGEX_FAST_PATH_THRESHOLD = float(
-    os.environ.get("RELAY_DOCK_FAST_PATH", "0.85")
-)
+_DOCK_REGEX_FAST_PATH_THRESHOLD = float(os.environ.get("RELAY_DOCK_FAST_PATH", "0.85"))
 from agents.harness.audit import redact_exception_text  # noqa: E402
 from agents.harness.checkpointer import (  # noqa: E402
     ask_vantage_thread_id,
@@ -173,11 +172,7 @@ def _trace_code_from(trace_id: str) -> str:
 
 
 def _now_iso() -> str:
-    return (
-        datetime.now(UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 # Inbound trace id is plumbed through request.state; the middleware below
@@ -313,9 +308,7 @@ async def _trace_middleware(request: Request, call_next):
 
 
 @app.exception_handler(HTTPException)
-async def _http_exception_handler(
-    request: Request, exc: HTTPException
-) -> JSONResponse:
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     trace_id = _trace_for(request)
     request_id = _request_id_for(request)
     log.warning(
@@ -332,9 +325,7 @@ async def _http_exception_handler(
 
 
 @app.exception_handler(Exception)
-async def _unhandled_exception_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     trace_id = _trace_for(request)
     request_id = _request_id_for(request)
     # Log the full exception text so support can correlate; the response body
@@ -421,9 +412,7 @@ async def ask_stream(
     # /ask/stream had been trusting the header — fixed here. Falling back
     # to ask_vantage_thread_id(user_id) when no header is sent is still
     # safe — that helper derives the thread from the user's own id.
-    if x_relay_thread_id and not _owns_dock_thread(
-        thread_id=x_relay_thread_id, user_id=user_id
-    ):
+    if x_relay_thread_id and not _owns_dock_thread(thread_id=x_relay_thread_id, user_id=user_id):
         log.warning(
             "ask_stream.thread_id_mismatch",
             thread_id=x_relay_thread_id,
@@ -628,9 +617,7 @@ async def _stream_dock_turn(
     from agents.coordinator.user_brief import build_user_brief
     from agents.harness.locale import language_directive
 
-    tokens = dock_tools.set_dock_context(
-        user_id=user_id, thread_id=thread_id, surface=surface
-    )
+    tokens = dock_tools.set_dock_context(user_id=user_id, thread_id=thread_id, surface=surface)
     # Pin the dock's reply language to the user's UI locale (X-Relay-Locale).
     # Passed as an extra system block so the persistent graph prompt stays
     # cacheable. Falls back to charset detection of the message when locale
@@ -677,9 +664,8 @@ async def _stream_dock_turn(
             # the full chained traceback (redacted) so operators can find the
             # root frame the next time this fires.
             import traceback as _tb
-            tb_text = "".join(
-                _tb.format_exception(type(exc), exc, exc.__traceback__)
-            )
+
+            tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
             log.error(
                 "ask_stream.dock_turn_failed",
                 trace_id=tid,
@@ -822,9 +808,7 @@ def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[
     if kind == "tool_start":
         tool_name = evt.payload.get("tool") or ""
         tool_args = evt.payload.get("args")
-        agent, _action = _TOOL_AGENT_MAP.get(
-            tool_name, ("coordinator", tool_name or "tool")
-        )
+        agent, _action = _TOOL_AGENT_MAP.get(tool_name, ("coordinator", tool_name or "tool"))
         # Step 4 — claim the matching plan step (if any). We never *require*
         # a match: the spinner row still goes out even when the model called
         # an off-plan tool, just without highlighting any plan row.
@@ -1192,9 +1176,7 @@ async def ask_resume(
     req_id = _request_id_for(request)
 
     async def gen() -> AsyncIterator[str]:
-        tokens = dock_tools.set_dock_context(
-            user_id=user_id, thread_id=thread_id, surface="dock"
-        )
+        tokens = dock_tools.set_dock_context(user_id=user_id, thread_id=thread_id, surface="dock")
         try:
             graph = dock_agent.build_dock_graph()
             cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 12}
@@ -1429,7 +1411,7 @@ class PrepareApplicationPayload(BaseModel):
     base_resume_content: dict[str, Any]
     base_resume_version: int = 1
     form_fields: list[dict[str, Any]] = []  # ATS field descriptors; may be empty
-    application_id: UUID | None = None       # idempotency: reuse a draft row
+    application_id: UUID | None = None  # idempotency: reuse a draft row
 
 
 @app.post("/applications/prepare")
@@ -1670,7 +1652,9 @@ async def mock_start(payload: MockStartPayload, user_id: UserDep) -> dict[str, A
     session_id = uuid4()
 
     # Create the interview_sessions row so save_to_card can UPDATE later.
-    await _create_session_row(user_id=user_id, session_id=session_id, mode_id=mode["id"], company=payload.company)
+    await _create_session_row(
+        user_id=user_id, session_id=session_id, mode_id=mode["id"], company=payload.company
+    )
 
     graph = interview_agent.build_mock_graph(mode)
     config = {"configurable": {"thread_id": mock_thread_id(str(session_id))}}
@@ -1784,7 +1768,9 @@ class BuildResumeResumePayload(BaseModel):
 
 
 @app.post("/build_resume/resume")
-async def build_resume_resume(payload: BuildResumeResumePayload, user_id: UserDep) -> dict[str, Any]:
+async def build_resume_resume(
+    payload: BuildResumeResumePayload, user_id: UserDep
+) -> dict[str, Any]:
     # HITL_R4 (round-8): the build_resume thread_id is structured as
     # `build_resume:{user_id}:{session_id}` (see checkpointer.py); we can
     # verify ownership cheaply by parsing the embedded user_id. The audit
@@ -1819,7 +1805,9 @@ async def build_resume_resume(payload: BuildResumeResumePayload, user_id: UserDe
 # ───────────────────────────────────────────────────────────────────────
 
 
-async def _create_session_row(user_id: UUID, session_id: UUID, mode_id: UUID, company: str | None) -> None:
+async def _create_session_row(
+    user_id: UUID, session_id: UUID, mode_id: UUID, company: str | None
+) -> None:
     import os
 
     import psycopg

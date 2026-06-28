@@ -15,6 +15,7 @@ Marks:
   smoke — costs real OpenRouter tokens (~$0.001 per run). CI deselects via
           `-m "not smoke"`; developers opt in with OPENROUTER_API_KEY set.
 """
+
 from __future__ import annotations
 
 import os
@@ -88,11 +89,7 @@ async def test_live_react_agent_calls_mcp_tool() -> None:
     )
 
     messages = result["messages"]
-    tool_calls = [
-        m
-        for m in messages
-        if getattr(m, "tool_calls", None) and len(m.tool_calls) > 0
-    ]
+    tool_calls = [m for m in messages if getattr(m, "tool_calls", None) and len(m.tool_calls) > 0]
     assert tool_calls, f"agent never called a tool. messages={messages!r}"
 
     final = messages[-1]

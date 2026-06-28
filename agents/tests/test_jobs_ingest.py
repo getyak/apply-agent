@@ -12,6 +12,7 @@ We hermetic-mock httpx via MockTransport — no real network. PG side is
 gated by RELAY_PG_DSN; tests run without it so upsert is a no-op (the
 "no DSN → 0 upserted" path).
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -250,11 +251,7 @@ async def test_label_override_replaces_company_name():
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={
-                "jobs": [
-                    {"id": 1, "title": "Role", "absolute_url": "u", "content": "x"}
-                ]
-            },
+            json={"jobs": [{"id": 1, "title": "Role", "absolute_url": "u", "content": "x"}]},
         )
 
     captured_rows: list[dict] = []
@@ -266,10 +263,10 @@ async def test_label_override_replaces_company_name():
     async def fake_deactivate(**_kw):
         return 0
 
-    with _install_mock_transport_for_module(
-        "agents.jobs.sources", handler
-    ), patch.object(ingest, "_upsert_jobs", new=fake_upsert), patch.object(
-        ingest, "_deactivate_missing", new=fake_deactivate
+    with (
+        _install_mock_transport_for_module("agents.jobs.sources", handler),
+        patch.object(ingest, "_upsert_jobs", new=fake_upsert),
+        patch.object(ingest, "_deactivate_missing", new=fake_deactivate),
     ):
         result = await ingest.ingest_board(board)
 

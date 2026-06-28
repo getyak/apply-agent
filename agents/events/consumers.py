@@ -20,6 +20,7 @@ they share the global agents.events.bus.subscribe() generator. They are
 deliberately silent on failure — losing one event is acceptable; crashing
 the consumer tree because Redis hiccupped is not.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -192,9 +193,7 @@ async def dock_nudge_on_tailored(entry: dict) -> None:
         )
 
 
-async def _generic_pump(
-    topic: str, consumers: list[Callable[[dict], Awaitable[None]]]
-) -> None:
+async def _generic_pump(topic: str, consumers: list[Callable[[dict], Awaitable[None]]]) -> None:
     """Pump entries off ``topic`` into each consumer. Fans out errors."""
     try:
         async for entry in subscribe(topic):

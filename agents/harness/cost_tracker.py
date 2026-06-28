@@ -20,6 +20,7 @@ Why this also fixes audit: nodes that call ``model.ainvoke()`` directly
 never fires for them. The audit context manager reads from the same
 contextvar — works for both paths uniformly.
 """
+
 from __future__ import annotations
 
 from contextvars import ContextVar
@@ -38,6 +39,7 @@ from langchain_core.outputs import LLMResult
 class CallUsage:
     """One LLM call's reported usage. cents may be 0.0 if the call's model
     is not in MODELS (e.g. a non-OpenRouter test stub)."""
+
     model_id: str
     tokens_in: int
     tokens_out: int
@@ -54,6 +56,7 @@ class CostTally:
       - ``calls`` / ``total_*`` are *accumulated* over the whole task; audit
         reads them on context-manager exit.
     """
+
     calls: list[CallUsage] = field(default_factory=list)
     total_tokens: int = 0
     total_cost_cents: float = 0.0
@@ -73,9 +76,7 @@ class CostTally:
         return out
 
 
-_current_tally: ContextVar[CostTally | None] = ContextVar(
-    "relay_cost_tally", default=None
-)
+_current_tally: ContextVar[CostTally | None] = ContextVar("relay_cost_tally", default=None)
 
 
 def get_tally() -> CostTally | None:
@@ -140,9 +141,7 @@ class CostTrackingCallback(AsyncCallbackHandler):
         llm_output = response.llm_output or {}
         usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
         tokens_in += int(usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0) or 0)
-        tokens_out += int(
-            usage.get("completion_tokens", 0) or usage.get("output_tokens", 0) or 0
-        )
+        tokens_out += int(usage.get("completion_tokens", 0) or usage.get("output_tokens", 0) or 0)
         model_id = llm_output.get("model_name") or llm_output.get("model")
 
         if tokens_in == 0 and tokens_out == 0:
@@ -161,6 +160,7 @@ class CostTrackingCallback(AsyncCallbackHandler):
         if model_id:
             # Lazy import to avoid circular (llm imports nothing from harness).
             from agents.harness.llm import MODELS
+
             for spec in MODELS.values():
                 if spec.openrouter_id == model_id:
                     cents = round(
@@ -170,12 +170,14 @@ class CostTrackingCallback(AsyncCallbackHandler):
                     )
                     break
 
-        tally.add(CallUsage(
-            model_id=model_id or "unknown",
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
-            cents=cents,
-        ))
+        tally.add(
+            CallUsage(
+                model_id=model_id or "unknown",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cents=cents,
+            )
+        )
 
 
 # Module-level singleton; ChatOpenAI accepts a list of callbacks and this is

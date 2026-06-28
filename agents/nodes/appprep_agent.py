@@ -18,6 +18,7 @@ than raising. Workflow saga (delivery-loop-plan.md § 2.3) keeps the chain
 moving even when one stage misfires — a missing cover letter is recoverable;
 a crashed agent crashes the whole prepare.
 """
+
 from __future__ import annotations
 
 import json
@@ -237,8 +238,7 @@ async def refine_cover_letter(
 
         if not body or tone == "rejected_fabrication":
             return CoverLetter(
-                subject=subject
-                or f"Application for {role_title} — {candidate_name}",
+                subject=subject or f"Application for {role_title} — {candidate_name}",
                 body=existing_body,
                 tone="professional",
                 fallback=True,
@@ -250,8 +250,7 @@ async def refine_cover_letter(
             log.warning("appprep.refine_cover.fabrication_detected", entities=fab[:5])
             record.output_result = {"fabricated_entities": fab[:5]}
             return CoverLetter(
-                subject=subject
-                or f"Application for {role_title} — {candidate_name}",
+                subject=subject or f"Application for {role_title} — {candidate_name}",
                 body=existing_body,
                 tone="professional",
                 fallback=True,
@@ -303,8 +302,8 @@ SENSITIVE_TOKENS = (
     "race",
     "ethnicity",
     "gender",
-    "gender identity",   # round-13: Workday EEO panel uses this exact label
-    "sex",               # round-13: covers "legal sex", "sex assigned at birth"
+    "gender identity",  # round-13: Workday EEO panel uses this exact label
+    "sex",  # round-13: covers "legal sex", "sex assigned at birth"
     "disability",
     "veteran",
     "ssn",
@@ -315,18 +314,18 @@ SENSITIVE_TOKENS = (
     "passport",
     "national id",
     "national insurance",  # round-13: UK equivalent
-    "tax id",              # round-13: covers TIN / ITIN
-    "tin",                 # round-13
-    "date of birth",       # round-13
-    "dob",                 # round-13
-    "birth date",          # round-13
-    "birthdate",           # round-13
-    "marital status",      # round-13
+    "tax id",  # round-13: covers TIN / ITIN
+    "tin",  # round-13
+    "date of birth",  # round-13
+    "dob",  # round-13
+    "birth date",  # round-13
+    "birthdate",  # round-13
+    "marital status",  # round-13
     "sexual orientation",  # round-13
-    "religion",            # round-13
-    "driver's license",    # round-13
-    "drivers license",     # round-13: no-apostrophe variant
-    "license number",      # round-13
+    "religion",  # round-13
+    "driver's license",  # round-13
+    "drivers license",  # round-13: no-apostrophe variant
+    "license number",  # round-13
 )
 
 

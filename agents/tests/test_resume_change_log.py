@@ -3,6 +3,7 @@
 We keep these tests dependency-free (no DB, no LLM); change_log_guard is a
 pure function so the contract above resume_agent stays cheap to verify.
 """
+
 from __future__ import annotations
 
 from agents.nodes.resume_agent import change_log_guard

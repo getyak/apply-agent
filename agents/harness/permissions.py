@@ -9,13 +9,14 @@ Four levels (mirroring docs/architecture/agent-harness.md § Tool 权限系统):
   APPROVE  — interrupt() before execution, wait for user decision
   BLOCK    — not registered to tools list (handled at registry layer)
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from langgraph.types import interrupt
-
 
 PermissionLevel = Literal["AUTO", "NOTIFY", "APPROVE", "BLOCK"]
 
@@ -47,10 +48,16 @@ def requires_approval(action_name: str) -> Callable:
             d_type = (decision or {}).get("type") if isinstance(decision, dict) else None
             if d_type == "approve":
                 # Allow user to mutate args at approval time.
-                final_kwargs = {**kwargs, **(decision.get("kwargs", {}) if isinstance(decision, dict) else {})}
+                final_kwargs = {
+                    **kwargs,
+                    **(decision.get("kwargs", {}) if isinstance(decision, dict) else {}),
+                }
                 return fn(*args, **final_kwargs)
             if d_type == "reject":
-                return {"status": "rejected", "reason": (decision or {}).get("reason", "user cancelled")}
+                return {
+                    "status": "rejected",
+                    "reason": (decision or {}).get("reason", "user cancelled"),
+                }
             return {"status": "timeout", "reason": "no decision received"}
 
         wrapper.__relay_permission__ = "APPROVE"  # type: ignore[attr-defined]

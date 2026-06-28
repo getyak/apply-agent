@@ -5,6 +5,7 @@ _apply_suggestions_to_parsed / _find_bullet are pure functions. The LLM and DB
 paths (optimize_general / apply_suggestions / propose_bullet_edit) are covered
 by integration tests, not here.
 """
+
 from __future__ import annotations
 
 from agents.nodes.resume_agent import (

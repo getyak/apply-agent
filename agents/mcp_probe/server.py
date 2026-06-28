@@ -14,6 +14,7 @@ restart signal (§ 5 of the same doc).
 Set RELAY_MCP_PROBE_FAKE=1 to run against in-memory fixtures (no PG/LLM).
 This is what test_e2e.py uses to exercise the full stdio handshake in CI.
 """
+
 from __future__ import annotations
 
 import asyncio

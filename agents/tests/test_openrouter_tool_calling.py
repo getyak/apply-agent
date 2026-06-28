@@ -12,6 +12,7 @@ Run manually:
 Skipped automatically when the key is absent so unit-test CI doesn't
 fail in key-less environments.
 """
+
 from __future__ import annotations
 
 import os
@@ -70,12 +71,10 @@ async def test_tool_calling_through_openrouter(tier: str) -> None:
 
     messages = result["messages"]
     saw_tool_call = any(
-        isinstance(m, AIMessage) and bool(getattr(m, "tool_calls", None))
-        for m in messages
+        isinstance(m, AIMessage) and bool(getattr(m, "tool_calls", None)) for m in messages
     )
     assert saw_tool_call, (
-        f"{tier} tier did NOT emit a tool_call. "
-        f"Messages: {[type(m).__name__ for m in messages]}"
+        f"{tier} tier did NOT emit a tool_call. Messages: {[type(m).__name__ for m in messages]}"
     )
 
     # And the canned tool result string should be observable somewhere

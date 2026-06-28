@@ -12,6 +12,7 @@ What is NOT covered here (lands in T4 integration / smoke tests):
 - Real network fetch of ATS pages
 - Actual UPSERT into jobs table (smoke run with RELAY_PG_DSN set)
 """
+
 from __future__ import annotations
 
 import os
@@ -36,9 +37,7 @@ def _hermetic_env(monkeypatch):
 
 
 def test_detect_ats_greenhouse():
-    source, ext_id = jm._detect_ats(
-        "https://boards.greenhouse.io/synthetic/jobs/4071234"
-    )
+    source, ext_id = jm._detect_ats("https://boards.greenhouse.io/synthetic/jobs/4071234")
     assert source == "greenhouse"
     assert ext_id == "4071234"
 
@@ -72,7 +71,9 @@ def test_detect_ats_handles_url_without_external_id():
 
 def test_shape_greenhouse_from_fixture():
     body = (FIXTURE_DIR / "greenhouse_4071234.json").read_bytes()
-    raw = jm._parse_fixture(body, "greenhouse", "https://boards.greenhouse.io/synthetic/jobs/4071234")
+    raw = jm._parse_fixture(
+        body, "greenhouse", "https://boards.greenhouse.io/synthetic/jobs/4071234"
+    )
     assert raw.company == "Synthetic Labs"
     assert "Senior Software Engineer" in raw.role_title
     assert "Platform team" in raw.jd_text

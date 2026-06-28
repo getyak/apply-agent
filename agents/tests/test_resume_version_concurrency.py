@@ -13,6 +13,7 @@ What this locks down:
   per-user advisory lock must not become a global lock).
 - save_resume_version() returns the trigger-assigned version, not 0 or NULL.
 """
+
 from __future__ import annotations
 
 import asyncio

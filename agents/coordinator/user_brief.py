@@ -22,6 +22,7 @@ Each section is "best-effort": if a query fails or returns nothing, the
 section is omitted (not faked). The whole helper degrades to an empty
 brief if RELAY_PG_DSN is absent, so unit tests stay hermetic.
 """
+
 from __future__ import annotations
 
 import json
@@ -69,8 +70,7 @@ async def build_user_brief(user_id: UUID) -> str:
     return (
         "## What you remember about this user\n\n"
         "(This is read-only context. Don't paraphrase it back verbatim — "
-        "reference it naturally when the user's request connects.)\n\n"
-        + "\n\n".join(sections)
+        "reference it naturally when the user's request connects.)\n\n" + "\n\n".join(sections)
     )
 
 

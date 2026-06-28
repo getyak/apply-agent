@@ -8,6 +8,7 @@ Locks down:
   - Limit clamps to [1, 25]
   - Result items have stable shape (id, company, role_title, url, posted_date)
 """
+
 from __future__ import annotations
 
 from datetime import datetime

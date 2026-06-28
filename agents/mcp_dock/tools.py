@@ -22,6 +22,7 @@ User scoping:
   mirrors how the FastAPI ``/ask/stream`` endpoint binds the user from
   ``X-Relay-User-Id``.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -41,9 +42,7 @@ def _with_user(user_id: str | UUID):
     return tokens
 
 
-async def propose_plan(
-    user_id: str, user_goal: str, steps: list[dict[str, Any]]
-) -> dict[str, Any]:
+async def propose_plan(user_id: str, user_goal: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
     tokens = _with_user(user_id)
     try:
         return dock_tools.propose_plan.func(user_goal=user_goal, steps=steps)
@@ -51,21 +50,15 @@ async def propose_plan(
         dock_tools.reset_dock_context(tokens)
 
 
-async def recall_user_memory(
-    user_id: str, query: str, limit: int = 5
-) -> dict[str, Any]:
+async def recall_user_memory(user_id: str, query: str, limit: int = 5) -> dict[str, Any]:
     tokens = _with_user(user_id)
     try:
-        return await dock_tools.recall_user_memory.ainvoke(
-            {"query": query, "limit": limit}
-        )
+        return await dock_tools.recall_user_memory.ainvoke({"query": query, "limit": limit})
     finally:
         dock_tools.reset_dock_context(tokens)
 
 
-async def recall_past_applications(
-    user_id: str, limit: int = 10
-) -> dict[str, Any]:
+async def recall_past_applications(user_id: str, limit: int = 10) -> dict[str, Any]:
     tokens = _with_user(user_id)
     try:
         return await dock_tools.recall_past_applications.ainvoke({"limit": limit})
@@ -236,9 +229,7 @@ TOOL_CATALOG: list[dict[str, Any]] = [
     {
         "name": "start_mock_interview",
         "func": start_mock_interview,
-        "description": (
-            "Start a Mock interview session. Returns thread_id + first question."
-        ),
+        "description": ("Start a Mock interview session. Returns thread_id + first question."),
         "input_schema": {
             "type": "object",
             "properties": {

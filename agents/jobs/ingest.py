@@ -20,6 +20,7 @@ Boards are intentionally a small list of canonical AI / fintech / dev tools
 companies — these are the firms users are actually applying to. Expand the
 list as needed.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -68,7 +69,13 @@ async def ingest_board(board: Board) -> dict[str, Any]:
     """Pull one board and upsert into PG. Returns a summary dict."""
     fetcher = _DISPATCH.get(board.source)
     if fetcher is None:
-        return {"board": board.slug, "source": board.source, "fetched": 0, "upserted": 0, "error": "unknown_source"}
+        return {
+            "board": board.slug,
+            "source": board.source,
+            "fetched": 0,
+            "upserted": 0,
+            "error": "unknown_source",
+        }
 
     rows = await fetcher(board.slug)
     if board.label:
@@ -181,9 +188,7 @@ async def _upsert_jobs(rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
-async def _deactivate_missing(
-    *, source: str, company: str, present_external_ids: list[str]
-) -> int:
+async def _deactivate_missing(*, source: str, company: str, present_external_ids: list[str]) -> int:
     """Flip ``is_active=false`` for rows of this source+company NOT in this run.
 
     This is how we mark "the job was taken down on the upstream board" —

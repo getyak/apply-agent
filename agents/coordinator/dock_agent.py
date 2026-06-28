@@ -30,6 +30,7 @@ Notes on harness wiring:
   - Context window compaction is delegated to ``harness.context.maybe_compact``
     on each turn entry (server.ask_stream does this; not the agent).
 """
+
 from __future__ import annotations
 
 import json
@@ -51,9 +52,7 @@ from agents.harness.llm import pick_model
 log = structlog.get_logger("agents.coordinator.dock_agent")
 
 
-DOCK_PROMPT_PATH = (
-    Path(__file__).parent.parent / "prompts" / "coordinator" / "dock_agent.v1.md"
-)
+DOCK_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "coordinator" / "dock_agent.v1.md"
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 
 Used by all agents for low-risk read operations.
 """
+
 from __future__ import annotations
 
 import hashlib

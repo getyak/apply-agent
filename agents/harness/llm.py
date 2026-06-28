@@ -6,6 +6,7 @@ guards.py / context.py / audit.py inject pre/post hooks via `with_hooks(model)`.
 Pricing matches docs/architecture/agent-harness.md (USD per 1M tokens, cents
 on PG = total_cost_cents NUMERIC(10,4)).
 """
+
 from __future__ import annotations
 
 import os
@@ -21,16 +22,16 @@ ReasoningEffort = Literal["low", "medium", "high"]
 @dataclass(frozen=True)
 class ModelSpec:
     openrouter_id: str
-    cents_in_per_1m: float   # cents per 1M input tokens
+    cents_in_per_1m: float  # cents per 1M input tokens
     cents_out_per_1m: float  # cents per 1M output tokens
     tier: Tier
 
 
 # Source: docs/architecture/agent-harness.md § LLM 模型分层. USD → cents (×100).
 MODELS: dict[Tier, ModelSpec] = {
-    "heavy":   ModelSpec("deepseek/deepseek-v4-pro",   43.5,  87.0,  "heavy"),
-    "general": ModelSpec("z-ai/glm-4.7",               40.0, 175.0,  "general"),
-    "fast":    ModelSpec("deepseek/deepseek-v4-flash",  9.8,  19.6,  "fast"),
+    "heavy": ModelSpec("deepseek/deepseek-v4-pro", 43.5, 87.0, "heavy"),
+    "general": ModelSpec("z-ai/glm-4.7", 40.0, 175.0, "general"),
+    "fast": ModelSpec("deepseek/deepseek-v4-flash", 9.8, 19.6, "fast"),
 }
 
 

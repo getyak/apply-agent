@@ -8,6 +8,7 @@ Caller:
 Key shape: relay:events:{topic} as a Redis Stream.
 Payload shape: {"user_id": "...", "occurred_at": "<iso8601>", **topic-specific}
 """
+
 from __future__ import annotations
 
 import json

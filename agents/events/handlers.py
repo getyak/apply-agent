@@ -17,6 +17,7 @@ GET /api/resumes/:id/suggestions — no live server-push to the dock is required
 (A real-time "Vantage proactively pings you" channel needs dock infrastructure
 that doesn't exist yet; that's the one piece of §6.4 left for a later pass.)
 """
+
 from __future__ import annotations
 
 from typing import Any

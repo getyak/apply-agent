@@ -8,6 +8,7 @@ docs/architecture/error-handling.md §4.2.3).
 
 Caller: pytest auto-discovers this file under agents/tests/.
 """
+
 from __future__ import annotations
 
 from agents.harness.audit import redact_exception_text
@@ -104,7 +105,7 @@ def test_handles_empty_and_none_like():
 def test_handles_multiline_with_path_and_token():
     raw = (
         "Traceback (most recent call last):\n"
-        "  File \"/Users/relay/agents/api/server.py\", line 412\n"
+        '  File "/Users/relay/agents/api/server.py", line 412\n'
         "openai.AuthenticationError: api key sk-or-aaaabbbbccccddddeeeeffff0011223344556677 rejected"
     )
     out = redact_exception_text(raw)

@@ -23,6 +23,7 @@ The server requires the ``experimental`` extra (the MCP SDK is not in the
 default ``uv sync`` to keep the import-time cost off the API path). Install
 with ``uv sync --extra dev --extra experimental``.
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -15,15 +15,14 @@ This test:
 The README block is the SINGLE source of truth for the snippet — keeping it
 in markdown lets users copy-paste, and this test keeps it honest.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
 
-_README = (
-    Path(__file__).parent.parent.parent / "mcp_probe" / "README.md"
-).resolve()
+_README = (Path(__file__).parent.parent.parent / "mcp_probe" / "README.md").resolve()
 
 
 def _extract_first_json_block(text: str) -> str:

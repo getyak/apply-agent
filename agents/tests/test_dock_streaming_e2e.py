@@ -24,6 +24,7 @@ Invariants:
   4. Whatever ``get_checkpointer()`` returns implements BOTH the sync and
      the async checkpoint API (``aget_tuple`` / ``aput`` / ``alist``).
 """
+
 from __future__ import annotations
 
 import atexit
@@ -113,9 +114,7 @@ def fake_model(monkeypatch):
     enough to drive ``astream_events`` end-to-end and trip any async-only
     checkpointer hook on the way through.
     """
-    fake = _ToolBindableFakeChat(
-        responses=[AIMessage(content="Hi! I'm Vantage. How can I help?")]
-    )
+    fake = _ToolBindableFakeChat(responses=[AIMessage(content="Hi! I'm Vantage. How can I help?")])
 
     def _pick(*_args, **_kwargs):
         return fake
@@ -156,9 +155,7 @@ def _has_no_error_frame(events: list[dict]) -> None:
     assert errs == [], f"unexpected error frames: {errs}"
 
 
-def test_dock_streams_hi_through_real_graph(
-    client, fake_model, monkeypatch, caplog
-):
+def test_dock_streams_hi_through_real_graph(client, fake_model, monkeypatch, caplog):
     """``hi`` → real build_dock_graph + astream_events → SSE done.
 
     This was the failing case at traceId 68f6d78f. Locks down:
@@ -183,21 +180,13 @@ def test_dock_streams_hi_through_real_graph(
 
     # The legacy router test path can leak in if _DOCK_REACT_ENABLED slips
     # off — that path emits an ``intent`` frame. The dock branch does not.
-    assert "intent" not in kinds, (
-        f"dock branch wrongly fell through to legacy router: {kinds}"
-    )
+    assert "intent" not in kinds, f"dock branch wrongly fell through to legacy router: {kinds}"
 
-    failures = [
-        r for r in caplog.records if "dock_turn_failed" in r.getMessage()
-    ]
-    assert failures == [], (
-        f"dock_turn_failed was logged: {[r.getMessage() for r in failures]}"
-    )
+    failures = [r for r in caplog.records if "dock_turn_failed" in r.getMessage()]
+    assert failures == [], f"dock_turn_failed was logged: {[r.getMessage() for r in failures]}"
 
 
-def test_dock_streams_hi_on_resume_studio_thread(
-    client, fake_model, monkeypatch, caplog
-):
+def test_dock_streams_hi_on_resume_studio_thread(client, fake_model, monkeypatch, caplog):
     """Same as above, but for the scoped resume_studio thread (the actual
     surface where the bug was originally reported).
     """
@@ -221,12 +210,8 @@ def test_dock_streams_hi_on_resume_studio_thread(
     kinds = [e.get("event") for e in events]
     assert "done" in kinds, f"missing 'done' frame, got {kinds}"
 
-    failures = [
-        r for r in caplog.records if "dock_turn_failed" in r.getMessage()
-    ]
-    assert failures == [], (
-        f"dock_turn_failed was logged: {[r.getMessage() for r in failures]}"
-    )
+    failures = [r for r in caplog.records if "dock_turn_failed" in r.getMessage()]
+    assert failures == [], f"dock_turn_failed was logged: {[r.getMessage() for r in failures]}"
 
 
 def test_checkpointer_singleton_supports_async_api():

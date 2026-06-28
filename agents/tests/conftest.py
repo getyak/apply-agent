@@ -15,6 +15,7 @@ Why this file exists:
   snapshot is taken at conftest import (the earliest possible point), and
   an autouse fixture restores the leak-prone subset before each test.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,9 +30,7 @@ _LEAK_GUARD_KEYS = (
     "POSTGRES_URL",
     "RELAY_PG_DSN",
 )
-_PRISTINE_ENV: dict[str, str | None] = {
-    k: os.environ.get(k) for k in _LEAK_GUARD_KEYS
-}
+_PRISTINE_ENV: dict[str, str | None] = {k: os.environ.get(k) for k in _LEAK_GUARD_KEYS}
 
 
 # Tests that ASSERT a leak-prone env var is unset on entry. Any test whose
@@ -40,9 +39,7 @@ _PRISTINE_ENV: dict[str, str | None] = {
 # the post-load_dotenv state — what they expected before this conftest
 # existed). This keeps the surgical fix surgical: we only intervene for
 # the specific assertions that suffered from the order bug.
-_TESTS_NEEDING_PRISTINE_OPENROUTER = (
-    "test_prepare_application_sensitive_field_is_skipped",
-)
+_TESTS_NEEDING_PRISTINE_OPENROUTER = ("test_prepare_application_sensitive_field_is_skipped",)
 
 
 @pytest.fixture(autouse=True)

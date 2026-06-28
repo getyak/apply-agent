@@ -11,6 +11,7 @@ What this locks down (closes the round-15 P0-1 audit finding):
 No live LLM call — we drive the callback manually with a synthetic LLMResult,
 which is exactly what langchain emits from ChatOpenAI on_llm_end internally.
 """
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -153,9 +154,7 @@ async def test_audit_does_not_overwrite_caller_provided_totals():
         record.total_cost_cents = 1.23
         record.model_used = "cache"
         await COST_TRACKING_CALLBACK.on_llm_end(
-            _make_llm_result(
-                model_name="z-ai/glm-4.7", prompt_tokens=100, completion_tokens=50
-            )
+            _make_llm_result(model_name="z-ai/glm-4.7", prompt_tokens=100, completion_tokens=50)
         )
     assert record.total_tokens == 999
     assert record.total_cost_cents == 1.23

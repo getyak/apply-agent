@@ -11,6 +11,7 @@ Locks down the P1-2 fix:
 We monkeypatch agents.tools.auto.pg_query because that's the only PG
 touch — keeps the test hermetic without needing the integration harness.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -58,9 +59,7 @@ async def test_single_section_works(user_id):
             {
                 "id": uuid4(),
                 "version": 7,
-                "content": {
-                    "basics": {"name": "Alex Chen", "summary": "Backend at Stripe."}
-                },
+                "content": {"basics": {"name": "Alex Chen", "summary": "Backend at Stripe."}},
                 "track": "tailored",
                 "is_base": False,
                 "updated_at": None,

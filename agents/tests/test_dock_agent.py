@@ -10,6 +10,7 @@ contract:
   - DockEvent ``done`` fires when the chain completes
   - ``_translate_event`` is total over the relevant LangGraph event types
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -188,9 +189,7 @@ async def test_emit_partial_artifact_outside_runner_is_noop():
     """Called outside a LangGraph callback context, it must not raise."""
     # Should silently no-op (the helper catches RuntimeError from
     # adispatch_custom_event when there's no run_manager).
-    await dock_agent.emit_partial_artifact(
-        artifact_id="x", kind="resume_bullet", progress=0.5
-    )
+    await dock_agent.emit_partial_artifact(artifact_id="x", kind="resume_bullet", progress=0.5)
 
 
 def test_translate_event_tool_error():
@@ -256,6 +255,7 @@ def test_translate_event_unknown_returns_none():
 # ─── Inline-detail upgrade tests ─────────────────────────────────────
 # Reasoning passthrough + same-chunk text/reasoning + result truncation.
 
+
 def test_extract_reasoning_from_additional_kwargs():
     """OpenRouter primary path: chunk.additional_kwargs['reasoning']."""
 
@@ -263,10 +263,7 @@ def test_extract_reasoning_from_additional_kwargs():
         content = ""
         additional_kwargs = {"reasoning": "Let me think about this…"}
 
-    assert (
-        dock_agent._extract_reasoning(_Chunk())
-        == "Let me think about this…"
-    )
+    assert dock_agent._extract_reasoning(_Chunk()) == "Let me think about this…"
 
 
 def test_extract_reasoning_from_reasoning_content_fallback():
@@ -444,9 +441,7 @@ async def test_run_dock_turn_emits_plan_and_done(monkeypatch):
     )
     exec_call = AIMessage(
         content="",
-        tool_calls=[
-            {"name": "list_my_applications", "args": {"limit": 5}, "id": "tc-2"}
-        ],
+        tool_calls=[{"name": "list_my_applications", "args": {"limit": 5}, "id": "tc-2"}],
     )
     final = AIMessage(content="You have 1 application in flight.")
 
@@ -485,8 +480,7 @@ async def test_run_dock_turn_emits_plan_and_done(monkeypatch):
     kinds = [e.kind for e in events]
     assert "plan" in kinds, f"expected plan event, got {kinds}"
     assert any(
-        e.kind == "tool_end" and e.payload.get("tool") == "list_my_applications"
-        for e in events
+        e.kind == "tool_end" and e.payload.get("tool") == "list_my_applications" for e in events
     ), f"missing list_my_applications tool_end in {kinds}"
     assert "done" in kinds
 
@@ -558,12 +552,9 @@ async def test_run_dock_turn_propagates_recall_unavailable(monkeypatch):
         dock_tools.reset_dock_context(tokens)
 
     recall_ends = [
-        e for e in events
-        if e.kind == "tool_end" and e.payload.get("tool") == "recall_user_memory"
+        e for e in events if e.kind == "tool_end" and e.payload.get("tool") == "recall_user_memory"
     ]
-    assert recall_ends, (
-        f"missing recall_user_memory tool_end in {[e.kind for e in events]}"
-    )
+    assert recall_ends, f"missing recall_user_memory tool_end in {[e.kind for e in events]}"
     payload = recall_ends[-1].payload["result"]
     # Decoded back to a dict by _decode_tool_output.
     assert isinstance(payload, dict), payload

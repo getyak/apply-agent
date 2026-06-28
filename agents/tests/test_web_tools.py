@@ -13,6 +13,7 @@ We don't make any real network calls — httpx.MockTransport returns canned
 responses keyed by URL. This is the hermetic way (httpx-internal, no
 extra dep) per httpx docs.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch

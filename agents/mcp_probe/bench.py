@@ -13,6 +13,7 @@ Run:
 Output: stdout JSON + a Markdown table copy-pasteable into
 docs/architecture/agent-marketplace-deferred.md § 6.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,9 +81,7 @@ async def _bench_live(n: int) -> list[dict[str, Any]]:
     samples: list[dict[str, Any]] = []
     for i in range(n):
         t0 = time.perf_counter()
-        result = await agent.ainvoke(
-            {"messages": [("user", "Find me backend engineering jobs.")]}
-        )
+        result = await agent.ainvoke({"messages": [("user", "Find me backend engineering jobs.")]})
         dt = (time.perf_counter() - t0) * 1000
 
         tokens_in, tokens_out = 0, 0

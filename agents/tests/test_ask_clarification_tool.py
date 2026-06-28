@@ -8,6 +8,7 @@ Locks down:
   - Dict-shaped interrupt resume value coerced to str (text key)
   - Tool is registered in DOCK_TOOLS
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch

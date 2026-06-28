@@ -3,6 +3,7 @@
 Hermetic: monkeypatch publish() so we don't need Redis; verify the consumers
 module wires the same topic.
 """
+
 from __future__ import annotations
 
 from uuid import uuid4

@@ -23,6 +23,7 @@ so CI / eval gates can run hermetically.
 
 Schema reference: infra/postgres/migrations/005_jobs.sql
 """
+
 from __future__ import annotations
 
 import ipaddress as _ipaddress
@@ -246,9 +247,7 @@ def _parse_fixture(body: bytes, source: ATSSource, url: str) -> _RawJD:
     return _shape_html(decoded, body, fallback_url=url)
 
 
-async def _fetch_greenhouse(
-    external_id: str, url: str, client: httpx.AsyncClient | None
-) -> _RawJD:
+async def _fetch_greenhouse(external_id: str, url: str, client: httpx.AsyncClient | None) -> _RawJD:
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     company = parts[0] if parts else "unknown"
@@ -274,9 +273,7 @@ def _shape_greenhouse(data: dict[str, Any], body: bytes) -> _RawJD:
     )
 
 
-async def _fetch_lever(
-    external_id: str, url: str, client: httpx.AsyncClient | None
-) -> _RawJD:
+async def _fetch_lever(external_id: str, url: str, client: httpx.AsyncClient | None) -> _RawJD:
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     company = parts[0] if parts else "unknown"
@@ -330,7 +327,6 @@ def _company_from_url(url: str) -> str:
     """Last-ditch company name from path: hosts like jobs.ashbyhq.com/{co}/..."""
     parts = [p for p in urlparse(url).path.split("/") if p]
     return parts[0].replace("-", " ").title() if parts else "Unknown"
-
 
 
 # JD3+JD5 (round-7) — round-7 audit flagged two reliability/security gaps
@@ -401,16 +397,12 @@ async def _http_get(url: str, client: httpx.AsyncClient | None) -> bytes:
         try:
             n = int(declared)
             if n > _JD_MAX_BYTES:
-                raise JDFetchError(
-                    f"refusing {url}: content-length {n} > {_JD_MAX_BYTES} bytes"
-                )
+                raise JDFetchError(f"refusing {url}: content-length {n} > {_JD_MAX_BYTES} bytes")
         except ValueError:
             pass  # bad header, fall through to the post-hoc check
     body = resp.content
     if len(body) > _JD_MAX_BYTES:
-        raise JDFetchError(
-            f"refusing {url}: body {len(body)} > {_JD_MAX_BYTES} bytes"
-        )
+        raise JDFetchError(f"refusing {url}: body {len(body)} > {_JD_MAX_BYTES} bytes")
     return body
 
 

@@ -21,6 +21,7 @@ Design notes
 
 Schema reference: infra/postgres/migrations/014_ttar_metrics.up.sql
 """
+
 from __future__ import annotations
 
 import contextlib

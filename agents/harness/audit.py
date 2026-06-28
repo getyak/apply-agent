@@ -6,6 +6,7 @@ wrapper in agents/harness/permissions.py.
 
 Schema reference: infra/postgres/migrations/010_agents.sql — agent_tasks.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,9 +36,7 @@ log = structlog.get_logger("agents.audit")
 _AUDIT_ERROR_MAX_CHARS = 500
 _AUDIT_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
 _AUDIT_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_\-]{32,}\b")
-_AUDIT_DSN_RE = re.compile(
-    r"\b(?:postgresql|postgres|redis|mongodb)://[^\s]+", re.IGNORECASE
-)
+_AUDIT_DSN_RE = re.compile(r"\b(?:postgresql|postgres|redis|mongodb)://[^\s]+", re.IGNORECASE)
 
 
 def _redact_exception_text(raw: str) -> str:
@@ -140,6 +139,7 @@ async def _insert(record: AuditRecord) -> None:
 def psycopg_dumps(obj: Any) -> str:
     """JSON-stringify for JSONB columns."""
     import json
+
     return json.dumps(obj, default=str)
 
 
