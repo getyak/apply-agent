@@ -55,7 +55,7 @@ jobs:
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -104,7 +104,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: 20 }
       - run: npm install -g promptfoo@latest
@@ -126,7 +126,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
