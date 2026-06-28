@@ -12,6 +12,7 @@ Currently:
 UX detail (vantage-ui-mapping.md § 1.5): each build-from-scratch question is
 paired with chip candidate answers to avoid blank-page anxiety.
 """
+
 from __future__ import annotations
 
 import os
@@ -61,9 +62,7 @@ async def prefill_from_profile(state: BuildResumeState) -> dict[str, Any]:
     try:
         from agents.tools.auto import pg_query
 
-        prefs_rows = await pg_query(
-            "SELECT preferences FROM users WHERE id = %s", (str(user_id),)
-        )
+        prefs_rows = await pg_query("SELECT preferences FROM users WHERE id = %s", (str(user_id),))
         if prefs_rows:
             prefs = prefs_rows[0].get("preferences") or {}
             if isinstance(prefs, str):
@@ -360,7 +359,9 @@ async def _customize_resume_node(state: PrepareApplicationState) -> dict[str, An
             job_id=job_id,
         )
     except Exception as exc:  # noqa: BLE001 — saga catches all
-        return _stage_failed(state, "customize_resume", str(exc), elapsed_ms_=time.perf_counter() - started)
+        return _stage_failed(
+            state, "customize_resume", str(exc), elapsed_ms_=time.perf_counter() - started
+        )
 
     fab_attempts = int(state.get("fabrication_attempts", 0))
     if not result.get("ok"):
@@ -531,10 +532,14 @@ def build_prepare_application_graph():
     g.add_node("finalize", lambda s: {})  # placeholder; finalization happens outside the graph
 
     g.set_entry_point("parse_jd")
-    g.add_conditional_edges("parse_jd", _branch_after_parse, {
-        "customize_resume": "customize_resume",
-        "finalize": "finalize",
-    })
+    g.add_conditional_edges(
+        "parse_jd",
+        _branch_after_parse,
+        {
+            "customize_resume": "customize_resume",
+            "finalize": "finalize",
+        },
+    )
     g.add_edge("customize_resume", "cover_letter")
     g.add_edge("cover_letter", "form_answers")
     g.add_edge("form_answers", "finalize")
@@ -601,12 +606,16 @@ async def run_prepare_application(
 
     return {
         "application_id": str(app_id),
-        "status": "review" if (final_state.get("stage_status") or {}).get("parse_jd") == "ok" else "draft",
+        "status": "review"
+        if (final_state.get("stage_status") or {}).get("parse_jd") == "ok"
+        else "draft",
         "stage_status": final_state.get("stage_status") or {},
         "cover_letter": final_state.get("cover_letter"),
         "form_answers": final_state.get("form_answers"),
         "tailored_resume_id": (
-            str(final_state["tailored_resume_id"]) if final_state.get("tailored_resume_id") else None
+            str(final_state["tailored_resume_id"])
+            if final_state.get("tailored_resume_id")
+            else None
         ),
         "company": final_state.get("company"),
         "role_title": final_state.get("role_title"),

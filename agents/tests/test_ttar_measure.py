@@ -11,10 +11,11 @@ No PG required — the persist() path under RELAY_PG_DSN is exercised in the
 T3 integration tests once the prepare workflow lands. Here we lock down the
 in-memory record + the dsn-absent log fallback.
 """
+
 from __future__ import annotations
 
+import asyncio
 import os
-import time
 from uuid import uuid4
 
 import pytest
@@ -38,7 +39,14 @@ async def test_record_to_jsonb_shape_matches_migration_014():
 
     blob = rec.to_jsonb()
     # Required keys per migration 014 schema.
-    for key in ("started_at", "completed_at", "latency_ms", "success", "stages", "fabrication_attempts"):
+    for key in (
+        "started_at",
+        "completed_at",
+        "latency_ms",
+        "success",
+        "stages",
+        "fabrication_attempts",
+    ):
         assert key in blob, f"missing required key: {key}"
     assert blob["stages"]["parse_jd_ms"] == 2400
     assert blob["stages"]["customize_ms"] == 18000
@@ -51,9 +59,12 @@ async def test_record_to_jsonb_shape_matches_migration_014():
 async def test_timing_context_records_elapsed_ms():
     rec = TTARRecord(application_id=uuid4())
     with rec.timing("parse_jd_ms"):
-        # Sleep 20ms — should round to ≥ 15ms after timer overhead.
-        time.sleep(0.02)
-    assert rec.stages["parse_jd_ms"] >= 15
+        # Sleep 50ms — generous floor so a fast CI runner (GH Actions hosted)
+        # never clocks the sleep below the assertion. The ≥ 40 guard still
+        # catches "timer didn't run at all" without flaking on jitter.
+        # Use asyncio.sleep (this is an async test fn — ruff ASYNC251).
+        await asyncio.sleep(0.05)
+    assert rec.stages["parse_jd_ms"] >= 40
     # And not absurdly high — guard against unit confusion (sec vs ms).
     assert rec.stages["parse_jd_ms"] < 500
 
@@ -62,7 +73,7 @@ async def test_measure_ttar_success_path():
     app_id = uuid4()
     async with measure_ttar(app_id) as t:
         with t.timing("parse_jd_ms"):
-            time.sleep(0.01)
+            await asyncio.sleep(0.01)
         t.fabrication_attempts = 0
         t.success = True
     # After exit the record should reflect what we set inside.

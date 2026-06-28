@@ -15,6 +15,7 @@ Marks:
   smoke — costs real OpenRouter tokens (~$0.001 per run). CI deselects via
           `-m "not smoke"`; developers opt in with OPENROUTER_API_KEY set.
 """
+
 from __future__ import annotations
 
 import os
@@ -31,11 +32,22 @@ pytest.importorskip(
     reason="langchain-mcp-adapters not installed — install the experimental extra",
 )
 
+
+def _has_real_openrouter_key() -> bool:
+    """Same logic as test_openrouter_tool_calling._has_real_openrouter_key:
+    CI's dummy-for-unit-tests placeholder counts as 'absent' so we don't
+    actually hit OpenRouter and 401."""
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key:
+        return False
+    return not key.lower().startswith(("dummy", "test", "fake", "placeholder"))
+
+
 pytestmark = [
     pytest.mark.smoke,
     pytest.mark.skipif(
-        not os.environ.get("OPENROUTER_API_KEY"),
-        reason="OPENROUTER_API_KEY not set — live e2e needs OpenRouter",
+        not _has_real_openrouter_key(),
+        reason="OPENROUTER_API_KEY not set or is a dummy/test placeholder — live e2e needs real OpenRouter",
     ),
 ]
 
@@ -88,11 +100,7 @@ async def test_live_react_agent_calls_mcp_tool() -> None:
     )
 
     messages = result["messages"]
-    tool_calls = [
-        m
-        for m in messages
-        if getattr(m, "tool_calls", None) and len(m.tool_calls) > 0
-    ]
+    tool_calls = [m for m in messages if getattr(m, "tool_calls", None) and len(m.tool_calls) > 0]
     assert tool_calls, f"agent never called a tool. messages={messages!r}"
 
     final = messages[-1]

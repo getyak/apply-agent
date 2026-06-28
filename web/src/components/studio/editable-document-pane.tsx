@@ -125,6 +125,7 @@ export function EditableDocumentPane({
   const conflictFetchRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
     if (!conflict || !resumeId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clears cached "their copy" when the external conflict signal disappears; this is sync-with-external-state, the rule's documented allowed case.
       setTheirCopy(null);
       conflictFetchRef.current = null;
       return;

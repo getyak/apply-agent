@@ -20,6 +20,7 @@ so unit tests can monkeypatch the single seam. Every rewrite suggestion is
 passed through resume_agent.fabrication_guard's per-bullet vocabulary
 (`_has_new_quantitative_token`) before it can be marked `safe`.
 """
+
 from __future__ import annotations
 
 import json

@@ -17,6 +17,7 @@ APPROVE-grade ops (agent-harness.md §HITL) and the web UI doesn't
 surface them either, so leaving them out keeps the agent surface and
 the human surface in sync.
 """
+
 from __future__ import annotations
 
 import os
@@ -130,7 +131,7 @@ async def move_application(
 
     sql = f"""
         UPDATE application_drafts
-        SET {', '.join(sets)}
+        SET {", ".join(sets)}
         WHERE id = %s AND user_id = %s
         RETURNING id, status, submitted_at, submitted_via
     """

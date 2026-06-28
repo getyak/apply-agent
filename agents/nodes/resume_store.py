@@ -7,6 +7,7 @@ yields nothing, never another user's data.
 
 Backs docs/design/resume-original-vs-optimized-vibe-design.md §4.
 """
+
 from __future__ import annotations
 
 import json
@@ -184,8 +185,17 @@ async def get_suggestion(suggestion_id: UUID, user_id: UUID) -> dict[str, Any] |
     if not row:
         return None
     cols = (
-        "id", "source_resume_id", "bullet_stable_id", "section", "change_type",
-        "before_text", "after_text", "rationale", "risk_level", "status", "proposed_by",
+        "id",
+        "source_resume_id",
+        "bullet_stable_id",
+        "section",
+        "change_type",
+        "before_text",
+        "after_text",
+        "rationale",
+        "risk_level",
+        "status",
+        "proposed_by",
     )
     rec = dict(zip(cols, row, strict=False))
     rec["id"] = str(rec["id"])
@@ -212,8 +222,16 @@ async def list_suggestions(
             await cur.execute(sql, tuple(params))
             rows = await cur.fetchall()
     cols = (
-        "id", "bullet_stable_id", "section", "change_type", "before_text",
-        "after_text", "rationale", "risk_level", "status", "proposed_by",
+        "id",
+        "bullet_stable_id",
+        "section",
+        "change_type",
+        "before_text",
+        "after_text",
+        "rationale",
+        "risk_level",
+        "status",
+        "proposed_by",
     )
     out = []
     for row in rows:

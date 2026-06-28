@@ -18,6 +18,7 @@ graph never passed a pre_model_hook so post_model_hook would flip
 dock sessions could grow context unboundedly. ``dock_pre_model_hook``
 closes the loop.
 """
+
 from __future__ import annotations
 
 from typing import Any

@@ -18,6 +18,7 @@ for the rest of the pytest process. Other tests (notably
 unset on entry. We snapshot the env BEFORE the import and atexit-restore
 it so collecting this module doesn't poison the suite.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -127,28 +128,18 @@ def test_owns_dock_thread_ask_vantage_ok():
 
 def test_owns_dock_thread_ask_vantage_mismatch():
     u, other = uuid4(), uuid4()
-    assert (
-        srv._owns_dock_thread(thread_id=f"ask_vantage:{other}", user_id=u) is False
-    )
+    assert srv._owns_dock_thread(thread_id=f"ask_vantage:{other}", user_id=u) is False
 
 
 def test_owns_dock_thread_resume_studio_ok():
     u = uuid4()
     root = uuid4()
-    assert (
-        srv._owns_dock_thread(thread_id=f"resume_studio:{u}:{root}", user_id=u)
-        is True
-    )
+    assert srv._owns_dock_thread(thread_id=f"resume_studio:{u}:{root}", user_id=u) is True
 
 
 def test_owns_dock_thread_build_resume_mismatch():
     u, other = uuid4(), uuid4()
-    assert (
-        srv._owns_dock_thread(
-            thread_id=f"build_resume:{other}:{uuid4()}", user_id=u
-        )
-        is False
-    )
+    assert srv._owns_dock_thread(thread_id=f"build_resume:{other}:{uuid4()}", user_id=u) is False
 
 
 def test_owns_dock_thread_rejects_mock_threads():
@@ -214,9 +205,11 @@ def test_ask_stream_legacy_path_runs(client, monkeypatch):
     async def fake_dispatch(*args, **kwargs):
         return {"agent": "coordinator", "action": "reply", "text": "hi"}
 
-    with patch("agents.api.server.classify_intent", new=fake_classify), patch(
-        "agents.api.server.dispatch", new=fake_dispatch
-    ), patch("agents.api.server.persist_turn", new=AsyncMock()):
+    with (
+        patch("agents.api.server.classify_intent", new=fake_classify),
+        patch("agents.api.server.dispatch", new=fake_dispatch),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
+    ):
         resp = tc.post("/ask/stream", json={"message": "hello"})
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
@@ -237,9 +230,7 @@ def test_ask_stream_dock_branch_runs(client, monkeypatch):
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
         yield _make_dock_event("plan", {"plan": plan})
-        yield _make_dock_event(
-            "tool_start", {"tool": "list_my_applications", "args": {}}
-        )
+        yield _make_dock_event("tool_start", {"tool": "list_my_applications", "args": {}})
         yield _make_dock_event(
             "tool_end",
             {
@@ -250,8 +241,9 @@ def test_ask_stream_dock_branch_runs(client, monkeypatch):
         yield _make_dock_event("assistant_delta", {"text": "Got it."})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post(
             "/ask/stream",
@@ -291,8 +283,9 @@ def test_ask_stream_dock_emits_tool_trace_on_tool_end(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my apps"})
     assert resp.status_code == 200
@@ -335,8 +328,9 @@ def test_ask_stream_dock_tool_trace_hides_system_tools(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my apps"})
     assert resp.status_code == 200
@@ -355,13 +349,12 @@ def test_ask_stream_dock_tool_trace_on_error(client, monkeypatch):
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
-        yield _make_dock_event(
-            "tool_error", {"tool": "find_jobs", "error": "OpenRouter timeout"}
-        )
+        yield _make_dock_event("tool_error", {"tool": "find_jobs", "error": "OpenRouter timeout"})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "find jobs"})
     assert resp.status_code == 200
@@ -380,12 +373,8 @@ def test_ask_stream_dock_emits_narrator_frame(client, monkeypatch):
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
-        yield _make_dock_event(
-            "narrator", {"text": "Looking up your last Stripe applications."}
-        )
-        yield _make_dock_event(
-            "tool_start", {"tool": "list_my_applications", "args": {}}
-        )
+        yield _make_dock_event("narrator", {"text": "Looking up your last Stripe applications."})
+        yield _make_dock_event("tool_start", {"tool": "list_my_applications", "args": {}})
         yield _make_dock_event(
             "tool_end",
             {
@@ -395,8 +384,9 @@ def test_ask_stream_dock_emits_narrator_frame(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post(
             "/ask/stream",
@@ -410,9 +400,7 @@ def test_ask_stream_dock_emits_narrator_frame(client, monkeypatch):
     # Narrator must come BEFORE the execution tool's "thinking" spinner.
     # gen() emits a leading "thinking: coordinator" envelope first, so we
     # compare against the *applications* spinner specifically.
-    narrator_idx = next(
-        i for i, e in enumerate(events) if e.get("event") == "narrator"
-    )
+    narrator_idx = next(i for i, e in enumerate(events) if e.get("event") == "narrator")
     exec_thinking_idx = next(
         i
         for i, e in enumerate(events)
@@ -430,8 +418,9 @@ def test_ask_stream_dock_empty_narrator_dropped(client, monkeypatch):
         yield _make_dock_event("narrator", {"text": ""})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "anything"})
     assert resp.status_code == 200
@@ -456,12 +445,12 @@ def test_ask_stream_dock_fast_path_skips_react(client, monkeypatch):
         if False:  # pragma: no cover
             yield None
 
-    with patch("agents.api.server.dispatch", new=fake_dispatch), patch.object(
-        dock_agent, "run_dock_turn", new=fake_run_dock_turn
-    ), patch("agents.api.server.persist_turn", new=AsyncMock()):
-        resp = tc.post(
-            "/ask/stream", json={"message": "list my applications please"}
-        )
+    with (
+        patch("agents.api.server.dispatch", new=fake_dispatch),
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
+    ):
+        resp = tc.post("/ask/stream", json={"message": "list my applications please"})
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
     types = [e.get("event") for e in events]
@@ -481,13 +470,12 @@ def test_ask_stream_dock_branch_handles_tool_error(client, monkeypatch):
 
     async def fake_run_dock_turn(**_kw):
         yield _make_dock_event("tool_start", {"tool": "find_jobs", "args": {}})
-        yield _make_dock_event(
-            "tool_error", {"tool": "find_jobs", "error": "timeout"}
-        )
+        yield _make_dock_event("tool_error", {"tool": "find_jobs", "error": "timeout"})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "find me roles"})
     assert resp.status_code == 200
@@ -528,9 +516,7 @@ def test_tool_result_summary_uses_items_length_when_no_count():
 
 
 def test_tool_result_summary_needs_args_envelope():
-    out = srv._tool_result_summary(
-        {"status": "needs_args", "agent": "resume_agent"}
-    )
+    out = srv._tool_result_summary({"status": "needs_args", "agent": "resume_agent"})
     assert out == "needs_args · resume_agent"
 
 
@@ -624,9 +610,7 @@ def test_ask_stream_dock_tags_frames_with_plan_step(client, monkeypatch):
                 }
             },
         )
-        yield _make_dock_event(
-            "tool_start", {"tool": "list_my_applications", "args": {}}
-        )
+        yield _make_dock_event("tool_start", {"tool": "list_my_applications", "args": {}})
         yield _make_dock_event(
             "tool_end",
             {
@@ -636,8 +620,9 @@ def test_ask_stream_dock_tags_frames_with_plan_step(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my apps"})
     assert resp.status_code == 200
@@ -645,9 +630,7 @@ def test_ask_stream_dock_tags_frames_with_plan_step(client, monkeypatch):
 
     # The applications "thinking" event must carry the plan_step.
     apps_thinking = next(
-        e
-        for e in events
-        if e.get("event") == "thinking" and e.get("agent") == "applications"
+        e for e in events if e.get("event") == "thinking" and e.get("agent") == "applications"
     )
     assert apps_thinking["plan_step"] == "fetch_apps"
 
@@ -687,8 +670,9 @@ def test_ask_stream_dock_forwards_partial_artifact(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "tailor it"})
     assert resp.status_code == 200
@@ -710,13 +694,12 @@ def test_ask_stream_dock_partial_without_artifact_id_dropped(client, monkeypatch
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
-        yield _make_dock_event(
-            "partial_artifact", {"kind": "resume_bullet", "progress": 0.5}
-        )
+        yield _make_dock_event("partial_artifact", {"kind": "resume_bullet", "progress": 0.5})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "tailor"})
     events = _parse_sse(resp.text)
@@ -729,9 +712,7 @@ def test_ask_stream_dock_no_plan_omits_plan_step(client, monkeypatch):
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
-        yield _make_dock_event(
-            "tool_start", {"tool": "list_my_applications", "args": {}}
-        )
+        yield _make_dock_event("tool_start", {"tool": "list_my_applications", "args": {}})
         yield _make_dock_event(
             "tool_end",
             {
@@ -741,8 +722,9 @@ def test_ask_stream_dock_no_plan_omits_plan_step(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my apps"})
     assert resp.status_code == 200
@@ -752,6 +734,7 @@ def test_ask_stream_dock_no_plan_omits_plan_step(client, monkeypatch):
 
 
 # ─── Inline-detail upgrade SSE protocol tests ──────────────────────────
+
 
 def test_ask_stream_dock_forwards_reasoning_event(client, monkeypatch):
     """reasoning_delta DockEvent must surface as `event: reasoning` on the wire."""
@@ -764,8 +747,9 @@ def test_ask_stream_dock_forwards_reasoning_event(client, monkeypatch):
         yield _make_dock_event("assistant_delta", {"text": "Sure thing."})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "anything"})
     assert resp.status_code == 200
@@ -786,8 +770,9 @@ def test_ask_stream_dock_empty_reasoning_is_dropped(client, monkeypatch):
         yield _make_dock_event("reasoning_delta", {"text": ""})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "anything"})
     assert resp.status_code == 200
@@ -814,16 +799,16 @@ def test_ask_stream_dock_tool_start_carries_tool_and_args(client, monkeypatch):
         )
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my apps"})
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
     thinking = [e for e in events if e.get("event") == "thinking"]
     assert any(
-        t.get("tool") == "list_my_applications"
-        and t.get("args") == {"status": "open"}
+        t.get("tool") == "list_my_applications" and t.get("args") == {"status": "open"}
         for t in thinking
     )
 
@@ -836,13 +821,12 @@ def test_ask_stream_dock_tool_trace_includes_result(client, monkeypatch):
     result_body = {"status": "ok", "items": [{"id": "j1"}], "count": 1}
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[dock_agent.DockEvent]:
-        yield _make_dock_event(
-            "tool_end", {"tool": "list_my_applications", "result": result_body}
-        )
+        yield _make_dock_event("tool_end", {"tool": "list_my_applications", "result": result_body})
         yield _make_dock_event("done", {})
 
-    with patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn), patch(
-        "agents.api.server.persist_turn", new=AsyncMock()
+    with (
+        patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my apps"})
     assert resp.status_code == 200
@@ -868,11 +852,12 @@ def test_ask_stream_rejects_foreign_thread_id(client):
     )
     assert resp.status_code == 403
     body = resp.json()
-    # The FastAPI exception envelope nests under "message" (not "detail")
-    # via the global http_exception handler installed in server.py.
-    assert "not yours" in body.get("message", "") or "not yours" in body.get(
-        "detail", ""
-    )
+    # Envelope v2 (docs/architecture/error-handling.md §2.1) nests every
+    # error field under `error`. We accept the legacy top-level shape as
+    # a fallback only for the brief migration window.
+    err = body.get("error") or body
+    msg = err.get("message", "") if isinstance(err, dict) else ""
+    assert "not yours" in msg, body
 
 
 def test_ask_stream_rejects_unknown_thread_shape(client):
@@ -900,9 +885,11 @@ def test_ask_stream_accepts_own_thread_id(client, monkeypatch):
     async def fake_dispatch(*args, **kwargs):
         return {"agent": "coordinator", "action": "reply", "text": "hi"}
 
-    with patch("agents.api.server.classify_intent", new=fake_classify), patch(
-        "agents.api.server.dispatch", new=fake_dispatch
-    ), patch("agents.api.server.persist_turn", new=AsyncMock()):
+    with (
+        patch("agents.api.server.classify_intent", new=fake_classify),
+        patch("agents.api.server.dispatch", new=fake_dispatch),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
+    ):
         resp = tc.post(
             "/ask/stream",
             json={"message": "hello"},
@@ -924,8 +911,10 @@ def test_ask_stream_no_header_still_works(client, monkeypatch):
     async def fake_dispatch(*args, **kwargs):
         return {"agent": "coordinator", "action": "reply", "text": "hi"}
 
-    with patch("agents.api.server.classify_intent", new=fake_classify), patch(
-        "agents.api.server.dispatch", new=fake_dispatch
-    ), patch("agents.api.server.persist_turn", new=AsyncMock()):
+    with (
+        patch("agents.api.server.classify_intent", new=fake_classify),
+        patch("agents.api.server.dispatch", new=fake_dispatch),
+        patch("agents.api.server.persist_turn", new=AsyncMock()),
+    ):
         resp = tc.post("/ask/stream", json={"message": "hello"})
     assert resp.status_code == 200

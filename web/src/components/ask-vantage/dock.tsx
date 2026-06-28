@@ -264,9 +264,11 @@ function AgentCardRow({ id }: { id: string }) {
   });
   // Auto-expand once we cross the "did this hang?" threshold. Don't auto-
   // collapse afterwards — once the user sees the metadata they probably
-  // want it to stay visible. Manual toggle still wins.
+  // want it to stay visible. Manual toggle still wins. This effect syncs
+  // an "is the card open?" UI state with the external elapsed-clock signal.
   useEffect(() => {
     if (running && elapsedMs >= AUTO_EXPAND_AFTER_MS) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync with external elapsed-clock crossing AUTO_EXPAND_AFTER_MS.
       setOpen((cur) => cur || true);
     }
   }, [running, elapsedMs]);
@@ -2245,6 +2247,13 @@ export function AskVantageDock() {
   function submit() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
+    // Round-12 audit: a 1-char body with no attachments (the classic "hji"
+    // slip) used to burn a full LangGraph turn just to apologize. Reject
+    // it on the client so the user can keep typing instead of having to
+    // wait for an "I'm not sure what you mean" round-trip. The threshold
+    // is intentionally tiny — anything ≥ 2 chars (e.g. "hi", "ok") still
+    // gets through, which keeps Ask Vantage feeling permissive.
+    if (text && text.length < 2 && attachments.length === 0) return;
     // Empty body but with attachments? Use a friendly default verb so the
     // agent has something to reason about.
     const finalPrompt = text || t("reviewAttachments");

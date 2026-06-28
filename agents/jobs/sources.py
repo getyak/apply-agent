@@ -24,6 +24,7 @@ Adding a new source: write a fetcher coroutine + register its slug in
 ingest.DEFAULT_BOARDS. Schema-unique on (source, external_id) makes
 re-runs idempotent.
 """
+
 from __future__ import annotations
 
 import re
@@ -176,11 +177,11 @@ async def fetch_lever(board_slug: str) -> list[dict[str, Any]]:
         company = board_slug.replace("-", " ").title()
         desc = p.get("descriptionPlain") or _strip_html(p.get("description") or "")
         lists_text_parts: list[str] = []
-        for l in p.get("lists", []) or []:
-            if not isinstance(l, dict):
+        for entry in p.get("lists", []) or []:
+            if not isinstance(entry, dict):
                 continue
-            heading = (l.get("text") or "").strip()
-            inner = _strip_html(l.get("content") or "")
+            heading = (entry.get("text") or "").strip()
+            inner = _strip_html(entry.get("content") or "")
             if heading or inner:
                 lists_text_parts.append(f"{heading}: {inner}".strip(": "))
         jd = (desc + "\n\n" + "\n".join(lists_text_parts)).strip()[:_JD_TEXT_CAP_CHARS]

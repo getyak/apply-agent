@@ -35,6 +35,9 @@
  */
 
 import { spawn } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
 const BASE_URL = args["base-url"] ?? "http://127.0.0.1:3000";
@@ -66,6 +69,12 @@ async function probeSsr(route) {
 async function probeHydration(route) {
   const url = new URL(route, BASE_URL).toString();
   return new Promise((resolve) => {
+    // `bunx playwright -e <code>` doesn't work — playwright's CLI doesn't
+    // accept `-e`. Write the probe to a temp file and run it under npx with
+    // playwright on demand (`--package=playwright`). npx installs playwright
+    // into a cache dir, downloads the bundled chromium, then runs node on
+    // the script with NODE_PATH pointing at that cache so `require("playwright")`
+    // resolves. This is the standard "ephemeral playwright" recipe.
     const code = `
       const { chromium } = require("playwright");
       (async () => {
@@ -80,15 +89,28 @@ async function probeHydration(route) {
         // Give React a beat to flush its first hydrate pass.
         await page.waitForLoadState("networkidle", { timeout: ${TIMEOUT_MS} }).catch(() => {});
         const hydrated = await page.evaluate(() => {
-          const btn = document.querySelector("button");
-          if (!btn) return { ok: false, reason: "no <button> on page" };
           // React injects a __reactFiber\$randomKey + __reactProps\$randomKey
           // on every host DOM node it owns. Either is sufficient evidence
-          // that the client took ownership of the SSR'd markup.
-          const keys = Object.keys(btn).filter((k) =>
-            k.startsWith("__reactFiber") || k.startsWith("__reactProps"),
-          );
-          return { ok: keys.length > 0, reason: keys.length ? null : "no fiber keys" };
+          // that the client took ownership of the SSR'd markup. Walk a
+          // broad set of candidate nodes — header pages have <button>,
+          // legal/privacy pages don't, so fall through to <main>/<a>/<h1>/body.
+          const candidates = [
+            document.querySelector("button"),
+            document.querySelector("main"),
+            document.querySelector("a"),
+            document.querySelector("h1"),
+            document.body,
+          ].filter(Boolean);
+          if (candidates.length === 0) {
+            return { ok: false, reason: "no candidate element on page" };
+          }
+          for (const node of candidates) {
+            const keys = Object.keys(node).filter((k) =>
+              k.startsWith("__reactFiber") || k.startsWith("__reactProps"),
+            );
+            if (keys.length > 0) return { ok: true, reason: null };
+          }
+          return { ok: false, reason: "no fiber keys on any candidate (button/main/a/h1/body)" };
         });
         const durationMs = Date.now() - started;
         await browser.close();
@@ -98,12 +120,26 @@ async function probeHydration(route) {
         process.exit(0);
       });
     `;
-    const child = spawn("bunx", ["--bun", "playwright@1", "-e", code], {
+    // CJS extension forces node to use require() semantics for require("playwright").
+    // NODE_PATH (set by ci.yml's hydration-smoke step or inherited from a
+    // local global install) is how playwright is found at the require step.
+    const tmpFile = join(
+      tmpdir(),
+      `hydration-probe-${process.pid}-${Date.now()}.cjs`,
+    );
+    writeFileSync(tmpFile, code, "utf8");
+    const child = spawn("node", [tmpFile], {
       stdio: ["ignore", "pipe", "inherit"],
+      env: { ...process.env },
     });
     let out = "";
     child.stdout.on("data", (d) => (out += d.toString()));
     child.on("close", () => {
+      try {
+        unlinkSync(tmpFile);
+      } catch {
+        // best-effort cleanup
+      }
       try {
         resolve(JSON.parse(out.trim().split("\n").pop() || "{}"));
       } catch {

@@ -3,6 +3,7 @@
 These are the highest-risk operations (CLAUDE.md gotchas: HITL required for
 submit_form, send_email, delete_*). NEVER tag a tool here AUTO.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -12,9 +13,7 @@ from agents.harness.permissions import requires_approval
 
 
 @requires_approval("submit_application")
-async def submit_application(
-    application_id: UUID, fields: dict[str, Any]
-) -> dict[str, Any]:
+async def submit_application(application_id: UUID, fields: dict[str, Any]) -> dict[str, Any]:
     """Server-side submit is a NO-OP by design.
 
     Per docs/architecture/client-side-delivery.md, real submission happens in

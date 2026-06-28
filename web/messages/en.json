@@ -794,6 +794,7 @@
         "rowLabel": "For a role · v{v}"
       },
       "tailorCta": "Tailor for a new role",
+      "latestBadge": "Latest",
       "editWithVantage": "EDIT WITH VANTAGE",
       "editHint": "Use the dock to refine, tailor, or rewrite. Your original stays untouched."
     },
@@ -849,7 +850,8 @@
       "tablistAria": "Presentation tab",
       "optimized": "Optimized",
       "original": "Original",
-      "compare": "Compare"
+      "compare": "Compare",
+      "compareDisabledHint": "Pick an optimized or tailored version on the left to compare it with the original."
     },
     "editor": {
       "dirtyCount": "{n, plural, one {# unsaved edit} other {# unsaved edits}}",
@@ -1282,6 +1284,158 @@
       "fullNamePlaceholder": "Your full name",
       "email": "Email",
       "phone": "Phone"
+    }
+  },
+  "errors": {
+    "_common": {
+      "referenceLabel": "Reference",
+      "copyDetails": "Copy details",
+      "copied": "Copied",
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "reportProblem": "Report a problem",
+      "retry": "Retry now",
+      "signIn": "Sign in again",
+      "learnMore": "Learn more",
+      "dismiss": "Dismiss",
+      "contact": "Contact us",
+      "backHome": "Back to Today",
+      "unknownTitle": "Something went wrong",
+      "unknownBody": "We hit an unexpected error. Please try again, or copy the reference below if it keeps happening."
+    },
+    "validation": {
+      "failed": {
+        "title": "Check the highlighted fields",
+        "body": "One or more inputs need a small fix before we can continue."
+      }
+    },
+    "input": {
+      "formatUnsupported": {
+        "title": "We can't read that file",
+        "body": "The file format isn't supported, or the file is corrupted. Try a PDF or DOCX export."
+      },
+      "payloadTooLarge": {
+        "title": "That's a bit too large",
+        "body": "The upload exceeds our size cap. Try compressing the file or splitting it before uploading again."
+      }
+    },
+    "auth": {
+      "required": {
+        "title": "Please sign in to continue",
+        "body": "This page needs you to be signed in. Sign back in and you'll land right back here."
+      },
+      "invalidCredentials": {
+        "title": "Couldn't sign you in",
+        "body": "That email and password combination doesn't match our records."
+      },
+      "sessionExpired": {
+        "title": "You've been signed out",
+        "body": "For your security we sign you out after a period of inactivity. Sign in again to keep going."
+      },
+      "forbidden": {
+        "title": "You don't have access to this",
+        "body": "This action isn't available on your account. If you think that's wrong, reach out."
+      },
+      "emailNotVerified": {
+        "title": "Check your email",
+        "body": "Confirm your email address to finish setting up your account."
+      }
+    },
+    "resource": {
+      "notFound": {
+        "title": "We can't find that",
+        "body": "The item you're looking for has moved or was removed. Try refreshing the list."
+      },
+      "conflict": {
+        "title": "Something changed in the meantime",
+        "body": "Another tab or device updated this item. Refresh to see the latest version, then try again."
+      },
+      "gone": {
+        "title": "That item has been removed",
+        "body": "It was deleted and can no longer be accessed."
+      }
+    },
+    "throttling": {
+      "limited": {
+        "title": "Too many attempts",
+        "body": "We're protecting your account from automated abuse. Please wait {seconds, number} seconds and try again."
+      },
+      "exceeded": {
+        "title": "You've hit your quota",
+        "body": "You've used up the requests allowed on your current plan. Upgrade or come back when your quota resets."
+      }
+    },
+    "upstream": {
+      "unavailable": {
+        "title": "A service is having a moment",
+        "body": "One of the services Relay depends on isn't responding. We'll retry — usually back in a few seconds."
+      },
+      "timeout": {
+        "title": "That took longer than expected",
+        "body": "The server didn't answer in time. Check your connection and try again."
+      }
+    },
+    "system": {
+      "dbUnavailable": {
+        "title": "We're having a brief hiccup",
+        "body": "Our database is taking a moment to respond. We'll retry automatically — usually back in a few seconds."
+      },
+      "cacheUnavailable": {
+        "title": "We're degraded but still up",
+        "body": "Our cache is offline so things may be a touch slower than usual. You can keep going."
+      },
+      "internal": {
+        "title": "Unexpected error",
+        "body": "Something went wrong on our side. We've recorded it — please retry shortly, and copy the reference below if it keeps happening."
+      }
+    },
+    "llm": {
+      "unavailable": {
+        "title": "Reasoning engine is offline",
+        "body": "Our LLM provider is temporarily unreachable. Most of Relay still works; try this action again in a moment."
+      },
+      "budgetExhausted": {
+        "title": "Your session budget is used up",
+        "body": "You've hit the per-session budget for AI work. Reach out and we'll lift it."
+      },
+      "contentRefused": {
+        "title": "We blocked that one",
+        "body": "Our model declined to answer this prompt. Try rephrasing without sensitive or restricted content."
+      },
+      "fabricationBlocked": {
+        "title": "Stopped before inventing experience",
+        "body": "We blocked this draft because it would have added claims that aren't in your résumé. Edit your source résumé first if those claims are real."
+      }
+    },
+    "agent": {
+      "timeout": {
+        "title": "That step took too long",
+        "body": "The agent ran past the time we give it for one turn. Try again — it's usually faster on the second go."
+      },
+      "interruptPending": {
+        "title": "Waiting on your approval",
+        "body": "Vantage paused so you can review what it wants to do next. Approve or edit in the dock to continue."
+      },
+      "taskFailed": {
+        "title": "That step failed",
+        "body": "An agent step couldn't finish. Try again — if it keeps failing, copy the reference and reach out."
+      }
+    },
+    "network": {
+      "offline": {
+        "title": "You appear to be offline",
+        "body": "Check your connection and try again."
+      },
+      "blocked": {
+        "title": "Your network is blocking Relay",
+        "body": "A proxy, VPN, or browser extension may be intercepting requests. Add localhost to your proxy's bypass list and try again."
+      }
+    },
+    "client": {
+      "versionStale": {
+        "title": "A newer version is available",
+        "body": "Reload the page to pick up the latest changes."
+      }
     }
   }
 }

@@ -4,6 +4,7 @@ Renamed from `agents/mcp/` to `agents/mcp_probe/` to avoid shadowing the
 upstream `mcp` PyPI package (the SDK's own top-level module). See
 docs/architecture/agent-marketplace-deferred.md § 4.
 """
+
 from __future__ import annotations
 
 

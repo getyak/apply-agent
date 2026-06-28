@@ -53,6 +53,7 @@ function CountUp({
       "(prefers-reduced-motion: reduce)",
     ).matches;
     if (reduce) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs counter with external prefers-reduced-motion media query (skips raf animation entirely).
       setValue(to);
       return;
     }

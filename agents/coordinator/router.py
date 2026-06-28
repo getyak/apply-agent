@@ -7,6 +7,7 @@ Two-layer intent classification (vantage-ui-mapping.md § 1.3):
 The Ask Vantage dock holds a lifetime thread per user
 (thread_id = ask_vantage:{user_id}). PostgresSaver makes it durable.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,7 +34,9 @@ log = structlog.get_logger("agents.coordinator.router")
 # a 30s deadline matches the upper bound stated in agent-harness.md.
 _ROUTER_LLM_TIMEOUT_S = float(os.environ.get("RELAY_ROUTER_LLM_TIMEOUT_S", "30"))
 
-INTENT_PROMPT = (Path(__file__).parent.parent / "prompts" / "coordinator" / "intent_classifier.v1.md").read_text()
+INTENT_PROMPT = (
+    Path(__file__).parent.parent / "prompts" / "coordinator" / "intent_classifier.v1.md"
+).read_text()
 
 
 VALID_INTENTS = {
@@ -73,9 +76,7 @@ VALID_INTENTS = {
 # INTENT4 (round-19): the four built-in Mock interview modes seeded by
 # migrations/013_seed_interview_modes.up.sql. Used as a fast-path in
 # `_normalize_mode_slug` so the obvious cases pass without a regex.
-_BUILT_IN_MODE_SLUGS = frozenset(
-    {"scene_recreation", "pressure_drill", "warm_up", "rapid_fire"}
-)
+_BUILT_IN_MODE_SLUGS = frozenset({"scene_recreation", "pressure_drill", "warm_up", "rapid_fire"})
 # Syntactic gate for user-custom slugs: lowercase / digits / underscore,
 # 2-64 chars. Anything else (English sentences, JSON snippets, attempted
 # SQL fragments — the LLM has been known to emit all three under
@@ -120,10 +121,22 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     # Order matters — most specific first.
     (re.compile(r"\b(mock|practice)\s+(me|interview)\b", re.I), "mock_me", 0.92),
     (re.compile(r"\b(start|run|do)\s+(a\s+)?mock\b", re.I), "mock_me", 0.90),
-    (re.compile(r"\b(sharpen|tailor|customi[sz]e)\s+(my\s+)?r[eé]sum[eé]\b", re.I), "tailor_resume", 0.92),
+    (
+        re.compile(r"\b(sharpen|tailor|customi[sz]e)\s+(my\s+)?r[eé]sum[eé]\b", re.I),
+        "tailor_resume",
+        0.92,
+    ),
     (re.compile(r"\bsharpen\s+(my\s+)?cv\b", re.I), "tailor_resume", 0.88),
-    (re.compile(r"\b(write|draft|generate)\s+(a\s+)?cover\s+letter\b", re.I), "draft_cover_letter", 0.95),
-    (re.compile(r"\b(find|show)\s+(me\s+)?(new\s+)?(jobs|roles|matches)\b", re.I), "find_jobs", 0.90),
+    (
+        re.compile(r"\b(write|draft|generate)\s+(a\s+)?cover\s+letter\b", re.I),
+        "draft_cover_letter",
+        0.95,
+    ),
+    (
+        re.compile(r"\b(find|show)\s+(me\s+)?(new\s+)?(jobs|roles|matches)\b", re.I),
+        "find_jobs",
+        0.90,
+    ),
     (re.compile(r"\bwhat[\'']s\s+(trending|hot|new)\s+today\b", re.I), "trends_today", 0.92),
     (re.compile(r"\b(market|trend|what'?s)\s+(trending|hot)\b", re.I), "trends_today", 0.85),
     (re.compile(r"\b(build|create|start)\s+(a\s+)?r[eé]sum[eé]\b", re.I), "build_resume", 0.85),
@@ -133,25 +146,75 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     # write path. Bilingual coverage (zh + en) because the dock greets in
     # the user's language and we want regex to win Layer 1 instead of
     # paying for a Layer 2 LLM call.
-    (re.compile(r"(查看|查一下|看一下|看看|列出|显示|列表)\s*(我的)?\s*(简历|履历)\s*(版本|历史|记录|列表)?", re.I), "list_resume_versions", 0.92),
-    (re.compile(r"(我|目前)?\s*(一共)?\s*(有|存了)\s*(几|多少)\s*(个|份|版)\s*(简历|履历)", re.I), "list_resume_versions", 0.90),
-    (re.compile(r"\b(show|list|view|see)\s+(me\s+)?(my\s+|all\s+)?r[eé]sum[eé]s?(\s*versions?)?\b", re.I), "list_resume_versions", 0.92),
-    (re.compile(r"\b(what|which)\s+r[eé]sum[eé]\s+versions?\s+do\s+i\s+have\b", re.I), "list_resume_versions", 0.94),
-    (re.compile(r"\b(r[eé]sum[eé])\s+(version|history|timeline)s?\b", re.I), "list_resume_versions", 0.87),
+    (
+        re.compile(
+            r"(查看|查一下|看一下|看看|列出|显示|列表)\s*(我的)?\s*(简历|履历)\s*(版本|历史|记录|列表)?",
+            re.I,
+        ),
+        "list_resume_versions",
+        0.92,
+    ),
+    (
+        re.compile(
+            r"(我|目前)?\s*(一共)?\s*(有|存了)\s*(几|多少)\s*(个|份|版)\s*(简历|履历)", re.I
+        ),
+        "list_resume_versions",
+        0.90,
+    ),
+    (
+        re.compile(
+            r"\b(show|list|view|see)\s+(me\s+)?(my\s+|all\s+)?r[eé]sum[eé]s?(\s*versions?)?\b", re.I
+        ),
+        "list_resume_versions",
+        0.92,
+    ),
+    (
+        re.compile(r"\b(what|which)\s+r[eé]sum[eé]\s+versions?\s+do\s+i\s+have\b", re.I),
+        "list_resume_versions",
+        0.94,
+    ),
+    (
+        re.compile(r"\b(r[eé]sum[eé])\s+(version|history|timeline)s?\b", re.I),
+        "list_resume_versions",
+        0.87,
+    ),
     # Dual-track "This résumé" chips (design §6 / §1.4). These must precede the
     # update_resume rule so "analyze / weakest / optimize this résumé" never
     # lands on the write path.
-    (re.compile(r"\b(analy[sz]e|critique|review)\s+(this\s+|my\s+)?r[eé]sum[eé]\b", re.I), "analyze_resume", 0.90),
+    (
+        re.compile(r"\b(analy[sz]e|critique|review)\s+(this\s+|my\s+)?r[eé]sum[eé]\b", re.I),
+        "analyze_resume",
+        0.90,
+    ),
     (re.compile(r"\b(weakest|weak)\s+(spots?|points?|parts?)\b", re.I), "analyze_resume", 0.90),
     # zh — "(帮我)?分析(一下)?(我的|这份)?简历/履历"
-    (re.compile(r"(帮我)?\s*分析\s*(一下)?\s*(我的|这份|这个)?\s*(简历|履历)"), "analyze_resume", 0.92),
-    (re.compile(r"(给|帮)\s*(我)?\s*(看一下|评估|点评|审视)\s*(我的|这份)?\s*(简历|履历)"), "analyze_resume", 0.90),
-    (re.compile(r"\b(optimi[sz]e|improve|sharpen|strengthen)\s+(this\s+|my\s+)?r[eé]sum[eé]\b(?!\s+for)", re.I), "optimize_resume", 0.88),
+    (
+        re.compile(r"(帮我)?\s*分析\s*(一下)?\s*(我的|这份|这个)?\s*(简历|履历)"),
+        "analyze_resume",
+        0.92,
+    ),
+    (
+        re.compile(r"(给|帮)\s*(我)?\s*(看一下|评估|点评|审视)\s*(我的|这份)?\s*(简历|履历)"),
+        "analyze_resume",
+        0.90,
+    ),
+    (
+        re.compile(
+            r"\b(optimi[sz]e|improve|sharpen|strengthen)\s+(this\s+|my\s+)?r[eé]sum[eé]\b(?!\s+for)",
+            re.I,
+        ),
+        "optimize_resume",
+        0.88,
+    ),
     (re.compile(r"\b(quick\s+wins?|best[- ]practice)\b", re.I), "optimize_resume", 0.80),
     (re.compile(r"\b(next|career)\s+(move|moves|step|steps)\b", re.I), "map_career_moves", 0.88),
     (re.compile(r"\b(surface|suggest|recommend)\s+(\w+\s+)?roles?\b", re.I), "surface_roles", 0.86),
     (re.compile(r"\broles?\s+that\s+match\b", re.I), "surface_roles", 0.88),
-    (re.compile(r"\b(update|edit|change|fix)\s+(my\s+)?r[eé]sum[eé]\b", re.I), "update_resume", 0.85),
+    (
+        re.compile(r"\b(update|edit|change|fix)\s+(my\s+)?r[eé]sum[eé]\b", re.I),
+        "update_resume",
+        0.85,
+    ),
     (re.compile(r"\breview\s+(my\s+)?application\b", re.I), "review_application", 0.85),
     # Applications kanban.
     (
@@ -251,8 +314,13 @@ def _extract_args(message: str) -> dict[str, Any]:
     m = _MODE_HINT.search(message)
     if m:
         slug = m.group(1).lower().replace(" ", "_").replace("-", "_")
-        slug = {"scene_recreation": "scene_recreation", "pressure_drill": "pressure_drill",
-                "warmup": "warm_up", "warm_up": "warm_up", "rapid_fire": "rapid_fire"}.get(slug, slug)
+        slug = {
+            "scene_recreation": "scene_recreation",
+            "pressure_drill": "pressure_drill",
+            "warmup": "warm_up",
+            "warm_up": "warm_up",
+            "rapid_fire": "rapid_fire",
+        }.get(slug, slug)
         args["mode_slug"] = slug
     # Applications: pull the move target and any company hint. The company
     # regex here is looser than _COMPANY_HINT (no leading "for") so we
@@ -301,7 +369,11 @@ async def llm_intent_classifier(message: str) -> Intent:
             via="llm",
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        log.error("llm_intent_classifier.failed", error=redact_exception_text(str(exc)), kind=type(exc).__name__)
+        log.error(
+            "llm_intent_classifier.failed",
+            error=redact_exception_text(str(exc)),
+            kind=type(exc).__name__,
+        )
         return Intent(intent="other", confidence=0.0, args={}, via="llm")
 
 
@@ -312,9 +384,28 @@ async def llm_intent_classifier(message: str) -> Intent:
 
 REGEX_ACCEPT_THRESHOLD = 0.85
 
+# Below this length the message is almost certainly a slip (the classic
+# "hji" autocomplete miss). We short-circuit before paying the LLM cost
+# and route it to the smalltalk reply, which gives a "What would you like
+# me to do?" copy — much faster than a thinking spinner. The threshold
+# matches the web composer's client-side guard so the two layers stay
+# in lockstep.
+SHORT_INPUT_MIN_CHARS = 2
+
 
 async def classify_intent(message: str) -> Intent:
     """Layer 1 → Layer 2 fallback."""
+    stripped = (message or "").strip()
+    # Defense-in-depth: the web composer drops these before they ever leave
+    # the browser (dock.tsx submit()), but raw curl, extension, or older
+    # clients can still send them. Skip LLM entirely.
+    if len(stripped) < SHORT_INPUT_MIN_CHARS:
+        return Intent(
+            intent="other",
+            confidence=1.0,
+            args={},
+            via="short_input_guard",
+        )
     cheap = cheap_intent_classifier(message)
     if cheap and cheap.confidence >= REGEX_ACCEPT_THRESHOLD:
         return cheap
@@ -352,7 +443,11 @@ async def dispatch(
     one. Other surfaces keep the old, surface-agnostic behaviour.
     """
     if intent.intent == "find_jobs":
-        return {"agent": "jobmatch_agent", "action": "find_matches", "status": "not_implemented_yet"}
+        return {
+            "agent": "jobmatch_agent",
+            "action": "find_matches",
+            "status": "not_implemented_yet",
+        }
 
     if intent.intent == "tailor_resume":
         # Hands off to resume_agent.customize via API layer (it needs job + base ids).
@@ -364,7 +459,11 @@ async def dispatch(
         }
 
     if intent.intent == "draft_cover_letter":
-        return {"agent": "appprep_agent", "action": "draft_cover_letter", "status": "not_implemented_yet"}
+        return {
+            "agent": "appprep_agent",
+            "action": "draft_cover_letter",
+            "status": "not_implemented_yet",
+        }
 
     if intent.intent == "mock_me":
         from agents.nodes.interview_agent import load_mode
@@ -539,7 +638,9 @@ async def _smalltalk_reply(
             # A transient DB problem (auth failure, query error) must degrade to a
             # context-free reply, not replace the whole reply with an error frame.
             log.error(
-                "router.load_recent_turns_failed", thread_id=thread_id, error=redact_exception_text(str(exc))
+                "router.load_recent_turns_failed",
+                thread_id=thread_id,
+                error=redact_exception_text(str(exc)),
             )
             history = []
 
@@ -553,7 +654,9 @@ async def _smalltalk_reply(
         try:
             resume_block = await load_active_resume_brief(user_id)
         except Exception as exc:  # noqa: BLE001 — boundary
-            log.error("router.load_active_resume_brief_failed", error=redact_exception_text(str(exc)))
+            log.error(
+                "router.load_active_resume_brief_failed", error=redact_exception_text(str(exc))
+            )
             resume_block = None
 
     # Language fidelity: the chat history shipped Chinese user turns next to
@@ -601,7 +704,9 @@ async def _smalltalk_reply(
             timeout=_ROUTER_LLM_TIMEOUT_S,
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        log.error("smalltalk_reply.failed", error=redact_exception_text(str(exc)), kind=type(exc).__name__)
+        log.error(
+            "smalltalk_reply.failed", error=redact_exception_text(str(exc)), kind=type(exc).__name__
+        )
         return {
             "agent": "coordinator",
             "action": "reply",
@@ -738,7 +843,12 @@ async def _analyze_resume_reply(user_id: UUID, message: str) -> dict[str, Any]:
             if has_cjk
             else "I couldn't analyze that right now — try again in a moment."
         )
-    return {"agent": "resume_agent", "action": "reply", "text": text, "source_action": "analyze_resume"}
+    return {
+        "agent": "resume_agent",
+        "action": "reply",
+        "text": text,
+        "source_action": "analyze_resume",
+    }
 
 
 async def _career_moves_reply(user_id: UUID, message: str) -> dict[str, Any]:
@@ -769,7 +879,12 @@ async def _career_moves_reply(user_id: UUID, message: str) -> dict[str, Any]:
             if has_cjk
             else "I couldn't map that out right now — try again in a moment."
         )
-    return {"agent": "trend_agent", "action": "reply", "text": text, "source_action": "map_career_moves"}
+    return {
+        "agent": "trend_agent",
+        "action": "reply",
+        "text": text,
+        "source_action": "map_career_moves",
+    }
 
 
 async def load_active_resume_brief(user_id: UUID, max_chars: int = 4000) -> str | None:
@@ -806,10 +921,7 @@ async def load_active_resume_brief(user_id: UUID, max_chars: int = 4000) -> str 
             # would otherwise critique an empty document and tell the user
             # to add their name + jobs even though the data is already in PG.
             content = (row or {}).get("content") or {}
-            looks_empty = (
-                not (content.get("basics") or {})
-                or not (content.get("work") or [])
-            )
+            looks_empty = not (content.get("basics") or {}) or not (content.get("work") or [])
             if looks_empty:
                 await cur.execute(
                     """
@@ -866,7 +978,11 @@ def _compact_resume_brief(content: dict[str, Any], max_chars: int) -> str:
                 for k in ("name", "company", "position", "startDate", "endDate", "summary")
                 if w.get(k)
             }
-            | ({"highlights": _clip_list(w.get("highlights") or [], 4)} if w.get("highlights") else {})
+            | (
+                {"highlights": _clip_list(w.get("highlights") or [], 4)}
+                if w.get("highlights")
+                else {}
+            )
             for w in _clip_list(work, 5)
             if isinstance(w, dict)
         ],
@@ -885,11 +1001,7 @@ def _compact_resume_brief(content: dict[str, Any], max_chars: int) -> str:
             if isinstance(s, dict)
         ],
         "projects": [
-            {
-                k: p.get(k)
-                for k in ("name", "description", "url")
-                if p.get(k)
-            }
+            {k: p.get(k) for k in ("name", "description", "url") if p.get(k)}
             for p in _clip_list(projects, 4)
             if isinstance(p, dict)
         ],
@@ -1063,7 +1175,9 @@ async def persist_turn(
                 )
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — boundary, never break the reply
-        log.error("router.persist_turn_failed", thread_id=thread_id, error=redact_exception_text(str(exc)))
+        log.error(
+            "router.persist_turn_failed", thread_id=thread_id, error=redact_exception_text(str(exc))
+        )
 
 
 def _safe_json(content: Any) -> dict[str, Any]:

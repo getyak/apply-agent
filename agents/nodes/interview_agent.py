@@ -16,6 +16,7 @@ PG dependencies (012/013):
   interview_questions   {feedback_translation, follow_up_of, is_real}
   interview_question_pool — crowdsourced (vector search by company×role)
 """
+
 from __future__ import annotations
 
 import json
@@ -181,7 +182,9 @@ async def _intel_from_web(
 
     from agents.tools.web import web_search
 
-    query = f"{company} {role or 'engineering'} interview process questions {round_type or ''}".strip()
+    query = (
+        f"{company} {role or 'engineering'} interview process questions {round_type or ''}".strip()
+    )
     search_out = await web_search(query, max_results=5)
     hits = search_out.get("results") or []
     if not hits:
@@ -195,9 +198,7 @@ async def _intel_from_web(
     # Pack the top snippets into a single prompt for V4 Flash to extract
     # 3-5 frequent question patterns. We use a tight system prompt so the
     # model can't drift into "made-up generic interview questions".
-    digest = "\n\n".join(
-        f"[{h['title']}]({h['url']})\n{h['snippet']}" for h in hits[:5]
-    )
+    digest = "\n\n".join(f"[{h['title']}]({h['url']})\n{h['snippet']}" for h in hits[:5])
     extract_prompt = (
         "Extract 3 to 5 interview questions that recur across these write-ups. "
         "Output ONLY valid JSON with shape: "
@@ -243,8 +244,7 @@ async def _intel_from_web(
             {
                 "q": str(q.get("q", "")).strip()[:300],
                 "probability": float(q.get("probability", 0.5) or 0.5),
-                "trap": bool(q.get("trap", False))
-                or _is_trap_question(str(q.get("q", ""))),
+                "trap": bool(q.get("trap", False)) or _is_trap_question(str(q.get("q", ""))),
             }
         )
     return IntelBrief(
@@ -260,7 +260,9 @@ async def _intel_from_jd(
 ) -> IntelBrief:
     """LLM-extract real focus from the JD. Uses V4 Flash (cheap, structured)."""
     if not company:
-        return IntelBrief(round_minutes=30, interviewer_style="", frequent_questions=[], jd_real_focus=[])
+        return IntelBrief(
+            round_minutes=30, interviewer_style="", frequent_questions=[], jd_real_focus=[]
+        )
 
     rows = await pg_query(
         """
@@ -273,7 +275,12 @@ async def _intel_from_jd(
         (company, role, role),
     )
     if not rows:
-        return IntelBrief(round_minutes=30, interviewer_style="No JD on file.", frequent_questions=[], jd_real_focus=[])
+        return IntelBrief(
+            round_minutes=30,
+            interviewer_style="No JD on file.",
+            frequent_questions=[],
+            jd_real_focus=[],
+        )
 
     jd_text = rows[0]["jd_text"]
     model = pick_model("fast", temperature=0.2, max_tokens=512)
@@ -294,7 +301,9 @@ async def _intel_from_jd(
         )
     except (json.JSONDecodeError, ValueError, KeyError):
         log.warning("intel.jd_parse_failed", company=company)
-        return IntelBrief(round_minutes=30, interviewer_style="", frequent_questions=[], jd_real_focus=[])
+        return IntelBrief(
+            round_minutes=30, interviewer_style="", frequent_questions=[], jd_real_focus=[]
+        )
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -387,7 +396,10 @@ async def translate_feedback(
             "Just say what's strong and what's weak in <= 25 words."
         )
         resp = await model.ainvoke(
-            [SystemMessage(content=prompt), HumanMessage(content=f"Q: {question_text}\nA: {answer}")]
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=f"Q: {question_text}\nA: {answer}"),
+            ]
         )
         return FeedbackTranslation(
             you_said=answer[:200],
@@ -413,7 +425,10 @@ async def translate_feedback(
     }
     model = pick_model("heavy", temperature=0.4, max_tokens=800)
     resp = await model.ainvoke(
-        [SystemMessage(content=prompt), HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
+        [
+            SystemMessage(content=prompt),
+            HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+        ]
     )
     parsed = _safe_json(resp.content)
     return FeedbackTranslation(
@@ -439,7 +454,9 @@ def _looks_stalled(answer: str) -> bool:
     if not answer or len(answer.strip()) < 40:
         return True
     lower = answer.lower()
-    return any(marker in lower for marker in ["i don't know", "um,", "uh,", "no idea", "not sure how"])
+    return any(
+        marker in lower for marker in ["i don't know", "um,", "uh,", "no idea", "not sure how"]
+    )
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -463,7 +480,10 @@ async def save_to_card(
     """
     loop = mode["loop_behavior"]
     if loop == "standalone":
-        return {"persisted": False, "card": {"questions": len(questions), "weak_points": weak_points}}
+        return {
+            "persisted": False,
+            "card": {"questions": len(questions), "weak_points": weak_points},
+        }
 
     dsn = os.environ.get("RELAY_PG_DSN")
     if not dsn:
@@ -594,7 +614,9 @@ async def await_user_input_node(state: MockState) -> dict[str, Any]:
 
 
 async def translate_feedback_node(state: MockState) -> dict[str, Any]:
-    async with audit(state["user_id"], "interview_agent", "translate_feedback", state.get("session_id")):
+    async with audit(
+        state["user_id"], "interview_agent", "translate_feedback", state.get("session_id")
+    ):
         pending = state.get("_pending_question") or {}
         feedback = await translate_feedback(
             answer=state.get("last_answer") or "",
@@ -632,7 +654,11 @@ def route_next_step(state: MockState) -> str:
         if state.get("last_was_follow_up"):
             return "next_q"
         # 60% follow-up rate keeps it conversational, not interrogation.
-        return "follow_up" if _looks_stalled(state.get("last_answer") or "") or asked % 2 == 0 else "next_q"
+        return (
+            "follow_up"
+            if _looks_stalled(state.get("last_answer") or "") or asked % 2 == 0
+            else "next_q"
+        )
 
     if pressure == "chained_to_stuck":
         if state.get("stuck_count", 0) >= 2:

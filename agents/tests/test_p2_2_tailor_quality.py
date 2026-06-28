@@ -10,6 +10,7 @@ Locks down:
   - polish_bullet tool: surfaces resume_agent.propose_bullet_edit result
   - polish_bullet registered in DOCK_TOOLS
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -72,24 +73,16 @@ def test_fab_guard_grounds_exact_match():
 
 def test_fab_guard_still_strict_on_quantitative():
     """A percentage that didn't exist in base must still be flagged."""
-    base = {
-        "work": [{"name": "Stripe", "position": "Eng", "highlights": ["Did stuff."]}]
-    }
+    base = {"work": [{"name": "Stripe", "position": "Eng", "highlights": ["Did stuff."]}]}
     tailored = {
-        "work": [
-            {"name": "Stripe", "position": "Eng", "highlights": ["Grew revenue 50%."]}
-        ]
+        "work": [{"name": "Stripe", "position": "Eng", "highlights": ["Grew revenue 50%."]}]
     }
     fab = fabrication_guard(base, tailored)
     assert any("percent:50%" in f for f in fab)
 
 
 def test_fab_guard_grounds_when_percentage_in_base():
-    base = {
-        "work": [
-            {"name": "Stripe", "position": "Eng", "highlights": ["Grew traffic 50%."]}
-        ]
-    }
+    base = {"work": [{"name": "Stripe", "position": "Eng", "highlights": ["Grew traffic 50%."]}]}
     tailored = {
         "work": [
             {

@@ -95,11 +95,17 @@ app.post(
 
     // 2. Forward to the Python agent layer.
     const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/applications/prepare`;
+    // W4.1: forward trace + request ids so the FastAPI middleware can
+    // bind the same trace into its log / span tree.
+    const traceId = c.get("traceId");
+    const requestId = c.get("requestId");
     const agentResp = await fetch(target, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-relay-user-id": userId,
+        ...(traceId ? { "X-Trace-Id": traceId } : {}),
+        ...(requestId ? { "X-Request-Id": requestId } : {}),
       },
       body: JSON.stringify({
         jd_url: jdUrl,

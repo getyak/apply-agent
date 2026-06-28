@@ -7,6 +7,7 @@ Locks down:
   - LLM returns rejected_fabrication tone → original body kept
   - Fabrication guard catches new entities → original body kept + entities listed
 """
+
 from __future__ import annotations
 
 import json

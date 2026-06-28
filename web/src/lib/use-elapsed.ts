@@ -45,7 +45,10 @@ export function useElapsedMs(opts: UseElapsedOpts): number {
 
   useEffect(() => {
     // Synchronise immediately on (re)mount / state flip so the first paint
-    // doesn't show a stale value from the previous run.
+    // doesn't show a stale value from the previous run. This effect *is* the
+    // sync between React state and an external clock — exactly the use case
+    // react-hooks/set-state-in-effect carves out as legitimate.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync with external Date.now()/setInterval clock.
     setElapsed(Math.max(0, now() - startedAt));
     if (!running) return;
     const cancel = schedule(() => {

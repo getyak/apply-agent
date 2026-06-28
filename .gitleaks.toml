@@ -20,6 +20,12 @@ paths = [
   '''\.env\.example$''',
   '''.*\.test\.ts$''',
   '''.*\.test\.tsx$''',
+  # Python test fixtures (agents/tests/test_*.py + */tests/test_*.py + *_test.py)
+  # contain synthetic secrets used to verify redaction / parsing / auth logic.
+  # Without this allowlist the redaction unit tests (test_redaction.py) trip
+  # the jwt + generic-api-key rules.
+  '''.*tests/test_.*\.py$''',
+  '''.*_test\.py$''',
   '''infra/postgres/migrations/.*''',
   '''bun\.lock$''',
   '''uv\.lock$''',

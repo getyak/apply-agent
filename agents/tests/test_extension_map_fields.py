@@ -6,6 +6,7 @@ is touched. Verifies:
 - sensitive fields → skip carried into unmatched, others get fills
 - malformed PG content (string vs dict) → still parses
 """
+
 from __future__ import annotations
 
 from uuid import uuid4

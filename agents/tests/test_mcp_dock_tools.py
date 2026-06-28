@@ -12,6 +12,7 @@ We do NOT exercise the MCP stdio transport here — that's
 ``test_mcp_dock_server.py``'s job (when the mcp SDK is available). These
 tests are unit-level and run without the experimental extra.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -119,9 +120,7 @@ async def test_find_jobs_adapter_empty(monkeypatch):
     backing pg_query returns [], so the MCP adapter surfaces status=empty."""
     monkeypatch.delenv("RELAY_PG_DSN", raising=False)
     uid = str(uuid4())
-    out = await tools.find_jobs(
-        user_id=uid, role="staff engineer", remote_only=True, limit=999
-    )
+    out = await tools.find_jobs(user_id=uid, role="staff engineer", remote_only=True, limit=999)
     assert out["status"] == "empty"
     assert out["items"] == []
 
@@ -135,9 +134,7 @@ def test_tool_catalog_shape():
         assert schema["type"] == "object"
         assert "properties" in schema
         # Every tool must require user_id (the MCP-level scoping arg).
-        assert "user_id" in schema.get("required", []), (
-            f"{spec['name']} doesn't require user_id"
-        )
+        assert "user_id" in schema.get("required", []), f"{spec['name']} doesn't require user_id"
 
 
 def test_find_tool_round_trip():

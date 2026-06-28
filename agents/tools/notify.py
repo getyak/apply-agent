@@ -3,6 +3,7 @@
 The API layer reads __relay_permission__ == "NOTIFY" and pushes after the
 tool returns. Tools here do the work; notification is the wrapper's job.
 """
+
 from __future__ import annotations
 
 import json

@@ -12,8 +12,10 @@ Exposes three core endpoints for the Vantage UI:
 
 Caller: Bun api/ layer proxies user requests here over HTTP.
 """
+
 from __future__ import annotations
 
+import asyncio  # used by _with_heartbeat (round-12 SSE ping)
 import json
 
 # Load the repo-root .env BEFORE any agents.* import so OPENROUTER_API_KEY /
@@ -84,9 +86,7 @@ _DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "0") == "1"
 # the dock LLM as free-form turns. 0.85 matches router.REGEX_ACCEPT_THRESHOLD,
 # so every regex-confident intent now goes straight to dispatch via the same
 # rule. Override with RELAY_DOCK_FAST_PATH to be stricter / looser per env.
-_DOCK_REGEX_FAST_PATH_THRESHOLD = float(
-    os.environ.get("RELAY_DOCK_FAST_PATH", "0.85")
-)
+_DOCK_REGEX_FAST_PATH_THRESHOLD = float(os.environ.get("RELAY_DOCK_FAST_PATH", "0.85"))
 from agents.harness.audit import redact_exception_text  # noqa: E402
 from agents.harness.checkpointer import (  # noqa: E402
     ask_vantage_thread_id,
@@ -131,75 +131,215 @@ app = FastAPI(title="Relay Agents", version="0.1.0", lifespan=_lifespan)
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Global error envelope (round-5)
+# Error envelope v2 — aligned with the gateway (api/src/errors.ts) so the
+# web layer parses ONE shape regardless of which layer emitted the error.
+# See docs/architecture/error-handling.md §2.1.
 #
-# Round-5 audit flagged two problems with how this layer reports errors:
-#   API1: no global exception handler — uncaught exceptions surface as
-#         FastAPI's default {"detail": "Internal Server Error"} with no
-#         trace_id, making prod debugging a guessing game.
-#   API2: SSE error frames embed the raw `str(exc)` text, leaking internal
-#         stack details (file paths, "session cost 12.4567c > 50.0c", etc.)
-#         and giving the frontend no machine-readable code to act on.
-#
-# These handlers + _error_envelope() centralise the shape (`code`, `message`,
-# `trace_id`) and choose a user-safe message per exception category. The SSE
-# error path uses the same helper so the dock and the JSON envelopes stay in
-# sync — one place to localise, one shape for the frontend to match.
+# Two upgrades over the round-5 envelope:
+#   1. Trace propagation: we honour an inbound X-Trace-Id (the gateway sets
+#      it via api/src/middleware/trace-id.ts) instead of minting a fresh
+#      id per exception — so all three layers' logs share one id.
+#   2. Full v2 shape: {code, message, messageKey, traceId, traceCode,
+#      requestId, timestamp, details, action}. Codes match the
+#      ErrorCode taxonomy in §3.1 so the web error router (resolve.ts)
+#      can branch on the same string the gateway emits.
 # ─────────────────────────────────────────────────────────────────────────
 
+from datetime import UTC, datetime  # noqa: E402
 
-def _error_envelope(exc: BaseException, trace_id: str) -> dict[str, Any]:
-    """Map an exception to a sanitized {code, message, trace_id} envelope.
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-    The message must be safe to show end-users: no file paths, no balance
-    digits, no internal field names. The log line (caller's responsibility)
-    keeps the raw text for support to correlate via trace_id.
+
+def _trace_code_from(trace_id: str) -> str:
+    """Mirror of api/src/errors.ts traceCodeFromTraceId.
+    Same input → same R-XXXX so support gets one ref regardless of layer.
     """
+    hex_ = trace_id.replace("-", "")[:10]
+    if len(hex_) < 10:
+        return "R-0000"
+    try:
+        high = int(hex_[0:5], 16)
+        low = int(hex_[5:10], 16)
+    except ValueError:
+        return "R-0000"
+    folded = high ^ low
+    out = ""
+    n = folded
+    for _ in range(4):
+        out = _CROCKFORD[n & 0x1F] + out
+        n >>= 5
+    return f"R-{out}"
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# Inbound trace id is plumbed through request.state; the middleware below
+# sets it from the X-Trace-Id header or mints a UUID. We deliberately use a
+# UUID (not bare hex) so the web layer's deterministic traceCode hashing
+# matches what the gateway uses for the same id.
+def _trace_for(request: Request | None) -> str:
+    if request is not None:
+        tid = getattr(request.state, "trace_id", None)
+        if isinstance(tid, str) and tid:
+            return tid
+    return str(uuid4())
+
+
+def _request_id_for(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    rid = getattr(request.state, "request_id", None)
+    if isinstance(rid, str) and rid:
+        return rid
+    return None
+
+
+def _http_status_code(status_code: int) -> str:
+    """Map a bare HTTP status to the v2 ErrorCode dictionary."""
+    return {
+        400: "VALIDATION_FAILED",
+        401: "AUTH_REQUIRED",
+        403: "AUTH_FORBIDDEN",
+        404: "RESOURCE_NOT_FOUND",
+        409: "RESOURCE_CONFLICT",
+        413: "VALIDATION_FAILED",
+        429: "RATE_LIMITED",
+        500: "INTERNAL",
+        502: "UPSTREAM_UNAVAILABLE",
+        503: "UPSTREAM_UNAVAILABLE",
+        504: "UPSTREAM_TIMEOUT",
+    }.get(status_code, "INTERNAL")
+
+
+def _error_envelope(
+    exc: BaseException,
+    trace_id: str,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the v2 error envelope around `exc`.
+
+    Stays compatible with the legacy shape (older clients read
+    `error.trace_id` / `error.code` lowercase) by emitting *both* the new
+    camelCase keys AND the old snake-case `trace_id` side-by-side. The
+    web ApiError parser reads either.
+    """
+    base: dict[str, Any] = {
+        "traceId": trace_id,
+        "traceCode": _trace_code_from(trace_id),
+        "timestamp": _now_iso(),
+        # legacy field for clients that haven't migrated yet
+        "trace_id": trace_id,
+    }
+    if request_id:
+        base["requestId"] = request_id
+
     if isinstance(exc, BudgetExhausted):
-        # CostGuard hit — translatable copy, no "12.34c > 50.0c" detail.
         return {
-            "code": "budget_exhausted",
+            **base,
+            "code": "LLM_BUDGET_EXHAUSTED",
             "message": "Your session budget is used up. Try again later or contact support.",
-            "trace_id": trace_id,
+            "messageKey": "errors.llm.budgetExhausted",
+            "action": {"kind": "contact", "channel": "in-app"},
         }
     if isinstance(exc, HTTPException):
-        # FastAPI's own 4xx — keep the upstream detail (it's already
-        # author-controlled in our routes) but normalise the shape.
         detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
+        code = _http_status_code(exc.status_code)
+        # Derive a plausible messageKey from the code (UPSTREAM_TIMEOUT →
+        # errors.upstream.timeout etc.). Best-effort — web has a fallback
+        # for missing keys.
+        domain, _, leaf = code.lower().partition("_")
+        # Remap a couple of domains to match the i18n namespace.
+        if domain in ("internal",):
+            domain = "system"
+        if domain in ("validation",):
+            domain = "validation"
         return {
-            "code": f"http_{exc.status_code}",
+            **base,
+            "code": code,
             "message": detail,
-            "trace_id": trace_id,
+            "messageKey": f"errors.{domain}.{leaf or code.lower()}",
         }
-    # Catch-all — never leak str(exc). Support reads the log via trace_id.
+    # Catch-all — never leak str(exc). Support reads the log via traceId.
     return {
-        "code": "internal_error",
+        **base,
+        "code": "INTERNAL",
         "message": "Something went wrong on our side. We've logged this — please retry shortly.",
-        "trace_id": trace_id,
+        "messageKey": "errors.system.internal",
+        "action": {"kind": "retry", "after": 5},
     }
 
 
+# ── trace middleware ──────────────────────────────────────────────────
+# Read X-Trace-Id from the incoming request (gateway sets it; standalone
+# clients can send their own) and stash it on request.state so handlers
+# and exception handlers find it. Echo it back on every response so the
+# browser devtools and the ApiError class get it without parsing JSON.
+@app.middleware("http")
+async def _trace_middleware(request: Request, call_next):
+    inbound = request.headers.get("x-trace-id")
+    # Validate inbound shape: 36-char UUID-with-dashes. Anything else gets
+    # replaced — clients can't wedge \r\n or 100KB into our log lines.
+    if (
+        isinstance(inbound, str)
+        and len(inbound) == 36
+        and all(c in "0123456789abcdefABCDEF-" for c in inbound)
+    ):
+        trace_id = inbound
+    else:
+        trace_id = str(uuid4())
+    request.state.trace_id = trace_id
+
+    # Pull request id (gateway-stamped per-HTTP) for log correlation.
+    request_id = request.headers.get("x-request-id")
+    if isinstance(request_id, str) and request_id and len(request_id) <= 200:
+        request.state.request_id = request_id
+
+    # structlog binding so every log line inside this request carries the
+    # trace id (no need for handlers to thread it).
+    structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
+    response = await call_next(request)
+    response.headers["X-Trace-Id"] = trace_id
+    if request_id:
+        response.headers["X-Request-Id"] = request_id
+    return response
+
+
 @app.exception_handler(HTTPException)
-async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
-    trace_id = uuid4().hex
-    log.warning("http_exception", trace_id=trace_id, status=exc.status_code, detail=str(exc.detail))
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    trace_id = _trace_for(request)
+    request_id = _request_id_for(request)
+    log.warning(
+        "http_exception",
+        trace_id=trace_id,
+        status=exc.status_code,
+        detail=str(exc.detail),
+    )
     return JSONResponse(
         status_code=exc.status_code,
-        content=_error_envelope(exc, trace_id),
+        content={"error": _error_envelope(exc, trace_id, request_id)},
         headers={"X-Trace-Id": trace_id},
     )
 
 
 @app.exception_handler(Exception)
-async def _unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
-    trace_id = uuid4().hex
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    trace_id = _trace_for(request)
+    request_id = _request_id_for(request)
     # Log the full exception text so support can correlate; the response body
     # only carries the sanitized envelope.
-    log.error("unhandled_exception", trace_id=trace_id, error=redact_exception_text(str(exc)), kind=type(exc).__name__)
+    log.error(
+        "unhandled_exception",
+        trace_id=trace_id,
+        error=redact_exception_text(str(exc)),
+        kind=type(exc).__name__,
+    )
     status = 402 if isinstance(exc, BudgetExhausted) else 500
     return JSONResponse(
         status_code=status,
-        content=_error_envelope(exc, trace_id),
+        content={"error": _error_envelope(exc, trace_id, request_id)},
         headers={"X-Trace-Id": trace_id},
     )
 
@@ -249,6 +389,7 @@ class AskPayload(BaseModel):
 async def ask_stream(
     payload: AskPayload,
     user_id: UserDep,
+    request: Request,
     x_relay_thread_id: Annotated[str | None, Header()] = None,
     x_relay_surface: Annotated[str | None, Header()] = None,
     x_relay_locale: Annotated[str | None, Header()] = None,
@@ -271,9 +412,7 @@ async def ask_stream(
     # /ask/stream had been trusting the header — fixed here. Falling back
     # to ask_vantage_thread_id(user_id) when no header is sent is still
     # safe — that helper derives the thread from the user's own id.
-    if x_relay_thread_id and not _owns_dock_thread(
-        thread_id=x_relay_thread_id, user_id=user_id
-    ):
+    if x_relay_thread_id and not _owns_dock_thread(thread_id=x_relay_thread_id, user_id=user_id):
         log.warning(
             "ask_stream.thread_id_mismatch",
             thread_id=x_relay_thread_id,
@@ -304,6 +443,13 @@ async def ask_stream(
         request_id=x_request_id,
     )
 
+    # The middleware stashed the inbound (or freshly minted) trace id on
+    # request.state — read it once here and thread it through the
+    # generator so every SSE error frame correlates with the same
+    # traceId / R-XXXX support reference.
+    trace_id = _trace_for(request)
+    req_id = _request_id_for(request) or x_request_id
+
     async def gen() -> AsyncIterator[str]:
         yield _sse({"event": "thinking", "agent": "coordinator"})
 
@@ -332,6 +478,8 @@ async def ask_stream(
                     thread_id=thread_id,
                     surface=surface,
                     locale=locale,
+                    trace_id=trace_id,
+                    request_id=req_id,
                 ):
                     yield chunk
                 yield _sse({"event": "done"})
@@ -344,6 +492,8 @@ async def ask_stream(
                 thread_id=thread_id,
                 surface=surface,
                 locale=locale,
+                trace_id=trace_id,
+                request_id=req_id,
             ):
                 yield chunk
             yield _sse({"event": "done"})
@@ -370,12 +520,18 @@ async def ask_stream(
             thread_id=thread_id,
             surface=surface,
             locale=locale,
+            trace_id=trace_id,
+            request_id=req_id,
         ):
             yield chunk
 
         yield _sse({"event": "done"})
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    # Wrap the dock generator in a 10 s heartbeat (event: "ping"). Keeps
+    # intermediaries from killing the SSE connection during long ReAct
+    # thinking pauses and lets the dock idle-watchdog distinguish
+    # "agent is alive but quiet" from "stream is dead".
+    return StreamingResponse(_with_heartbeat(gen()), media_type="text/event-stream")
 
 
 async def _dispatch_and_persist(
@@ -386,6 +542,8 @@ async def _dispatch_and_persist(
     thread_id: str,
     surface: str,
     locale: str | None = None,
+    trace_id: str | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Shared body for legacy + regex-fast-path branches.
 
@@ -411,14 +569,18 @@ async def _dispatch_and_persist(
             assistant_text=_result_summary(result),
         )
     except Exception as exc:  # noqa: BLE001 boundary
-        trace_id = uuid4().hex
+        # Reuse the request-scoped trace id (from the middleware) so this
+        # error frame correlates with every other log line for the same
+        # turn. Falling back to a fresh UUID only happens when the SSE
+        # generator was constructed outside an HTTP request (tests).
+        tid = trace_id or str(uuid4())
         log.error(
             "ask_stream.dispatch_failed",
-            trace_id=trace_id,
+            trace_id=tid,
             error=redact_exception_text(str(exc)),
             kind=type(exc).__name__,
         )
-        envelope = _error_envelope(exc, trace_id)
+        envelope = _error_envelope(exc, tid, request_id)
         yield _sse({"event": "error", **envelope})
 
 
@@ -429,6 +591,8 @@ async def _stream_dock_turn(
     thread_id: str,
     surface: str,
     locale: str | None = None,
+    trace_id: str | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Run the Dock ReAct loop and translate its events to SSE frames.
 
@@ -453,9 +617,7 @@ async def _stream_dock_turn(
     from agents.coordinator.user_brief import build_user_brief
     from agents.harness.locale import language_directive
 
-    tokens = dock_tools.set_dock_context(
-        user_id=user_id, thread_id=thread_id, surface=surface
-    )
+    tokens = dock_tools.set_dock_context(user_id=user_id, thread_id=thread_id, surface=surface)
     # Pin the dock's reply language to the user's UI locale (X-Relay-Locale).
     # Passed as an extra system block so the persistent graph prompt stays
     # cacheable. Falls back to charset detection of the message when locale
@@ -495,14 +657,23 @@ async def _stream_dock_turn(
                 for frame in frames:
                     yield frame
         except Exception as exc:  # noqa: BLE001 boundary
-            trace_id = uuid4().hex
+            tid = trace_id or str(uuid4())
+            # Some exceptions (notably bare ``raise NotImplementedError`` deep
+            # in LangGraph / a streaming adapter) carry no message — the
+            # one-line redacted str(exc) is then empty and useless. Capture
+            # the full chained traceback (redacted) so operators can find the
+            # root frame the next time this fires.
+            import traceback as _tb
+
+            tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
             log.error(
                 "ask_stream.dock_turn_failed",
-                trace_id=trace_id,
+                trace_id=tid,
                 error=redact_exception_text(str(exc)),
                 kind=type(exc).__name__,
+                traceback=redact_exception_text(tb_text),
             )
-            envelope = _error_envelope(exc, trace_id)
+            envelope = _error_envelope(exc, tid, request_id)
             yield _sse({"event": "error", **envelope})
         else:
             assistant_text = "".join(assistant_buf).strip()
@@ -637,9 +808,7 @@ def _dock_event_to_sse(evt: Any, progress: _PlanProgress | None = None) -> list[
     if kind == "tool_start":
         tool_name = evt.payload.get("tool") or ""
         tool_args = evt.payload.get("args")
-        agent, _action = _TOOL_AGENT_MAP.get(
-            tool_name, ("coordinator", tool_name or "tool")
-        )
+        agent, _action = _TOOL_AGENT_MAP.get(tool_name, ("coordinator", tool_name or "tool"))
         # Step 4 — claim the matching plan step (if any). We never *require*
         # a match: the spinner row still goes out even when the model called
         # an off-plan tool, just without highlighting any plan row.
@@ -843,6 +1012,84 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, default=str)}\n\n"
 
 
+# Heartbeat cadence for ``_with_heartbeat``. 10 s is short enough that the
+# web idle watchdog (STREAM_IDLE_TIMEOUT_MS = 120 s in ask-stream.ts) never
+# trips on a slow LLM, and long enough that we don't spam the wire when a
+# tool is actually running. Picked deliberately to be << any real proxy /
+# load-balancer idle timeout (NGINX default 60 s).
+_HEARTBEAT_INTERVAL_S = 10.0
+
+
+async def _with_heartbeat(
+    source: AsyncIterator[str],
+    *,
+    interval_s: float = _HEARTBEAT_INTERVAL_S,
+) -> AsyncIterator[str]:
+    """Forward an SSE source and inject ``event: "ping"`` during stalls.
+
+    Round-12 dock-double-card audit: a long ReAct reasoning step (Chat
+    model thinking with no tool calls yet) used to leave the dock spinner
+    silent for the full STREAM_IDLE_TIMEOUT_MS, which (a) let intermediate
+    proxies drop the connection without notice and (b) gave the user no
+    signal that the agent was still alive. Heartbeats are pure liveness
+    pings: the TS gateway's ``toNdjson`` already drops unknown event
+    names, so old clients ignore them. Newer clients (round-12+) read
+    them to reset their idle watchdog and keep the "running" affordance
+    fresh.
+
+    Implementation note: we drive ``source.__anext__`` from a thin queue
+    pump that runs in a context-copying task (``contextvars.copy_context``).
+    Using a raw ``asyncio.create_task`` here would clone the *outer*
+    context — but the source generator (``gen()`` above) installs
+    ``ContextVar`` tokens via ``dock_tools.set_dock_context``; cancelling
+    or resetting them in a sibling context raises ``ValueError("created
+    in a different Context")``. Copying the context up-front keeps the
+    Token's owning context stable across reset.
+    """
+    import contextvars
+
+    loop = asyncio.get_running_loop()
+    parent_ctx = contextvars.copy_context()
+    queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue(maxsize=1)
+
+    async def _pump() -> None:
+        try:
+            async for chunk in source:
+                await queue.put(("chunk", chunk))
+        except BaseException as exc:  # propagate raise to the outer loop
+            await queue.put(("error", repr(exc)))
+            raise
+        finally:
+            await queue.put(("done", None))
+
+    pump_task = loop.create_task(parent_ctx.run(lambda: _pump()))
+    try:
+        while True:
+            try:
+                kind, payload = await asyncio.wait_for(queue.get(), timeout=interval_s)
+            except TimeoutError:
+                yield _sse({"event": "ping", "ts": loop.time()})
+                continue
+            if kind == "done":
+                return
+            if kind == "error":
+                # The pump task already raised; re-raise its exception here
+                # so the outer ``except Exception`` block in gen() / the
+                # FastAPI boundary handler logs and emits an error frame.
+                await pump_task
+                return
+            yield payload or ""
+    finally:
+        if not pump_task.done():
+            pump_task.cancel()
+            try:
+                await pump_task
+            except (asyncio.CancelledError, Exception):
+                # Pump teardown errors are not user-visible — the boundary
+                # handler in gen() already captured anything that matters.
+                pass
+
+
 # ───────────────────────────────────────────────────────────────────────
 # Ask Vantage — HITL resume (P1-C, Sprint 2 scaffolding)
 # ───────────────────────────────────────────────────────────────────────
@@ -898,7 +1145,9 @@ class AskResumePayload(BaseModel):
 
 
 @app.post("/ask/resume")
-async def ask_resume(payload: AskResumePayload, user_id: UserDep) -> StreamingResponse:
+async def ask_resume(
+    payload: AskResumePayload, user_id: UserDep, request: Request
+) -> StreamingResponse:
     """Resume a dock thread that's parked on an ``interrupt()`` call.
 
     The resume_token is shaped ``{thread_id}#{checkpoint_id}`` so we can do
@@ -921,10 +1170,13 @@ async def ask_resume(payload: AskResumePayload, user_id: UserDep) -> StreamingRe
 
     from agents.coordinator import dock_agent, dock_tools
 
+    # Read the request-scoped trace context once so error frames reuse it
+    # instead of minting a stray bare-hex id per failure.
+    trace_id = _trace_for(request)
+    req_id = _request_id_for(request)
+
     async def gen() -> AsyncIterator[str]:
-        tokens = dock_tools.set_dock_context(
-            user_id=user_id, thread_id=thread_id, surface="dock"
-        )
+        tokens = dock_tools.set_dock_context(user_id=user_id, thread_id=thread_id, surface="dock")
         try:
             graph = dock_agent.build_dock_graph()
             cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 12}
@@ -939,20 +1191,21 @@ async def ask_resume(payload: AskResumePayload, user_id: UserDep) -> StreamingRe
                     yield frame
             yield _sse({"event": "done"})
         except Exception as exc:  # noqa: BLE001 boundary
-            trace_id = uuid4().hex
             log.error(
                 "ask_resume.failed",
                 trace_id=trace_id,
                 error=redact_exception_text(str(exc)),
                 kind=type(exc).__name__,
             )
-            envelope = _error_envelope(exc, trace_id)
+            envelope = _error_envelope(exc, trace_id, req_id)
             yield _sse({"event": "error", **envelope})
             yield _sse({"event": "done"})
         finally:
             dock_tools.reset_dock_context(tokens)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    # Same heartbeat treatment as /ask/stream — keeps the resumed turn's
+    # SSE connection alive across the user's approval ↔ next-tool gap.
+    return StreamingResponse(_with_heartbeat(gen()), media_type="text/event-stream")
 
 
 def _owns_dock_thread(*, thread_id: str, user_id: UUID) -> bool:
@@ -1158,7 +1411,7 @@ class PrepareApplicationPayload(BaseModel):
     base_resume_content: dict[str, Any]
     base_resume_version: int = 1
     form_fields: list[dict[str, Any]] = []  # ATS field descriptors; may be empty
-    application_id: UUID | None = None       # idempotency: reuse a draft row
+    application_id: UUID | None = None  # idempotency: reuse a draft row
 
 
 @app.post("/applications/prepare")
@@ -1399,7 +1652,9 @@ async def mock_start(payload: MockStartPayload, user_id: UserDep) -> dict[str, A
     session_id = uuid4()
 
     # Create the interview_sessions row so save_to_card can UPDATE later.
-    await _create_session_row(user_id=user_id, session_id=session_id, mode_id=mode["id"], company=payload.company)
+    await _create_session_row(
+        user_id=user_id, session_id=session_id, mode_id=mode["id"], company=payload.company
+    )
 
     graph = interview_agent.build_mock_graph(mode)
     config = {"configurable": {"thread_id": mock_thread_id(str(session_id))}}
@@ -1513,7 +1768,9 @@ class BuildResumeResumePayload(BaseModel):
 
 
 @app.post("/build_resume/resume")
-async def build_resume_resume(payload: BuildResumeResumePayload, user_id: UserDep) -> dict[str, Any]:
+async def build_resume_resume(
+    payload: BuildResumeResumePayload, user_id: UserDep
+) -> dict[str, Any]:
     # HITL_R4 (round-8): the build_resume thread_id is structured as
     # `build_resume:{user_id}:{session_id}` (see checkpointer.py); we can
     # verify ownership cheaply by parsing the embedded user_id. The audit
@@ -1548,7 +1805,9 @@ async def build_resume_resume(payload: BuildResumeResumePayload, user_id: UserDe
 # ───────────────────────────────────────────────────────────────────────
 
 
-async def _create_session_row(user_id: UUID, session_id: UUID, mode_id: UUID, company: str | None) -> None:
+async def _create_session_row(
+    user_id: UUID, session_id: UUID, mode_id: UUID, company: str | None
+) -> None:
     import os
 
     import psycopg

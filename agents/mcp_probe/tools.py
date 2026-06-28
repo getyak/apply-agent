@@ -15,6 +15,7 @@ E2E mode (RELAY_MCP_PROBE_FAKE=1):
     without PG / Redis / OpenRouter. The fabrication_guard from resume_agent
     is still invoked on the fake path — that's the whole point of running it.
 """
+
 from __future__ import annotations
 
 import os
@@ -156,9 +157,7 @@ async def _search_jobs_real(needle: str) -> dict[str, Any]:
 # ─── tailor_resume ───────────────────────────────────────────────────────
 
 
-async def tailor_resume(
-    base_resume_id: str, jd_id: str, user_id: str
-) -> dict[str, Any]:
+async def tailor_resume(base_resume_id: str, jd_id: str, user_id: str) -> dict[str, Any]:
     """Tailor a base résumé for a JD, with fabrication_guard always on.
 
     Fake mode produces a deterministic "tailored" résumé by reversing the
@@ -190,8 +189,7 @@ def _tailor_resume_fake(base_resume_id: str, jd_id: str, user_id: str) -> dict[s
     tailored = {
         "basics": dict(base["basics"]),
         "work": [
-            {**w, "highlights": list(reversed(w.get("highlights", [])))}
-            for w in base["work"]
+            {**w, "highlights": list(reversed(w.get("highlights", [])))} for w in base["work"]
         ],
         "skills": list(base["skills"]),
     }
@@ -218,9 +216,7 @@ def _tailor_resume_fake(base_resume_id: str, jd_id: str, user_id: str) -> dict[s
     }
 
 
-async def _tailor_resume_real(
-    base_resume_id: str, jd_id: str, user_id: str
-) -> dict[str, Any]:
+async def _tailor_resume_real(base_resume_id: str, jd_id: str, user_id: str) -> dict[str, Any]:
     """Live path — loads base + JD from PG, calls resume_agent.customize."""
     import json
 

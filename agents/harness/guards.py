@@ -7,6 +7,7 @@ Important: post_model_hook does NOT inject InjectedState into tools (LangGraph
 issue #4841 — see docs/architecture/agent-harness.md § 已知风险). All guards
 operate directly on the state dict the hook receives.
 """
+
 from __future__ import annotations
 
 import os
@@ -95,17 +96,13 @@ def post_model_hook(state: dict[str, Any]) -> dict[str, Any]:
         pending_cents += float(legacy_pending)
 
     if pending_cents:
-        update["total_cost_cents"] = round(
-            state.get("total_cost_cents", 0.0) + pending_cents, 4
-        )
+        update["total_cost_cents"] = round(state.get("total_cost_cents", 0.0) + pending_cents, 4)
         update["_pending_cost_cents"] = 0.0
 
     budget = state.get("_budget", DEFAULT_BUDGET)
     running_cost = update.get("total_cost_cents", state.get("total_cost_cents", 0.0))
     if running_cost > budget.cost_limit_cents:
-        raise BudgetExhausted(
-            f"session cost {running_cost:.4f}c > {budget.cost_limit_cents}c"
-        )
+        raise BudgetExhausted(f"session cost {running_cost:.4f}c > {budget.cost_limit_cents}c")
     if update["total_tokens"] > budget.token_budget:
         # context.py picks this up and compacts; for now signal a soft cap.
         update["_needs_compaction"] = True

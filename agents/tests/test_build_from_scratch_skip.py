@@ -8,6 +8,7 @@ Locks down:
   - _route_after_review routes to clear node when edit_step is present
   - _route_after_review returns END when edit_step missing / unrecognised
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -62,13 +63,7 @@ async def test_prefill_reads_preferences_and_resume():
             ]
         if "FROM resumes" in sql:
             return [
-                {
-                    "content": {
-                        "work": [
-                            {"position": "Senior Software Engineer", "company": "X"}
-                        ]
-                    }
-                }
+                {"content": {"work": [{"position": "Senior Software Engineer", "company": "X"}]}}
             ]
         return []
 
@@ -95,9 +90,7 @@ async def test_prefill_does_not_clobber_existing_state():
         return []
 
     with patch("agents.tools.auto.pg_query", new=AsyncMock(side_effect=fake_pg)):
-        out = await workflows.prefill_from_profile(
-            {"user_id": uuid4(), "target_role": "New Role"}
-        )
+        out = await workflows.prefill_from_profile({"user_id": uuid4(), "target_role": "New Role"})
     assert "target_role" not in out
 
 

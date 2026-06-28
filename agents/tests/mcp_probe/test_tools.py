@@ -6,6 +6,7 @@ These do NOT go through the MCP stdio transport. They prove:
 - tailor_resume returns {ok: False, fabricated: [...]} when fabrication is
   injected, never silently passing
 """
+
 from __future__ import annotations
 
 import pytest

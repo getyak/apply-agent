@@ -11,6 +11,7 @@ Red lines under test (vision.md / §12.2):
   - normalize unifies date format to YYYY–YYYY
   - every persisted finding carries proposed_by='intake'
 """
+
 from __future__ import annotations
 
 from uuid import uuid4
@@ -219,23 +220,39 @@ async def test_intake_persists_with_proposed_by_intake(monkeypatch) -> None:
     captured: dict = {}
 
     async def fake_get_resume(resume_id, user_id):
-        return {"id": str(rid), "content": {"parsed": BASE}, "track": "original",
-                "bullet_index": {}, "version": 1}
+        return {
+            "id": str(rid),
+            "content": {"parsed": BASE},
+            "track": "original",
+            "bullet_index": {},
+            "version": 1,
+        }
 
     async def fake_proofread(parsed):
-        return [{
-            "bullet_stable_id": None, "section": "work", "change_type": "infer_wording",
-            "before_text": "Worked on platfrom migration.",
-            "after_text": "Worked on platform migration.",
-            "rationale": "typo", "risk_level": "needs_review",
-        }]
+        return [
+            {
+                "bullet_stable_id": None,
+                "section": "work",
+                "change_type": "infer_wording",
+                "before_text": "Worked on platfrom migration.",
+                "after_text": "Worked on platform migration.",
+                "rationale": "typo",
+                "risk_level": "needs_review",
+            }
+        ]
 
     async def fake_normalize(parsed):
-        return [{
-            "bullet_stable_id": None, "section": "skills", "change_type": "normalize_skill",
-            "before_text": "js", "after_text": "JavaScript",
-            "rationale": "canon", "risk_level": "safe",
-        }]
+        return [
+            {
+                "bullet_stable_id": None,
+                "section": "skills",
+                "change_type": "normalize_skill",
+                "before_text": "js",
+                "after_text": "JavaScript",
+                "rationale": "canon",
+                "risk_level": "safe",
+            }
+        ]
 
     async def fake_quality(parsed, bullet_index):
         return []
@@ -275,8 +292,13 @@ async def test_intake_degrades_when_validator_raises(monkeypatch) -> None:
     rid, uid = uuid4(), uuid4()
 
     async def fake_get_resume(resume_id, user_id):
-        return {"id": str(rid), "content": {"parsed": BASE}, "track": "original",
-                "bullet_index": {}, "version": 1}
+        return {
+            "id": str(rid),
+            "content": {"parsed": BASE},
+            "track": "original",
+            "bullet_index": {},
+            "version": 1,
+        }
 
     async def boom(parsed):
         raise RuntimeError("openrouter timeout")

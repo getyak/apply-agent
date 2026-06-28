@@ -27,6 +27,7 @@ on disk today (the design doc lists 5 agents but the codebase ships 4); the
 ``trends_today`` tool returns ``not_implemented`` so the Dock can still reason
 about the intent without crashing on import.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -502,10 +503,7 @@ async def trends_today() -> dict[str, Any]:
         "status": "not_implemented",
         "agent": "trend_agent",
         "action": "daily_snapshot",
-        "summary": (
-            "Trend agent is on the roadmap — wired into the plan but not "
-            "generating yet."
-        ),
+        "summary": ("Trend agent is on the roadmap — wired into the plan but not generating yet."),
     }
 
 
@@ -550,9 +548,7 @@ async def recall_user_memory(query: str, limit: int = 5) -> dict[str, Any]:
         return {"status": "unavailable", "items": [], "query": query}
     return {
         "status": "ok",
-        "items": [
-            {"kind": r["kind"], "summary": r["summary"]} for r in rows if r.get("summary")
-        ],
+        "items": [{"kind": r["kind"], "summary": r["summary"]} for r in rows if r.get("summary")],
         "query": query,
     }
 

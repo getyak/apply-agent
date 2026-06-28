@@ -10,6 +10,7 @@ so a default `uv sync` doesn't break.
 RELAY_MCP_PROBE_FAKE=1 is set on the subprocess env so neither the test nor
 the server needs PG / Redis / OpenRouter to be running.
 """
+
 from __future__ import annotations
 
 import json

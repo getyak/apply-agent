@@ -165,18 +165,24 @@ export function useResumeEdit({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Latest values kept in refs so the autosave timer reads the freshest
   // value (closure capture would lock it to the version at scheduling time).
+  // React 19 / Compiler lint (react-hooks/refs) forbids ref writes during
+  // render — assign inside a useEffect that fires after every commit instead.
+  // Behavior is equivalent: the timer callback always reads after a render
+  // has settled, never inside one.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
   const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
   const versionRef = useRef(effectiveVersion);
-  versionRef.current = effectiveVersion;
   const conflictRef = useRef(conflict);
-  conflictRef.current = conflict;
   const resumeIdRef = useRef(resumeId);
-  resumeIdRef.current = resumeId;
   const onSavedRef = useRef(onSaved);
-  onSavedRef.current = onSaved;
+  useEffect(() => {
+    draftRef.current = draft;
+    dirtyRef.current = dirty;
+    versionRef.current = effectiveVersion;
+    conflictRef.current = conflict;
+    resumeIdRef.current = resumeId;
+    onSavedRef.current = onSaved;
+  });
   // Forward reference to doSave so the rehydrate-effect (which runs before
   // doSave is declared in the file order) can fire a deferred draft save.
   const doSaveRef = useRef<((mode: "draft" | "snapshot") => Promise<void>) | null>(null);
@@ -185,7 +191,14 @@ export function useResumeEdit({
   // doc as our new buffer — clearing dirty/status/conflict because none of
   // that pertains to the new row. Also rehydrate a saved draft for this
   // identity so a page refresh doesn't lose work.
+  //
+  // Why setState inside an effect is correct here (despite react-hooks/
+  // set-state-in-effect): this effect is *synchronizing local state with an
+  // external system* (window.localStorage + the changed resumeId×baseVersion
+  // identity from props). That is exactly the legitimate use case the rule's
+  // own guidance carves out — see https://react.dev/learn/you-might-not-need-an-effect.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- identity-change reset; this effect synchronizes local edit state with the external resumeId×baseVersion identity + localStorage.
     setDraft(initialDoc);
     setDirty(new Set());
     setStatus({ kind: "idle" });
@@ -302,8 +315,11 @@ export function useResumeEdit({
     }
   }, []);
   // Publish the live doSave to the forward ref so the rehydrate effect above
-  // can flush a freshly-restored draft.
-  doSaveRef.current = doSave;
+  // can flush a freshly-restored draft. Ref-write must live in an effect to
+  // satisfy react-hooks/refs (no ref mutation during render).
+  useEffect(() => {
+    doSaveRef.current = doSave;
+  }, [doSave]);
 
   // Schedule (or reschedule) a debounced autosave. Called by commit().
   const scheduleAutosave = useCallback(() => {

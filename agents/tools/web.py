@@ -22,6 +22,7 @@ Design source: docs/architecture/agent-harness.md § 1.1 (P1-1 — agent
 sense of external world). Without this the entire "search company
 interview process" / "find recent layoff news" path is blank.
 """
+
 from __future__ import annotations
 
 import os
@@ -61,9 +62,7 @@ class SearchHit:
 # ─────────────────────────────────────────────────────────────────────
 
 
-async def web_search(
-    query: str, *, max_results: int = 5, region: str = "us-en"
-) -> dict[str, Any]:
+async def web_search(query: str, *, max_results: int = 5, region: str = "us-en") -> dict[str, Any]:
     """Search the open web. Returns ``{status, source, results: [SearchHit-dict]}``.
 
     Two backends, picked at call time:
@@ -94,9 +93,7 @@ async def web_search(
                 "results": [h.__dict__ for h in hits],
             }
         except Exception as exc:  # noqa: BLE001 — fall through to DDG
-            log.warning(
-                "web_search.tavily_failed", error=str(exc), kind=type(exc).__name__
-            )
+            log.warning("web_search.tavily_failed", error=str(exc), kind=type(exc).__name__)
 
     try:
         hits = await _search_ddg(query, max_results=max_results, region=region)
@@ -152,9 +149,7 @@ _DDG_RESULT_RE = re.compile(
 )
 
 
-async def _search_ddg(
-    query: str, *, max_results: int, region: str
-) -> list[SearchHit]:
+async def _search_ddg(query: str, *, max_results: int, region: str) -> list[SearchHit]:
     """DuckDuckGo lite (no-JS HTML) scraper. No API key required."""
     async with httpx.AsyncClient(
         timeout=WEB_HTTP_TIMEOUT_S,

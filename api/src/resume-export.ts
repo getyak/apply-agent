@@ -75,8 +75,8 @@ function slugify(s: unknown): string {
 }
 
 /** Return the canonical Markdown for a parsed résumé. */
-export function exportMarkdown(parsed: JsonResume): string {
-  return jsonResumeToMarkdown(parsed);
+export function exportMarkdown(parsed: JsonResume, locale: "en" | "zh" = "en"): string {
+  return jsonResumeToMarkdown(parsed, { locale });
 }
 
 /**

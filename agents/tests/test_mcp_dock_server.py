@@ -9,6 +9,7 @@ present, builds the server and verifies:
   - Unknown tool names surface as an error (either raised or via
     isError flag, depending on SDK version)
 """
+
 from __future__ import annotations
 
 import json
@@ -46,9 +47,7 @@ async def test_build_server_registers_full_catalog():
     payload = getattr(result, "root", result)
     names = {tool.name for tool in payload.tools}
     expected = {spec["name"] for spec in TOOL_CATALOG}
-    assert names == expected, (
-        f"catalog mismatch: {expected - names} vs {names - expected}"
-    )
+    assert names == expected, f"catalog mismatch: {expected - names} vs {names - expected}"
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ Locks down the P0-4 fix:
 The integration smoke is the only place where we touch build_dock_graph;
 all the logic lives in pure unit tests against the hook function.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -85,10 +86,7 @@ def test_maybe_compact_keeps_multiple_system_messages():
     new = update["messages"]
     # Both system messages preserved, summary inserted, then the tail.
     assert isinstance(new[0], SystemMessage) and new[0].content == "base"
-    assert (
-        isinstance(new[1], SystemMessage)
-        and new[1].content == "resume_studio_context"
-    )
+    assert isinstance(new[1], SystemMessage) and new[1].content == "resume_studio_context"
     assert isinstance(new[2], SystemMessage) and "Summary of" in new[2].content
 
 
@@ -161,12 +159,8 @@ def test_build_dock_graph_wires_pre_model_hook(monkeypatch):
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        "agents.coordinator.dock_agent.create_react_agent", fake_create_react_agent
-    )
-    monkeypatch.setattr(
-        "agents.coordinator.dock_agent.pick_model", lambda *a, **kw: object()
-    )
+    monkeypatch.setattr("agents.coordinator.dock_agent.create_react_agent", fake_create_react_agent)
+    monkeypatch.setattr("agents.coordinator.dock_agent.pick_model", lambda *a, **kw: object())
 
     from agents.coordinator import dock_agent
 

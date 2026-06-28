@@ -20,6 +20,7 @@ import { query } from "../db";
 import { rateLimit } from "../middleware/rate-limit";
 import { NotFoundError } from "../errors";
 import { jsonResumeToMarkdown } from "../resume-markdown";
+import { resolveLocale } from "../locale";
 import type { JsonResume } from "../resume-parse";
 import type { AppEnv } from "../types";
 
@@ -60,7 +61,11 @@ app.get("/:token", async (c) => {
   }
 
   const row = result.rows[0];
-  const { parsed, markdown } = unwrapForPublic(row.content);
+  // Public share has no logged-in user, so locale falls through to
+  // X-Relay-Locale (if a logged-in viewer's browser sends it) → Accept-Language
+  // → "en". The persisted markdown wins whenever present — it was rendered
+  // under the publishing user's locale at write time.
+  const { parsed, markdown } = unwrapForPublic(row.content, resolveLocale(c));
 
   return c.json({
     // basics only — never expose user_id, email, file ids, etc.
@@ -83,7 +88,7 @@ app.get("/:token", async (c) => {
  * In both cases we recompute markdown when absent so the public page always
  * has a string to render — no client-side JSON-to-MD work.
  */
-function unwrapForPublic(content: unknown): {
+function unwrapForPublic(content: unknown, locale: "en" | "zh" = "en"): {
   parsed: JsonResume;
   markdown: string;
 } {
@@ -96,11 +101,11 @@ function unwrapForPublic(content: unknown): {
     const md =
       typeof env.markdown === "string" && env.markdown.length > 0
         ? env.markdown
-        : jsonResumeToMarkdown(env.parsed);
+        : jsonResumeToMarkdown(env.parsed, { locale });
     return { parsed: env.parsed, markdown: md };
   }
   const flat = (content ?? {}) as JsonResume;
-  return { parsed: flat, markdown: jsonResumeToMarkdown(flat) };
+  return { parsed: flat, markdown: jsonResumeToMarkdown(flat, { locale }) };
 }
 
 export default app;

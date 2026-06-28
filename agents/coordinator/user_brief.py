@@ -22,6 +22,7 @@ Each section is "best-effort": if a query fails or returns nothing, the
 section is omitted (not faked). The whole helper degrades to an empty
 brief if RELAY_PG_DSN is absent, so unit tests stay hermetic.
 """
+
 from __future__ import annotations
 
 import json
@@ -69,8 +70,7 @@ async def build_user_brief(user_id: UUID) -> str:
     return (
         "## What you remember about this user\n\n"
         "(This is read-only context. Don't paraphrase it back verbatim — "
-        "reference it naturally when the user's request connects.)\n\n"
-        + "\n\n".join(sections)
+        "reference it naturally when the user's request connects.)\n\n" + "\n\n".join(sections)
     )
 
 
@@ -82,14 +82,16 @@ async def build_user_brief(user_id: UUID) -> str:
 async def _resume_section(user_id: UUID) -> str:
     from agents.tools.auto import pg_query
 
+    # NB: `resumes` only has `created_at` (no updated_at / deleted_at — see
+    # infra/postgres/migrations/004_resumes.sql + 017_dual_track). Soft-delete
+    # lives at the file layer (`user_files.deleted_at`), not on the résumé row.
     try:
         rows = await pg_query(
             """
-            SELECT id, version, content, track, is_base, updated_at
+            SELECT id, version, content, track, is_base, created_at
             FROM resumes
             WHERE user_id = %s
-              AND deleted_at IS NULL
-            ORDER BY COALESCE(updated_at, created_at) DESC
+            ORDER BY created_at DESC
             LIMIT 1
             """,
             (str(user_id),),

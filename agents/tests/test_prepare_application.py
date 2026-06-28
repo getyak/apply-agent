@@ -16,6 +16,7 @@ Everything is stubbed:
 - appprep.generate_form_answers    → returns canned FormFieldAnswer list (or real, sensitive-skip case)
 - TTAR persist sink (_persist)     → captured into a list, no DB needed
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -81,7 +82,12 @@ def _stub_parsed_jd(*, source="greenhouse", external_id="4071234"):
 BASE_RESUME = {
     "basics": {"name": "Alice Engineer", "email": "alice@example.com"},
     "work": [
-        {"company": "Synthetic Labs", "position": "Engineer", "startDate": "2020", "endDate": "2024"},
+        {
+            "company": "Synthetic Labs",
+            "position": "Engineer",
+            "startDate": "2020",
+            "endDate": "2024",
+        },
     ],
     "skills": [{"name": "TypeScript"}, {"name": "PostgreSQL"}],
 }
@@ -253,7 +259,11 @@ async def test_prepare_application_cover_fallback_keeps_form_running(monkeypatch
     async def fake_form(**kwargs):
         return [
             appprep.FormFieldAnswer(
-                id="why_us", answer="I like building stuff.", skip=False, reason=None, confidence=0.6
+                id="why_us",
+                answer="I like building stuff.",
+                skip=False,
+                reason=None,
+                confidence=0.6,
             )
         ]
 
@@ -299,7 +309,11 @@ async def test_prepare_application_sensitive_field_is_skipped(monkeypatch, ttar_
 
     async def fake_cover(**kwargs):
         return appprep.CoverLetter(
-            subject="...", body="Dear...\nBest, Alice", tone="warm", fallback=False, fabricated_entities=[]
+            subject="...",
+            body="Dear...\nBest, Alice",
+            tone="warm",
+            fallback=False,
+            fabricated_entities=[],
         )
 
     monkeypatch.setattr(jm, "parse_jd_from_url", fake_parse_jd)

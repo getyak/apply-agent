@@ -7,6 +7,7 @@ Locks down:
   - JSON parse failure → fallback "couldn't parse" brief, never raises
   - fetch_intel(crowdsourced) falls back to web when pool is empty
 """
+
 from __future__ import annotations
 
 import json
@@ -78,8 +79,9 @@ async def test_intel_from_web_extracts_questions_from_hits():
     fake_model = AsyncMock()
     fake_model.ainvoke = AsyncMock(return_value=_FakeMsg(fake_llm_response))
 
-    with patch("agents.tools.web.web_search", new=AsyncMock(return_value=fake_search)), patch(
-        "agents.nodes.interview_agent.pick_model", return_value=fake_model
+    with (
+        patch("agents.tools.web.web_search", new=AsyncMock(return_value=fake_search)),
+        patch("agents.nodes.interview_agent.pick_model", return_value=fake_model),
     ):
         brief = await interview_agent._intel_from_web("Anthropic", "MTS", "phone_screen")
 
@@ -108,8 +110,9 @@ async def test_intel_from_web_parse_failure_is_safe():
     fake_model = AsyncMock()
     fake_model.ainvoke = AsyncMock(return_value=_FakeMsg())
 
-    with patch("agents.tools.web.web_search", new=AsyncMock(return_value=fake_search)), patch(
-        "agents.nodes.interview_agent.pick_model", return_value=fake_model
+    with (
+        patch("agents.tools.web.web_search", new=AsyncMock(return_value=fake_search)),
+        patch("agents.nodes.interview_agent.pick_model", return_value=fake_model),
     ):
         brief = await interview_agent._intel_from_web("X", None, None)
 
@@ -137,8 +140,9 @@ async def test_intel_from_web_strips_markdown_code_fence():
     fake_model = AsyncMock()
     fake_model.ainvoke = AsyncMock(return_value=_FakeMsg())
 
-    with patch("agents.tools.web.web_search", new=AsyncMock(return_value=fake_search)), patch(
-        "agents.nodes.interview_agent.pick_model", return_value=fake_model
+    with (
+        patch("agents.tools.web.web_search", new=AsyncMock(return_value=fake_search)),
+        patch("agents.nodes.interview_agent.pick_model", return_value=fake_model),
     ):
         brief = await interview_agent._intel_from_web("X", None, None)
 
@@ -170,16 +174,17 @@ async def test_fetch_intel_crowdsourced_falls_back_to_web():
         "jd_real_focus": ["web focus"],
     }
 
-    with patch(
-        "agents.nodes.interview_agent._intel_from_pool",
-        new=AsyncMock(return_value=empty_pool_brief),
-    ), patch(
-        "agents.nodes.interview_agent._intel_from_web",
-        new=AsyncMock(return_value=web_brief),
-    ), patch(
-        "agents.nodes.interview_agent.redis_get", new=AsyncMock(return_value=None)
-    ), patch(
-        "agents.nodes.interview_agent.redis_setex", new=AsyncMock(return_value=None)
+    with (
+        patch(
+            "agents.nodes.interview_agent._intel_from_pool",
+            new=AsyncMock(return_value=empty_pool_brief),
+        ),
+        patch(
+            "agents.nodes.interview_agent._intel_from_web",
+            new=AsyncMock(return_value=web_brief),
+        ),
+        patch("agents.nodes.interview_agent.redis_get", new=AsyncMock(return_value=None)),
+        patch("agents.nodes.interview_agent.redis_setex", new=AsyncMock(return_value=None)),
     ):
         brief = await interview_agent.fetch_intel(
             company="Anthropic", role="MTS", round_type=None, mode=mode
@@ -207,15 +212,14 @@ async def test_fetch_intel_crowdsourced_keeps_pool_when_not_empty():
     }
     web_call = AsyncMock()
 
-    with patch(
-        "agents.nodes.interview_agent._intel_from_pool",
-        new=AsyncMock(return_value=pool_brief),
-    ), patch(
-        "agents.nodes.interview_agent._intel_from_web", new=web_call
-    ), patch(
-        "agents.nodes.interview_agent.redis_get", new=AsyncMock(return_value=None)
-    ), patch(
-        "agents.nodes.interview_agent.redis_setex", new=AsyncMock(return_value=None)
+    with (
+        patch(
+            "agents.nodes.interview_agent._intel_from_pool",
+            new=AsyncMock(return_value=pool_brief),
+        ),
+        patch("agents.nodes.interview_agent._intel_from_web", new=web_call),
+        patch("agents.nodes.interview_agent.redis_get", new=AsyncMock(return_value=None)),
+        patch("agents.nodes.interview_agent.redis_setex", new=AsyncMock(return_value=None)),
     ):
         brief = await interview_agent.fetch_intel(
             company="Anthropic", role="MTS", round_type=None, mode=mode

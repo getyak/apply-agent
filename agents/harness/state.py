@@ -24,6 +24,7 @@ LoopBehavior = Literal["standalone", "save_to_card", "replay_real_interview"]
 
 class InterviewMode(TypedDict):
     """Loaded from interview_modes table."""
+
     id: UUID
     slug: str
     display_name: str
@@ -37,6 +38,7 @@ class InterviewMode(TypedDict):
 
 class IntelBrief(TypedDict, total=False):
     """Returned by fetch_intel; stored as JSONB on interview_sessions.intel_brief."""
+
     round_minutes: int
     interviewer_style: str
     frequent_questions: list[dict]  # [{q, probability: 0..1, trap: bool}]
@@ -45,6 +47,7 @@ class IntelBrief(TypedDict, total=False):
 
 class FeedbackTranslation(TypedDict, total=False):
     """Three-perspective translation (mode.feedback_style == three_perspective_translation)."""
+
     you_said: str
     interviewer_heard: str
     suggested_rephrase: str
@@ -60,6 +63,7 @@ class WeakPoint(TypedDict):
 # ── Shared coordinator state (Ask Vantage dock) ─────────────────────────
 class CoordinatorState(TypedDict, total=False):
     """Persistent across the user's lifetime ask_vantage thread."""
+
     messages: Annotated[list[BaseMessage], add_messages]
     user_id: UUID
     last_intent: str
@@ -113,27 +117,27 @@ class PrepareApplicationState(TypedDict, total=False):
     # Inputs
     jd_url: str
     base_resume_id: UUID
-    base_resume_content: dict   # JSON Resume v1.0 dict
+    base_resume_content: dict  # JSON Resume v1.0 dict
     base_resume_version: int
-    form_fields: list[dict]      # ATS field descriptors, may be empty
+    form_fields: list[dict]  # ATS field descriptors, may be empty
 
     # Stage outputs (set incrementally by nodes)
     job_id: UUID | None
-    parsed_jd: dict | None       # canonical schema from jobmatch parse
+    parsed_jd: dict | None  # canonical schema from jobmatch parse
     company: str | None
     role_title: str | None
     tailored_resume: dict | None
     tailored_resume_id: UUID | None
-    cover_letter: dict | None    # CoverLetter.to_dict()
-    form_answers: list[dict]     # [FormFieldAnswer.to_dict(), ...]
+    cover_letter: dict | None  # CoverLetter.to_dict()
+    form_answers: list[dict]  # [FormFieldAnswer.to_dict(), ...]
 
     # Saga bookkeeping
     fabrication_attempts: int
     last_error: str | None
-    stage_status: dict           # {stage_name: "ok" | "fallback" | "failed"}
+    stage_status: dict  # {stage_name: "ok" | "fallback" | "failed"}
 
     # TTAR per-stage timings — propagated through nodes (each returns the
     # accumulated dict so LangGraph's default replace-on-update reducer
     # keeps the union, not just the latest stage). Read out by
     # workflows.run_prepare_application and pushed into the TTARRecord.
-    _stage_timings: dict         # {f"{stage}_ms": int}
+    _stage_timings: dict  # {f"{stage}_ms": int}

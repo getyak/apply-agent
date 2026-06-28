@@ -7,6 +7,7 @@ Covers each tool's contract end-to-end without hitting the LLM:
   - list_my_applications wraps the applications tool
   - context guard refuses tool calls without a bound user_id
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -63,9 +64,7 @@ async def test_propose_plan_caps_string_lengths():
     out = dock_tools.propose_plan.invoke(
         {
             "user_goal": "g" * 1000,
-            "steps": [
-                {"step": "y" * 200, "agent": "resume_agent", "label": huge_label}
-            ],
+            "steps": [{"step": "y" * 200, "agent": "resume_agent", "label": huge_label}],
         }
     )
     assert len(out["user_goal"]) <= 200
@@ -136,9 +135,7 @@ async def test_trends_today_stub(bound_user):
 
 @pytest.mark.asyncio
 async def test_recall_user_memory_degrades_on_pg_failure(bound_user):
-    with patch(
-        "agents.tools.auto.pg_query", new=AsyncMock(side_effect=RuntimeError("PG down"))
-    ):
+    with patch("agents.tools.auto.pg_query", new=AsyncMock(side_effect=RuntimeError("PG down"))):
         out = await dock_tools.recall_user_memory.ainvoke({"query": "preferences"})
     assert out["status"] == "unavailable"
     assert out["items"] == []
@@ -230,9 +227,7 @@ def test_dock_context_isolation():
     """contextvars must isolate per-task — a token reset returns to None."""
     assert dock_tools._USER_CTX.get() is None
     u = uuid4()
-    tokens = dock_tools.set_dock_context(
-        user_id=u, thread_id=f"ask_vantage:{u}", surface="dock"
-    )
+    tokens = dock_tools.set_dock_context(user_id=u, thread_id=f"ask_vantage:{u}", surface="dock")
     assert dock_tools._USER_CTX.get() == u
     dock_tools.reset_dock_context(tokens)
     assert dock_tools._USER_CTX.get() is None
@@ -244,7 +239,9 @@ def test_dock_context_isolation():
 
 
 def test_narrate_returns_trimmed_thought():
-    out = dock_tools.narrate.invoke({"thought": "  Sweeping the master résumé for payments wins.  "})
+    out = dock_tools.narrate.invoke(
+        {"thought": "  Sweeping the master résumé for payments wins.  "}
+    )
     assert out["status"] == "ok"
     assert out["narration"] == "Sweeping the master résumé for payments wins."
 

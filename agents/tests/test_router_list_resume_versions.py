@@ -19,6 +19,7 @@ These tests guard the fix so the regression can't sneak back:
     CJK, English otherwise, and degrades gracefully when the user has
     zero résumés yet.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -155,9 +156,7 @@ async def test_dispatch_returns_reply_shape_so_ts_skips_artifact() -> None:
     "Open résumé / Tweak in studio" artifact card.
     """
     user_id = uuid4()
-    intent = Intent(
-        intent="list_resume_versions", confidence=0.92, args={}, via="regex"
-    )
+    intent = Intent(intent="list_resume_versions", confidence=0.92, args={}, via="regex")
 
     rows = [_row(4, is_base=True, days_ago=0), _row(3, is_base=True, days_ago=3)]
     with patch(
@@ -184,9 +183,7 @@ async def test_dispatch_returns_reply_shape_so_ts_skips_artifact() -> None:
 async def test_dispatch_handles_empty_resume_list() -> None:
     """No résumés → still smalltalk-shaped, no artifact, friendly prompt."""
     user_id = uuid4()
-    intent = Intent(
-        intent="list_resume_versions", confidence=0.92, args={}, via="regex"
-    )
+    intent = Intent(intent="list_resume_versions", confidence=0.92, args={}, via="regex")
 
     with patch(
         "agents.coordinator.router.load_resume_versions",
