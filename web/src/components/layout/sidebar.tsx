@@ -336,7 +336,17 @@ export function Sidebar() {
           {initials}
         </div>
         {!collapsed && (
-          <div className="min-w-0 flex-1">
+          // Tooltip surfaces the full name + email so a truncated address
+          // (e.g. "326…@gm…") still answers "is this the account I think
+          // it is?" without forcing a settings round-trip. Round-12 audit.
+          <div
+            className="min-w-0 flex-1"
+            title={
+              currentUser?.email
+                ? `${displayName} · ${currentUser.email}`
+                : displayName
+            }
+          >
             <div className="font-body font-semibold text-[13px] text-ink truncate">
               {displayName}
             </div>

@@ -2245,6 +2245,13 @@ export function AskVantageDock() {
   function submit() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
+    // Round-12 audit: a 1-char body with no attachments (the classic "hji"
+    // slip) used to burn a full LangGraph turn just to apologize. Reject
+    // it on the client so the user can keep typing instead of having to
+    // wait for an "I'm not sure what you mean" round-trip. The threshold
+    // is intentionally tiny — anything ≥ 2 chars (e.g. "hi", "ok") still
+    // gets through, which keeps Ask Vantage feeling permissive.
+    if (text && text.length < 2 && attachments.length === 0) return;
     // Empty body but with attachments? Use a friendly default verb so the
     // agent has something to reason about.
     const finalPrompt = text || t("reviewAttachments");

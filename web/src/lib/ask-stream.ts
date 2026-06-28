@@ -182,6 +182,12 @@ type StreamFrame =
       plan_step?: string;
     }
   | { kind: "agent_failed"; agent: string; statusText: string; plan_step?: string }
+  // Liveness heartbeat — emitted by the agent layer every ~10 s while a
+  // long ReAct thinking step has no tool output yet. Carries no UX
+  // payload; the only contract is "the stream is still alive, do not
+  // expire the idle watchdog". `ts` mirrors the agent-side monotonic
+  // clock for diagnostics; the dock reads neither field.
+  | { kind: "ping"; ts?: number }
   | {
       kind: "result";
       title: string;
@@ -514,6 +520,11 @@ export async function runAskStream({
       case "approval":
         if (cb.onApproval) cb.onApproval(frame);
         return "continue";
+      case "ping":
+        // Receiving any chunk already reset the idle watchdog upstream
+        // (see armIdle()). The ping is intentionally a no-op at the
+        // handler level — its job is to be a byte on the wire.
+        return "continue";
       case "done":
         cb.onDone();
         return "stop";
@@ -574,6 +585,11 @@ export async function runAskStream({
       headers: {
         "Content-Type": "application/json",
         Accept: "application/x-ndjson",
+        // Mirror the JSON API client: send X-Relay-Locale in addition to the
+        // body field so the gateway can fix locale BEFORE it parses the body
+        // (error envelopes from validation failures pick up the right chrome
+        // language too). Body field still wins downstream if both differ.
+        "X-Relay-Locale": getClientLocale(),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
@@ -846,6 +862,23 @@ export async function sendAsk(
     const current = useDock.getState().abortController;
     if (current === controller || current === null) {
       useDock.setState({ streaming: false, abortController: null });
+    }
+  };
+
+  // Round-12 dock-double-card fix: when a turn ends abnormally (timeout /
+  // disconnect / unreachable), any agent cards still in "running" state
+  // become zombie spinners — the user sees "THINKING · 1m 54s" with no
+  // way to know the stream is dead. Flip them to "failed" with a short
+  // status so the dock shows a non-running affordance (and the next user
+  // message starts a clean turn). Only touches cards from THIS turn —
+  // a previous turn's completed cards are unaffected.
+  const failRunningAgentsFromThisTurn = (reason: string) => {
+    const { agentEvents } = useDock.getState();
+    for (const id of groupAgentIds) {
+      const ev = agentEvents[id];
+      if (ev && ev.state === "running") {
+        useDock.getState().updateAgentEvent({ ...ev, state: "failed", statusText: reason });
+      }
     }
   };
 
@@ -1191,6 +1224,7 @@ export async function sendAsk(
           // still tells them retrying is fine.
           const lead = assistantBuf.length > 0 ? "\n\n_[Answer interrupted]_" : "";
           updateAssistant(`${lead}\n\n_Vantage stream timed out. Try again._`);
+          failRunningAgentsFromThisTurn("timed out");
         } else if (kind === "unreachable") {
           // Gateway hint is already user-facing copy ("…engine is offline.
           // Try again in a moment — if this persists, check that the
@@ -1198,11 +1232,13 @@ export async function sendAsk(
           // can distinguish "agent host down" from "network blip".
           const lead = assistantBuf.length > 0 ? "\n\n_[Answer interrupted]_" : "";
           updateAssistant(`${lead}\n\n_${message}_`);
+          failRunningAgentsFromThisTurn("unreachable");
         } else {
           // DOCK_R3 (round-19): same "interrupted" lead for `disconnect`
           // — the most common path when the agent host restarts mid-stream.
           const lead = assistantBuf.length > 0 ? "\n\n_[Answer interrupted]_" : "";
           updateAssistant(`${lead}\n\n_Lost connection to Vantage. Try again._`);
+          failRunningAgentsFromThisTurn("disconnected");
         }
         clearOwnedStreamState();
       },

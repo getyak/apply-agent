@@ -5,8 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { auth as authApi, setToken, getToken, ApiError } from "@/lib/api";
+import { auth as authApi, setToken, getToken } from "@/lib/api";
 import { BrandLoader, Button, Field, Input } from "@/components/ui";
+import { resolveError, type ResolvedError } from "@/lib/errors/resolve";
+import { ErrorInline } from "@/components/errors";
 
 // Next 16 requires components that read URL search params to be wrapped in a
 // Suspense boundary so the rest of the page can be prerendered. Without it,
@@ -59,7 +61,17 @@ function AuthPageInner() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [error, setError] = useState("");
+  /**
+   * Two-track error state:
+   *   - `resolvedError` — the typed result from resolveError() that the
+   *     <ErrorInline /> component renders. This is the right channel
+   *     for anything coming from the API (envelope v2).
+   *   - we DON'T fall back to a raw string anymore — if resolveError
+   *     can't classify the thrown value it returns a synthetic
+   *     INTERNAL ResolvedError, which renders the localised
+   *     "Unexpected error" copy. No more "Something went wrong".
+   */
+  const [resolvedError, setResolvedError] = useState<ResolvedError | null>(null);
   const [loading, setLoading] = useState(false);
   // Forward guard: if already signed in, skip the form and go straight to the app.
   // Default to false so SSR renders the form directly; if hydration silently fails
@@ -94,7 +106,7 @@ function AuthPageInner() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setResolvedError(null);
     setLoading(true);
     try {
       if (isLogin) {
@@ -106,23 +118,12 @@ function AuthPageInner() {
       }
       router.push("/app");
     } catch (err) {
-      // P3 (round-3): rate-limit responses (429) used to surface as the
-      // backend's literal "Rate limit exceeded for auth. Try again in
-      // 47s." string, which reads like a debug log and gets buried under
-      // the generic "Invalid email or password" path the round-3
-      // auth-audit flagged. Surface a friendlier line that still keeps
-      // the retry-after window the backend computed.
-      if (err instanceof ApiError && err.status === 429) {
-        const match = err.message.match(/(\d+)\s*s/);
-        const retrySeconds = match ? match[1] : null;
-        setError(
-          retrySeconds
-            ? t("error.rateLimitSeconds", { seconds: retrySeconds })
-            : t("error.rateLimit"),
-        );
-      } else {
-        setError(err instanceof Error ? err.message : t("error.generic"));
-      }
+      // The error router (web/src/lib/errors/resolve.ts) maps every
+      // ApiError code into a typed ResolvedError carrying its own
+      // localized title/body + the matrix-decided CTAs. Auth-page
+      // context tells the router to favor inline rendering (under the
+      // form) over a toast — see error-handling.md §4.3.3.
+      setResolvedError(resolveError(err, { page: "auth", inForm: true }));
     } finally {
       setLoading(false);
     }
@@ -227,13 +228,21 @@ function AuthPageInner() {
             />
           </Field>
 
-          {error && (
-            <p
-              role="alert"
-              className="font-body text-[13px] text-amber bg-gold-bg border border-cream-border rounded-[10px] px-3 py-2"
-            >
-              {error}
-            </p>
+          {resolvedError && (
+            <ErrorInline
+              resolved={resolvedError}
+              onCta={(cta) => {
+                if (cta.id === "reauth") {
+                  // Already on the auth page — clearing the form is the
+                  // friendliest take. The user can just type their
+                  // creds again.
+                  setResolvedError(null);
+                  setPassword("");
+                } else if (cta.id === "dismiss") {
+                  setResolvedError(null);
+                }
+              }}
+            />
           )}
 
           <Button
@@ -253,7 +262,7 @@ function AuthPageInner() {
             type="button"
             onClick={() => {
               setIsLogin(!isLogin);
-              setError("");
+              setResolvedError(null);
             }}
             className="text-brown font-semibold hover:underline outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
           >
