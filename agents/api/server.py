@@ -694,9 +694,7 @@ async def _stream_dock_turn(
             # Surface as a native AG-UI RUN_ERROR frame so the web client's
             # error path fires. The envelope still carries the trace id for
             # support correlation via the Relay raw_event.
-            err_emitter = RelayEmitter(
-                run_id=str(uuid4()), thread_id=thread_id, trace_id=tid
-            )
+            err_emitter = RelayEmitter(run_id=str(uuid4()), thread_id=thread_id, trace_id=tid)
             envelope = _error_envelope(exc, tid, request_id)
             yield err_emitter.emit_run_error(
                 message=str(envelope.get("message") or "dock turn failed"),

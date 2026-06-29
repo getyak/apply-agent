@@ -212,9 +212,7 @@ async def run_dock_turn(
     messages: list[Any] = []
     for blk in extra_system_blocks or []:
         if blk:
-            messages.append(
-                AGUISystemMessage(id=str(ULID()), role="system", content=blk)
-            )
+            messages.append(AGUISystemMessage(id=str(ULID()), role="system", content=blk))
     if message:
         messages.append(AGUIUserMessage(id=str(ULID()), role="user", content=message))
 

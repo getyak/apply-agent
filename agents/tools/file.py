@@ -36,7 +36,9 @@ from agents.nodes.resume_store import _dsn, get_resume, unwrap_parsed
 log = structlog.get_logger("agents.tools.file")
 
 
-def _resolve_path(parsed: dict[str, Any], bullet_index: dict[str, Any], stable_id: str) -> tuple[int, int] | None:
+def _resolve_path(
+    parsed: dict[str, Any], bullet_index: dict[str, Any], stable_id: str
+) -> tuple[int, int] | None:
     """Resolve a stable bullet id to (work_index, highlight_index).
 
     Trusts the recorded ``path`` only when the slot still holds the same text

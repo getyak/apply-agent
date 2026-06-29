@@ -75,9 +75,7 @@ def _names_and_values(frames: list[str]) -> list[tuple[str, Any]]:
 def _resume_record(track: str = "optimized") -> dict[str, Any]:
     bid = "b_abc12345"
     parsed = {
-        "work": [
-            {"name": "Acme", "highlights": ["Led the migration to Postgres", "Other line"]}
-        ]
+        "work": [{"name": "Acme", "highlights": ["Led the migration to Postgres", "Other line"]}]
     }
     return {
         "id": str(uuid4()),

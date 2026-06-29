@@ -35,7 +35,7 @@ def test_envelope_required_fields_present_in_raw_event() -> None:
 
     # SDK serializes raw_event as rawEvent (camelCase via Pydantic by_alias)
     raw = obj["rawEvent"]
-    assert raw["id"]                                # ULID
+    assert raw["id"]  # ULID
     assert raw["seq"] == 1
     assert raw["trace_id"] == "trace-1"
     assert raw["run_id"] == "run-1"

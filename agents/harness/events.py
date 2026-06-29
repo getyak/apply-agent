@@ -106,9 +106,7 @@ class RelayEmitter:
         if browser-side EventSource Last-Event-Id reconnection is desired.
         """
         event.timestamp = int(time.time() * 1000)
-        event.raw_event = self._meta(
-            step_id=step_id, parent_step_id=parent_step_id, extra=extra
-        )
+        event.raw_event = self._meta(step_id=step_id, parent_step_id=parent_step_id, extra=extra)
         return self._encoder.encode(event)
 
     # ------------------------------------------------------------------ helpers
@@ -153,9 +151,7 @@ class RelayEmitter:
                 type=EventType.RUN_FINISHED,
                 thread_id=self.thread_id,
                 run_id=self.run_id,
-                outcome=RunFinishedInterruptOutcome(
-                    type="interrupt", interrupts=interrupt_list
-                ),
+                outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=interrupt_list),
             )
         )
 

@@ -198,7 +198,9 @@ async def test_run_dock_turn_narrator_custom_event():
     """A narrate() call surfaces as a relay.narrator CUSTOM event."""
     narr_call = AIMessage(
         content="",
-        tool_calls=[{"name": "narrate", "args": {"thought": "Checking your pipeline."}, "id": "n1"}],
+        tool_calls=[
+            {"name": "narrate", "args": {"thought": "Checking your pipeline."}, "id": "n1"}
+        ],
     )
     final = AIMessage(content="Done.")
     graph = _build_test_graph(_scripted_chat([narr_call, final]))
