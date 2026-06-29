@@ -60,6 +60,7 @@ from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from agents.api.deps import UserDep  # noqa: E402
 from agents.coordinator.router import (  # noqa: E402
@@ -315,11 +316,16 @@ def _error_envelope(
             "messageKey": "errors.llm.budgetExhausted",
             "action": {"kind": "contact", "channel": "in-app"},
         }
-    if isinstance(exc, HTTPException):
-        # Structured node responses (`{"ok": False, "reason": "..."}` raised as
-        # detail) land here. Map them to the v2 catalog so callers see
-        # `LLM_FABRICATION_BLOCKED` / `RESOURCE_NOT_FOUND` / ... instead of a
-        # bare HTTP-status fallback that loses the rejection signal.
+    if isinstance(exc, StarletteHTTPException):
+        # FastAPI's HTTPException is a subclass of Starlette's — checking
+        # the parent class catches both FastAPI-raised exceptions AND
+        # Starlette router-miss 404s, so unknown-route requests map to
+        # RESOURCE_NOT_FOUND instead of falling through to INTERNAL.
+        #
+        # Structured node responses (`{"ok": False, "reason": "..."}` raised
+        # as detail) also land here. Map them to the v2 catalog so callers
+        # see `LLM_FABRICATION_BLOCKED` / `RESOURCE_NOT_FOUND` / ... instead
+        # of a bare HTTP-status fallback that loses the rejection signal.
         if isinstance(exc.detail, dict):
             mapped = _envelope_from_dict_detail(exc.detail, exc.status_code)
             if mapped is not None:
@@ -383,10 +389,26 @@ async def _trace_middleware(request: Request, call_next):
     # trace id (no need for handlers to thread it).
     structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
+    # Echo the resolved UI locale back to the caller so the web layer can
+    # confirm the agents-side honoured the X-Relay-Locale request header
+    # (docs/architecture/vantage-ui-mapping.md two-dim locale). Only routes
+    # that produce locale-sensitive copy actually act on it; this header is
+    # the cheap continuity signal the web client looks for either way.
+    inbound_locale = request.headers.get("x-relay-locale")
+    resolved_locale = inbound_locale.strip().lower() if isinstance(inbound_locale, str) else ""
+    if resolved_locale.startswith("zh"):
+        resolved_locale = "zh"
+    elif resolved_locale.startswith("en"):
+        resolved_locale = "en"
+    else:
+        resolved_locale = ""
+
     response = await call_next(request)
     response.headers["X-Trace-Id"] = trace_id
     if request_id:
         response.headers["X-Request-Id"] = request_id
+    if resolved_locale:
+        response.headers["X-Relay-Locale"] = resolved_locale
     return response
 
 
@@ -453,6 +475,20 @@ async def _request_validation_handler(
         content={"error": envelope},
         headers={"X-Trace-Id": trace_id},
     )
+
+
+# Starlette raises its OWN HTTPException for default 404/405/etc. (router miss,
+# method-not-allowed). FastAPI's `HTTPException` is a *subclass*, so the
+# handler above does NOT catch Starlette's parent class — without this second
+# registration, 404s from unknown routes return bare `{"detail":"Not Found"}`,
+# bypassing the unified envelope (docs/architecture/error-handling.md § P3
+# "跨三层用同一个信封"). Register the same handler under Starlette's class so
+# every error path produces the envelope.
+@app.exception_handler(StarletteHTTPException)
+async def _starlette_http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    return await _http_exception_handler(request, exc)  # type: ignore[arg-type]
 
 
 @app.exception_handler(Exception)
