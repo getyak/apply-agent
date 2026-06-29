@@ -26,6 +26,11 @@ dependencies = [
     "tiktoken>=0.8.0",
     "structlog>=24.4.0",
     "python-dotenv>=1.0.0",
+    # AG-UI agent event stream protocol — see docs/architecture/agent-event-stream.md.
+    # 0.1.19 (2026-06): 16 standard event types, Pydantic-validated, camelCase serialization.
+    "ag-ui-protocol==0.1.19",
+    # ULID for monotonic event IDs in RelayEmitter envelope (agents/harness/events.py).
+    "python-ulid>=3.1.0",
 ]
 
 [project.optional-dependencies]
