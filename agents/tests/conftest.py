@@ -66,9 +66,7 @@ def _restore_env_leak_guard(request):
     like.
     """
     nodeid = getattr(request.node, "nodeid", "")
-    needs_pristine = any(
-        needle in nodeid for needle in _TESTS_NEEDING_PRISTINE_OPENROUTER
-    )
+    needs_pristine = any(needle in nodeid for needle in _TESTS_NEEDING_PRISTINE_OPENROUTER)
     if not needs_pristine:
         yield
         return
