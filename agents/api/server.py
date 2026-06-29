@@ -55,7 +55,7 @@ if not os.environ.get("OPENROUTER_PROXY"):
         os.environ.pop(_p, None)
 
 import structlog  # noqa: E402
-from fastapi import FastAPI, Header, HTTPException, Request  # noqa: E402
+from fastapi import FastAPI, Header, HTTPException, Request, Response  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
@@ -173,6 +173,31 @@ def _trace_code_from(trace_id: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# Loop round 20: keep the allow-list tight — UI locale is read from
+# `X-Relay-Locale` and any unknown / malformed value collapses to "en"
+# so the prepare endpoint can safely echo it on the response header.
+_SUPPORTED_UI_LOCALES = frozenset({"en", "zh"})
+
+
+def _normalise_ui_locale(raw: str | None) -> str:
+    """Map an inbound X-Relay-Locale string to one of the supported UI locales.
+
+    Mirrors the locale axis defined in `vantage-ui-mapping.md` and
+    `agents/harness/locale.py` (ui_locale vs artifact_locale). Whitespace,
+    casing, and BCP-47 region tags ("zh-CN", "en_US") are tolerated; the
+    fallback is "en" so the response always carries a non-empty echo.
+    """
+    if not raw or not isinstance(raw, str):
+        return "en"
+    head = raw.strip().lower().split(",")[0].split(";")[0].strip()
+    if not head:
+        return "en"
+    primary = head.replace("_", "-").split("-")[0]
+    if primary in _SUPPORTED_UI_LOCALES:
+        return primary
+    return "en"
 
 
 # Inbound trace id is plumbed through request.state; the middleware below
@@ -1084,17 +1109,28 @@ class PrepareApplicationPayload(BaseModel):
 
 @app.post("/applications/prepare")
 async def applications_prepare(
-    payload: PrepareApplicationPayload, user_id: UserDep
+    payload: PrepareApplicationPayload,
+    user_id: UserDep,
+    response: Response,
+    x_relay_locale: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     """Run the full delivery-loop saga and return everything the UI needs.
 
     Drives TTAR (delivery-loop-plan.md § 1). Stage-level fallbacks live in
     workflows.run_prepare_application — this endpoint just shapes the
     response and surfaces the TTAR-relevant fields.
+
+    Loop round 20 fix: echo back X-Relay-Locale on the response so the web
+    layer can render copy in the same tongue (`vantage-ui-mapping.md` §
+    "locale axis"). The locale is also surfaced inside the JSON payload as
+    `ui_locale` so non-header consumers (extension, CLI) read one place.
     """
     from agents.coordinator.workflows import run_prepare_application
 
-    return await run_prepare_application(
+    ui_locale = _normalise_ui_locale(x_relay_locale)
+    response.headers["X-Relay-Locale"] = ui_locale
+
+    result = await run_prepare_application(
         user_id=user_id,
         jd_url=payload.jd_url,
         base_resume_id=payload.base_resume_id,
@@ -1103,6 +1139,8 @@ async def applications_prepare(
         form_fields=payload.form_fields,
         application_id=payload.application_id,
     )
+    result["ui_locale"] = ui_locale
+    return result
 
 
 class ApplicationSubmittedPayload(BaseModel):
