@@ -77,6 +77,16 @@ POST /api/tailor-resume in: base 简历 + JD     → out: 定制简历
 
 优势：agent 直接获得结构化的 accessibility snapshot（而非靠 content script 猜 DOM），对陌生 ATS 的适应性大幅提升。
 
+#### 落地配置（PR4 已实现）
+
+agents 侧用 `agents/harness/mcp_client.py`（Python `mcp` 包的 `ClientSession`，streamable-HTTP transport）连接扩展；browser 工具在 `agents/tools/browser.py`（`browser_snapshot` / `browser_navigate` / `browser_fill_form` / `browser_click`）。
+
+- **Chrome Web Store id**：`mmlmfjhmonkocbjadbfplnigmagldckm`（Playwright MCP 官方扩展）。从应用商店安装后，打开扩展 popup 复制它生成的 token。
+- **鉴权 token**：把 token 填进环境变量 `PLAYWRIGHT_MCP_EXTENSION_TOKEN`（见 `agents/.env.example`）。客户端用 `Authorization: Bearer <token>` 连扩展。
+- **端点**：默认 `http://127.0.0.1:8931/mcp`，仅当扩展绑了非默认 loopback 端口时用 `PLAYWRIGHT_MCP_EXTENSION_URL` 覆盖。
+- **优雅降级**：token 未配置时，browser 工具返回结构化错误 `code: BROWSER_EXT_NOT_INSTALLED`（不 crash、不发起连接），dock 渲染"连接你的浏览器扩展"卡片。
+- **安全约束（强制）**：写操作（navigate/fill_form/click）硬走 `@requires_approval` → LangGraph `interrupt()`（HITL）；`browser_snapshot` 只读（NOTIFY，无需审批）；`browser_fill_form` 在调用 MCP 前硬过滤密码类字段（`password` / `pwd` / `passwd` / `pin` / `ssn` / `credit_card`），永不替用户输入凭据；截图 > 256 KiB 自动转存 MinIO，事件只带 `screenshot_url`。
+
 ### 方案 C:桌面 App + CDP — 最强但最重(Phase 3)
 
 桌面 app(Tauri/Electron)通过 Chrome DevTools Protocol 连接用户**已登录的真实 Chrome**。

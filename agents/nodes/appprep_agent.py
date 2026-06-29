@@ -470,3 +470,55 @@ def _safe_json_array(content: Any) -> list[Any]:
     except json.JSONDecodeError:
         log.warning("appprep.invalid_json_array", preview=str(content)[:200])
         return []
+
+
+# ─── browser tools (PR4: Playwright MCP Chrome Extension) ──────────────────
+#
+# AppPrep is the client-side-delivery agent (§方案 B+), so the browser tools
+# live on its ReAct tool list. They wrap agents/tools/browser.py: snapshot is
+# NOTIFY (read-only), the three write tools hard-gate on @requires_approval →
+# interrupt(). The wrappers below expose them to ``create_react_agent`` while the
+# raw functions keep their __relay_permission__ markers + HITL behaviour.
+#
+# A builder function keeps the import lazy: simply importing this node does not
+# require the mcp package to be present until the tools are built into a graph.
+
+
+def build_browser_tools() -> list[Any]:
+    """Return the 4 browser tools as LangChain @tool objects for a ReAct agent.
+
+    Imported lazily by whatever builds the AppPrep ReAct graph so a plain import
+    of this module never pulls the MCP client.
+    """
+    from langchain_core.tools import tool
+
+    from agents.tools import browser as _b
+
+    @tool
+    async def browser_snapshot(url: str | None = None) -> dict[str, Any]:
+        """Read the user's current browser tab: accessibility tree + screenshot.
+
+        Read-only (no approval). Use before filling a form to see its fields.
+        """
+        return await _b.browser_snapshot(url)
+
+    @tool
+    async def browser_navigate(url: str) -> dict[str, Any]:
+        """Navigate the user's browser tab to a URL. Requires user approval."""
+        return await _b.browser_navigate(url)
+
+    @tool
+    async def browser_click(selector: str) -> dict[str, Any]:
+        """Click an element in the user's browser tab. Requires user approval."""
+        return await _b.browser_click(selector)
+
+    @tool
+    async def browser_fill_form(url: str, fields: dict[str, Any]) -> dict[str, Any]:
+        """Fill form fields in the user's browser tab. Requires user approval.
+
+        Password / credential fields are dropped automatically and never typed.
+        The user clicks Submit themselves — this tool never submits.
+        """
+        return await _b.browser_fill_form(url, fields)
+
+    return [browser_snapshot, browser_navigate, browser_click, browser_fill_form]

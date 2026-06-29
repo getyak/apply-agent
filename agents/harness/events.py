@@ -202,4 +202,83 @@ class RelayEmitter:
         return self._seq
 
 
-__all__ = ["RelayEmitter", "RELAY_PROTOCOL_VERSION"]
+# --------------------------------------------------------------------------- sink
+#
+# Tools run *inside* the LangGraph ReAct loop and cannot yield SSE frames up to
+# FastAPI directly. To let a tool emit a Relay CUSTOM event mid-execution, the
+# dock turn binds a "sink" callback (PR2 dock_agent) into a ContextVar before
+# invoking the graph; the tool calls emit_custom_event(...) and the sink routes
+# the encoded frame onto the live SSE stream.
+#
+# This mirrors the existing dock_tools._USER_CTX contextvar pattern (a per-turn
+# ambient binding the tool reads without exposing it in its JSON schema). When no
+# sink is bound — unit tests, or a code path that runs a tool outside a dock turn
+# — emit_custom_event is a silent no-op, so tools never crash for lack of a sink.
+
+import contextvars  # noqa: E402 — kept next to the sink API it powers
+
+# A sink receives an already-encoded SSE frame string (the output of
+# RelayEmitter.emit_custom). PR2's dock_agent binds one that puts the frame on
+# the SSE queue; tests bind a list.append to capture frames.
+CustomEventSink = "Callable[[str], None]"  # documented type alias (see emit_custom_event)
+
+_CUSTOM_SINK: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+    "_relay_custom_sink", default=None
+)
+_CUSTOM_EMITTER: contextvars.ContextVar[RelayEmitter | None] = contextvars.ContextVar(
+    "_relay_custom_emitter", default=None
+)
+
+
+def bind_custom_sink(
+    emitter: RelayEmitter, sink: Any
+) -> tuple[contextvars.Token[Any], contextvars.Token[Any]]:
+    """Bind the per-turn emitter + frame sink. Caller MUST reset_custom_sink().
+
+    ``sink`` is a callable taking the encoded SSE frame str (e.g. an SSE queue's
+    put_nowait, or list.append in tests).
+    """
+    return (_CUSTOM_EMITTER.set(emitter), _CUSTOM_SINK.set(sink))
+
+
+def reset_custom_sink(
+    tokens: tuple[contextvars.Token[Any], contextvars.Token[Any]],
+) -> None:
+    emitter_tok, sink_tok = tokens
+    _CUSTOM_EMITTER.reset(emitter_tok)
+    _CUSTOM_SINK.reset(sink_tok)
+
+
+def emit_custom_event(
+    name: str,
+    value: Any,
+    *,
+    step_id: str | None = None,
+    parent_step_id: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> str | None:
+    """Emit a Relay CUSTOM event from inside a tool, if a sink is bound.
+
+    Returns the encoded frame (also handed to the sink), or None when no sink is
+    bound (the tool ran outside a dock turn — a no-op, never an error). The name
+    is still validated against the ``relay.`` prefix by RelayEmitter.emit_custom.
+    """
+    emitter = _CUSTOM_EMITTER.get()
+    sink = _CUSTOM_SINK.get()
+    if emitter is None or sink is None:
+        return None
+    frame = emitter.emit_custom(
+        name, value, step_id=step_id, parent_step_id=parent_step_id, extra=extra
+    )
+    sink(frame)
+    return frame
+
+
+__all__ = [
+    "RelayEmitter",
+    "RELAY_PROTOCOL_VERSION",
+    "CustomEventSink",
+    "bind_custom_sink",
+    "reset_custom_sink",
+    "emit_custom_event",
+]

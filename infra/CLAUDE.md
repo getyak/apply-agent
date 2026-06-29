@@ -52,9 +52,29 @@ User files: metadata in `user_files` table, binary blobs in MinIO bucket `relay-
 {user_id}/exports/               # GDPR data export
 ```
 
+Browser screenshots from the Playwright MCP tools (PR4) offload to the same
+bucket when larger than 256 KiB: `{user_id}/browser/snapshots/{ulid}.png`.
+
 ## Redis Usage
 
 - Cache: resume tailoring results (7d TTL), JD parsing, match scores
 - Event bus: Redis Streams for inter-agent events
 - HITL queue: pending user approvals (5min TTL)
 - Rate limiting: per-user LLM call counters
+
+## Playwright MCP Chrome Extension (local dev)
+
+Client-side browser tools (`agents/tools/browser.py`) drive the user's own
+logged-in tab over MCP — the §方案 B+ topology in
+`docs/architecture/client-side-delivery.md`. Local setup:
+
+1. Install the Playwright MCP extension from the Chrome Web Store
+   (id `mmlmfjhmonkocbjadbfplnigmagldckm`).
+2. Open the extension popup, copy its token.
+3. Put it in `agents/.env` as `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>`
+   (template: `agents/.env.example`). Override `PLAYWRIGHT_MCP_EXTENSION_URL`
+   only if the extension binds a non-default loopback port.
+4. `cd agents && uv sync` installs the `mcp` client (now a main dependency).
+
+Without the token, browser tools degrade gracefully (`BROWSER_EXT_NOT_INSTALLED`)
+— the rest of the agent layer is unaffected, so CI and storage-less dev still boot.
