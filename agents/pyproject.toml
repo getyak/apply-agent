@@ -29,6 +29,11 @@ dependencies = [
     # AG-UI agent event stream protocol — see docs/architecture/agent-event-stream.md.
     # 0.1.19 (2026-06): 16 standard event types, Pydantic-validated, camelCase serialization.
     "ag-ui-protocol==0.1.19",
+    # LangGraph → AG-UI adapter. Emits the standard AG-UI events from a compiled
+    # LangGraph stream (dock_agent.run_dock_turn wraps it). Pinned: 0.0.42 has the
+    # concurrent-tool-call bug #871 we work around via max_concurrency=1. Upgrade
+    # only behind the contract test (tests/contract/test_agui_compat.py).
+    "ag-ui-langgraph==0.0.42",
     # ULID for monotonic event IDs in RelayEmitter envelope (agents/harness/events.py).
     "python-ulid>=3.1.0",
 ]

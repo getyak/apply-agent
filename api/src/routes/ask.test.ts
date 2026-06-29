@@ -1,352 +1,199 @@
-// Unit tests for the HITL NDJSON coercion in /api/ask/stream.
+// Tests for the Ask Vantage gateway (PR2 AG-UI cutover).
 //
-// Verifies the contract documented in src/routes/ask.ts § "HITL frame
-// coercion": each shape the Python dock_agent might emit from
-// LangGraph's interrupt() must produce exactly one valid NDJSON line of
-// the matching kind, with resume_token always populated.
+// The gateway is now a pure pass-through: it injects auth / trace / request id /
+// locale headers and streams the upstream AG-UI SSE body back byte-for-byte.
+// These tests mock the agents host (global fetch) and assert:
+//   - the upstream body is forwarded verbatim (no translation)
+//   - the request body is forwarded raw (message AND command pass through)
+//   - auth / trace / request / locale headers are injected on the upstream call
+//   - upstream-down → 503; upstream-5xx → 502
+//   - /recent reads the RECENT rail
 
-import { describe, expect, it } from "bun:test";
-import {
-  buildArtifact,
-  narratorNdjson,
-  partialArtifactNdjson,
-  toHitlNdjson,
-  toolTraceNdjson,
-} from "./ask";
+import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { Hono } from "hono";
+import { SignJWT } from "jose";
+import { config } from "../config";
+import { errorHandler } from "../errors";
+import { requestId } from "../middleware/observability";
+import { traceId } from "../middleware/trace-id";
+import type { AppEnv } from "../types";
 
-function parse(line: string | null): Record<string, unknown> | null {
-  if (line === null) return null;
-  return JSON.parse(line) as Record<string, unknown>;
+const USER_A = `user-ask-a-${process.pid}-${process.hrtime.bigint()}`;
+
+// ── DB mock: only /recent touches it. ──────────────────────────────────────
+let recentRows: { id: string; content: string; created_at: string }[] = [];
+async function stubQuery(text: string, _params: unknown[]) {
+  if (text.includes("conversation_messages") && text.includes("ORDER BY m.created_at")) {
+    return { rows: recentRows };
+  }
+  return { rows: [] };
+}
+mock.module("../db", () => ({ query: stubQuery }));
+
+// ── Agent host mock: capture the forwarded call + return a canned SSE body. ─
+const fetchCalls: { url: string; init: RequestInit }[] = [];
+const originalFetch = globalThis.fetch;
+
+// A tiny canned AG-UI stream — two data frames, exactly as the agents host
+// would emit them. The gateway must forward these untouched.
+const CANNED_SSE =
+  'data: {"type":"RUN_STARTED","threadId":"t","runId":"r","rawEvent":{"seq":1}}\n\n' +
+  'data: {"type":"RUN_FINISHED","threadId":"t","runId":"r","rawEvent":{"seq":2}}\n\n';
+
+let agentResponder: () => Response = () =>
+  new Response(CANNED_SSE, {
+    status: 200,
+    headers: { "content-type": "text/event-stream", "x-trace-id": "trace-from-agent" },
+  });
+
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === "string" ? input : input.toString();
+  fetchCalls.push({ url, init: init ?? {} });
+  return agentResponder();
+}) as typeof fetch;
+
+afterAll(() => {
+  globalThis.fetch = originalFetch;
+});
+
+const { default: askRoutes } = await import("./ask");
+const APP = new Hono<AppEnv>();
+APP.use("*", traceId);
+APP.use("*", requestId);
+APP.route("/api/ask", askRoutes);
+APP.onError(errorHandler);
+
+const JWT_SECRET = new TextEncoder().encode(config.JWT_SECRET);
+async function makeJwt(userId: string): Promise<string> {
+  return new SignJWT({ sub: userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(JWT_SECRET);
 }
 
-describe("partialArtifactNdjson", () => {
-  it("returns null when artifact_id is missing or empty", () => {
-    expect(partialArtifactNdjson({})).toBeNull();
-    expect(partialArtifactNdjson({ artifact_id: "" })).toBeNull();
-    expect(partialArtifactNdjson({ artifact_id: 42 })).toBeNull();
+async function streamReq(
+  body: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<Response> {
+  return APP.request("/api/ask/stream", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${await makeJwt(USER_A)}`,
+      "Content-Type": "application/json",
+      ...extraHeaders,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("POST /api/ask/stream — pass-through", () => {
+  beforeEach(() => {
+    fetchCalls.length = 0;
+    agentResponder = () =>
+      new Response(CANNED_SSE, {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "x-trace-id": "trace-from-agent" },
+      });
   });
 
-  it("emits a canonical partial_artifact frame", () => {
-    const line = partialArtifactNdjson({
-      artifact_id: "tailor-1",
-      kind: "resume_bullet",
-      title: "Tailored draft",
-      sub: "Bullet 2 of 5",
-      progress: 0.4,
-      payload: { items: ["a", "b"] },
+  it("requires auth", async () => {
+    const res = await APP.request("/api/ask/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "hi" }),
     });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.kind).toBe("partial_artifact");
-    expect(parsed.artifact_id).toBe("tailor-1");
-    expect(parsed.artifact_kind).toBe("resume_bullet");
-    expect(parsed.title).toBe("Tailored draft");
-    expect(parsed.sub).toBe("Bullet 2 of 5");
-    expect(parsed.progress).toBe(0.4);
-    expect(parsed.payload).toEqual({ items: ["a", "b"] });
+    expect(res.status).toBe(401);
+    expect(fetchCalls.length).toBe(0);
   });
 
-  it("falls back to 'snapshot' when kind is missing", () => {
-    const line = partialArtifactNdjson({ artifact_id: "x" });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.artifact_kind).toBe("snapshot");
+  it("forwards the upstream SSE body byte-for-byte", async () => {
+    const res = await streamReq({ message: "hi" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const body = await res.text();
+    expect(body).toBe(CANNED_SSE);
   });
 
-  it("clamps progress to [0,1] and converts percentages", () => {
-    // Caller sent 65 (percentage) — must be normalised to 0.65.
-    const pct = partialArtifactNdjson({ artifact_id: "x", progress: 65 });
-    const parsedPct = JSON.parse(pct!) as Record<string, unknown>;
-    expect(parsedPct.progress).toBeCloseTo(0.65, 5);
-    // Caller sent -1 — clamp to 0.
-    const neg = partialArtifactNdjson({ artifact_id: "x", progress: -1 });
-    const parsedNeg = JSON.parse(neg!) as Record<string, unknown>;
-    expect(parsedNeg.progress).toBe(0);
+  it("forwards the raw request body (message + command) untouched", async () => {
+    await streamReq({ message: "", command: { resume: "Stripe" } });
+    expect(fetchCalls.length).toBe(1);
+    const sent = JSON.parse(fetchCalls[0]!.init.body as string);
+    expect(sent.message).toBe("");
+    expect(sent.command).toEqual({ resume: "Stripe" });
   });
 
-  it("omits payload when missing (not null)", () => {
-    const line = partialArtifactNdjson({ artifact_id: "x" });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect("payload" in parsed).toBe(false);
+  it("injects user / trace / request / locale headers on the upstream call", async () => {
+    await streamReq(
+      { message: "hi" },
+      { "X-Relay-Thread-Id": "ask_vantage:abc", "X-Relay-Surface": "dock", "X-Relay-Locale": "zh" },
+    );
+    const headers = fetchCalls[0]!.init.headers as Record<string, string>;
+    expect(headers["X-Relay-User-Id"]).toBe(USER_A);
+    expect(headers["X-Relay-Thread-Id"]).toBe("ask_vantage:abc");
+    expect(headers["X-Relay-Surface"]).toBe("dock");
+    expect(headers["X-Relay-Locale"]).toBe("zh");
+    // trace + request ids are injected by the gateway middleware.
+    expect(headers["X-Trace-Id"]).toBeTruthy();
+    expect(headers["X-Request-Id"]).toBeTruthy();
+  });
+
+  it("propagates the upstream trace id on the response", async () => {
+    const res = await streamReq({ message: "hi" });
+    expect(res.headers.get("x-trace-id")).toBe("trace-from-agent");
+  });
+
+  it("returns 503 when the agent host is unreachable", async () => {
+    agentResponder = () => {
+      throw new Error("ECONNREFUSED");
+    };
+    const res = await streamReq({ message: "hi" });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.code).toBe("AGENT_UNREACHABLE");
+  });
+
+  it("returns 502 when the agent host 5xxs", async () => {
+    agentResponder = () =>
+      new Response("boom", { status: 500, headers: { "content-type": "text/plain" } });
+    const res = await streamReq({ message: "hi" });
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.code).toBe("AGENT_FAILED");
+  });
+
+  it("propagates a 403 from the agent host (IDOR guard)", async () => {
+    agentResponder = () =>
+      new Response(JSON.stringify({ error: { message: "thread is not yours" } }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      });
+    const res = await streamReq({ message: "hi" }, { "X-Relay-Thread-Id": "ask_vantage:other" });
+    expect(res.status).toBe(403);
   });
 });
 
-describe("toolTraceNdjson", () => {
-  it("returns null when tool name is missing", () => {
-    expect(toolTraceNdjson({})).toBeNull();
-    expect(toolTraceNdjson({ tool: "", agent: "x" })).toBeNull();
-    expect(toolTraceNdjson({ agent: "applications", status: "ok" })).toBeNull();
+describe("GET /api/ask/recent", () => {
+  beforeEach(() => {
+    recentRows = [];
   });
 
-  it("emits a tool_trace NDJSON frame with the canonical shape", () => {
-    const line = toolTraceNdjson({
-      tool: "list_my_applications",
-      agent: "applications",
-      action: "list",
-      status: "ok",
-      summary: "ok · 3 items",
+  it("requires auth", async () => {
+    const res = await APP.request("/api/ask/recent");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns truncated previews of the user's recent prompts", async () => {
+    recentRows = [
+      { id: "m1", content: "  tailor my résumé for Stripe   ", created_at: "2026-06-29T00:00:00Z" },
+    ];
+    const res = await APP.request("/api/ask/recent", {
+      headers: { Authorization: `Bearer ${await makeJwt(USER_A)}` },
     });
-    expect(line).not.toBeNull();
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.kind).toBe("tool_trace");
-    expect(parsed.tool).toBe("list_my_applications");
-    expect(parsed.agent).toBe("applications");
-    expect(parsed.action).toBe("list");
-    expect(parsed.status).toBe("ok");
-    expect(parsed.summary).toBe("ok · 3 items");
-  });
-
-  it("normalises unknown status values to 'ok'", () => {
-    // Status must be either 'ok' or 'error' — anything else maps to 'ok'
-    // so the dock UI never has to worry about a third axis.
-    const line = toolTraceNdjson({
-      tool: "find_jobs",
-      agent: "jobmatch_agent",
-      status: "weird",
-    });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.status).toBe("ok");
-  });
-
-  it("preserves error status verbatim", () => {
-    const line = toolTraceNdjson({
-      tool: "find_jobs",
-      agent: "jobmatch_agent",
-      status: "error",
-      summary: "OpenRouter timeout",
-    });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.status).toBe("error");
-    expect(parsed.summary).toBe("OpenRouter timeout");
-  });
-
-  it("clamps summary at 160 chars", () => {
-    const long = "x".repeat(500);
-    const line = toolTraceNdjson({
-      tool: "tailor_resume",
-      agent: "resume_agent",
-      summary: long,
-    });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect((parsed.summary as string).length).toBe(160);
-  });
-
-  it("defaults agent to 'coordinator' when missing", () => {
-    const line = toolTraceNdjson({ tool: "weird_tool" });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.agent).toBe("coordinator");
-  });
-
-  it("passes plan_step through verbatim when present", () => {
-    // Step 4: dock UI uses this to highlight the matching task-graph row.
-    const line = toolTraceNdjson({
-      tool: "list_my_applications",
-      agent: "applications",
-      plan_step: "fetch_apps",
-    });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.plan_step).toBe("fetch_apps");
-  });
-
-  it("omits plan_step when missing (no empty key)", () => {
-    const line = toolTraceNdjson({ tool: "list_my_applications" });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect("plan_step" in parsed).toBe(false);
-  });
-
-  it("drops non-string plan_step (defensive)", () => {
-    const line = toolTraceNdjson({
-      tool: "list_my_applications",
-      plan_step: 42,
-    });
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect("plan_step" in parsed).toBe(false);
-  });
-});
-
-describe("narratorNdjson", () => {
-  it("returns null for non-string inputs", () => {
-    expect(narratorNdjson(null)).toBeNull();
-    expect(narratorNdjson(undefined)).toBeNull();
-    expect(narratorNdjson(42)).toBeNull();
-    expect(narratorNdjson({ text: "x" })).toBeNull();
-  });
-
-  it("returns null for empty / whitespace-only input", () => {
-    expect(narratorNdjson("")).toBeNull();
-    expect(narratorNdjson("   ")).toBeNull();
-    expect(narratorNdjson("\n\t  ")).toBeNull();
-  });
-
-  it("emits a narrator NDJSON line with trimmed text", () => {
-    const line = narratorNdjson("  Looking at your last Stripe apps.  ");
-    expect(line).not.toBeNull();
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect(parsed.kind).toBe("narrator");
-    expect(parsed.text).toBe("Looking at your last Stripe apps.");
-  });
-
-  it("clamps text at 160 chars (cross-protocol guard)", () => {
-    const long = "x".repeat(500);
-    const line = narratorNdjson(long);
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect((parsed.text as string).length).toBe(160);
-  });
-
-  it("does not modify text under the 160-char limit", () => {
-    const short = "x".repeat(50);
-    const line = narratorNdjson(short);
-    const parsed = JSON.parse(line!) as Record<string, unknown>;
-    expect((parsed.text as string).length).toBe(50);
-  });
-});
-
-describe("toHitlNdjson", () => {
-  const thread = "ask_vantage:11111111-1111-1111-1111-111111111111";
-
-  it("returns null for nullish values", () => {
-    expect(toHitlNdjson(null, thread)).toBeNull();
-    expect(toHitlNdjson(undefined, thread)).toBeNull();
-    expect(toHitlNdjson("not an object", thread)).toBeNull();
-  });
-
-  it("maps {kind: ask_user, question, chips, free_form, resume_token}", () => {
-    const out = parse(
-      toHitlNdjson(
-        {
-          kind: "ask_user",
-          question: "Which company?",
-          chips: ["Stripe", "Linear", "Anthropic"],
-          free_form: false,
-          resume_token: `${thread}#abc`,
-        },
-        thread,
-      ),
-    );
-    expect(out).not.toBeNull();
-    expect(out!.kind).toBe("ask_user");
-    expect(out!.question).toBe("Which company?");
-    expect(out!.chips).toEqual(["Stripe", "Linear", "Anthropic"]);
-    expect(out!.free_form).toBe(false);
-    expect(out!.resume_token).toBe(`${thread}#abc`);
-  });
-
-  it("infers ask_user from {question} alone", () => {
-    const out = parse(toHitlNdjson({ question: "Target role?" }, thread));
-    expect(out!.kind).toBe("ask_user");
-    expect(out!.question).toBe("Target role?");
-    expect(out!.free_form).toBe(true);
-    expect((out!.resume_token as string).startsWith(`${thread}#hitl-`)).toBe(true);
-  });
-
-  it("clamps chips to 8 items + drops non-strings", () => {
-    const out = parse(
-      toHitlNdjson(
-        {
-          question: "Which?",
-          chips: ["a", 1, "b", null, "c", "d", "e", "f", "g", "h", "i", "j"],
-        },
-        thread,
-      ),
-    );
-    const chips = out!.chips as string[];
-    expect(chips.length).toBe(8);
-    expect(chips.every((c) => typeof c === "string")).toBe(true);
-    expect(chips[0]).toBe("a");
-  });
-
-  it("maps {kind: diff, before, after}", () => {
-    const out = parse(
-      toHitlNdjson(
-        {
-          kind: "diff",
-          before: { bullets: ["old"] },
-          after: { bullets: ["new", "improved"] },
-        },
-        thread,
-      ),
-    );
-    expect(out!.kind).toBe("diff");
-    expect(out!.before).toEqual({ bullets: ["old"] });
-    expect(out!.after).toEqual({ bullets: ["new", "improved"] });
-  });
-
-  it("infers diff from {before, after} alone", () => {
-    const out = parse(
-      toHitlNdjson({ before: "old text", after: "new text" }, thread),
-    );
-    expect(out!.kind).toBe("diff");
-    expect(out!.before).toBe("old text");
-    expect(out!.after).toBe("new text");
-  });
-
-  it("falls back to approval for anything else", () => {
-    const out = parse(
-      toHitlNdjson(
-        {
-          action: "submit_application",
-          payload: { application_id: "abc-123" },
-        },
-        thread,
-      ),
-    );
-    expect(out!.kind).toBe("approval");
-    expect(out!.action).toBe("submit_application");
-    expect(out!.payload).toEqual({ application_id: "abc-123" });
-  });
-
-  it("approval default action is 'approve'", () => {
-    const out = parse(toHitlNdjson({ payload: { x: 1 } }, thread));
-    expect(out!.kind).toBe("approval");
-    expect(out!.action).toBe("approve");
-    expect(out!.payload).toEqual({ x: 1 });
-  });
-
-  it("preserves a caller-supplied resume_token verbatim", () => {
-    const out = parse(
-      toHitlNdjson(
-        { kind: "approval", action: "ok", resume_token: "thread:42#cp-7" },
-        thread,
-      ),
-    );
-    expect(out!.resume_token).toBe("thread:42#cp-7");
-  });
-});
-
-// ─── buildArtifact: update_field must not embed jump routes ───────────
-//
-// 2026-06-22 user feedback: clicking through "Open résumé / Tweak in
-// studio" from a clarification card was noise. We kept the card so the
-// dock acknowledges the intent, but next_actions must no longer carry
-// route fields — the dock renders them as inline buttons instead of
-// navigation triggers.
-describe("buildArtifact resume_agent.update_field", () => {
-  it("omits route on every next_action so the dock won't jump out", () => {
-    const art = buildArtifact(
-      "resume_agent",
-      "update_field",
-      { status: "needs_clarification" },
-      "/app/studio/resume",
-    );
-    expect(art).not.toBeNull();
-    expect(art!.artifact_type).toBe("resume_version");
-    expect(art!.next_actions).toBeDefined();
-    for (const action of art!.next_actions!) {
-      // The shape itself is fine — label / kind stay so the dock can
-      // render two buttons. We only forbid `route` because the user
-      // explicitly asked to stop being sent to /app/studio/resume.
-      expect(action.route).toBeUndefined();
-    }
-  });
-
-  it("still keeps the route on customize so the success card jumps to the new version", () => {
-    // Sanity check that the change above didn't widen the no-jump rule.
-    const art = buildArtifact(
-      "resume_agent",
-      "customize",
-      { status: "ok" },
-      "/app/studio/resume",
-    );
-    expect(art).not.toBeNull();
-    const routes = (art!.next_actions ?? []).map((a) => a.route);
-    expect(routes).toContain("/app/studio/resume");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].id).toBe("m1");
+    expect(body.items[0].preview).toBe("tailor my résumé for Stripe");
   });
 });
