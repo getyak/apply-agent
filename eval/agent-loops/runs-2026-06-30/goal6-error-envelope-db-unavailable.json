@@ -1,0 +1,157 @@
+{
+  "task_id": "wam0ax1u3",
+  "summary": "Self-improving loop on error_envelope.cross_layer for DB_UNAVAILABLE — schema-pure contract test, target 100.",
+  "agent_count": 20,
+  "duration_ms": null,
+  "logs": [
+    "Goal: error_envelope.cross_layer.db_unavailable",
+    "Incident: PG pool calls .end() while connections still queued; next request crashes pg-pool with \"Cannot use a pool after calling end on the pool\"",
+    "parallel[0] failed: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output",
+    "parallel[2] failed: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output",
+    "Generated 1/3",
+    "  [defensive-redact] status=503 code=DB_UNAVAILABLE traceCode=R-0193",
+    "[literal-spec] total=0/100 (TERMINAL)",
+    "[defensive-redact] total=96/100 ",
+    "    schema_compliance: 22/22  ✓",
+    "    code_status_alignment: 18/18  ✓",
+    "    trace_propagation: 14/18  (1d)",
+    "    redaction_safety: 16/16  ✓",
+    "    user_actionability: 14/14  ✓",
+    "    degradation_signal: 12/12  ✓",
+    "[verbose-debug] total=0/100 (TERMINAL)",
+    "🏆 Winner: [defensive-redact] = 96/100",
+    "Polish — fix 1 axes",
+    "After polish: 100/100",
+    "Verify: 3-1 → REFUTED",
+    "  spec_fidelity: approve  conf=0.86",
+    "  redaction: approve  conf=0.9",
+    "  trace: refute  conf=0.97",
+    "  parsability: approve  conf=0.92",
+    "═══════════════════════════════════════════════════════════════",
+    "STATUS: REFUTED_BY_VERIFY  FINAL: 100/100",
+    "PATH: panel=96 → polish=100",
+    "VERIFY: 3-1 REFUTED",
+    "═══════════════════════════════════════════════════════════════"
+  ],
+  "failures": null,
+  "result": {
+    "goal_id": "error_envelope.cross_layer.db_unavailable",
+    "target_score": 100,
+    "status": "REFUTED_BY_VERIFY",
+    "final_score": 100,
+    "winning_strategy": "defensive-redact",
+    "trajectory": [
+      {
+        "round": "panel",
+        "strategy": "defensive-redact",
+        "score": 96
+      },
+      {
+        "round": "polish",
+        "strategy": "defensive-redact+polish",
+        "score": 100
+      }
+    ],
+    "panel_results": [
+      {
+        "strategy": "literal-spec",
+        "score": 0,
+        "terminal": true
+      },
+      {
+        "strategy": "defensive-redact",
+        "score": 96,
+        "terminal": false
+      },
+      {
+        "strategy": "verbose-debug",
+        "score": 0,
+        "terminal": true
+      }
+    ],
+    "final_breakdown": {
+      "schema_compliance": {
+        "score": 22,
+        "weight": 22,
+        "deductions": []
+      },
+      "code_status_alignment": {
+        "score": 18,
+        "weight": 18,
+        "deductions": []
+      },
+      "trace_propagation": {
+        "score": 18,
+        "weight": 18,
+        "deductions": []
+      },
+      "redaction_safety": {
+        "score": 16,
+        "weight": 16,
+        "deductions": []
+      },
+      "user_actionability": {
+        "score": 14,
+        "weight": 14,
+        "deductions": []
+      },
+      "degradation_signal": {
+        "score": 12,
+        "weight": 12,
+        "deductions": []
+      }
+    },
+    "verify": {
+      "spec_fidelity": {
+        "verdict": "approve",
+        "reason": "All spec_anchors satisfied: (1) all must_have_fields present (code, message, messageKey, traceId, traceCode, timestamp, action); (2) code is \"DB_UNAVAILABLE\"; (3) http_status is 503; (4) action.kind is \"retry\" (with after:5, matching spec's `{ kind: 'retry', after?: number }`); (5) messageKey \"errors.system.dbUnavailable\" has prefix \"errors.system\"; (6) all three required headers present (X-Trace-Id, X-Request-Id, X-Relay-Health); (7) traceCode \"R-AGJV\" matches the R-XXXX surface form documented in spec (R-3F8K, R-AB42 examples). Incident-appropriate: cause.layer=pg with action=retry matches §8 \"After W1-W5\" postmortem envelope shape for pg pool failure. timestamp is ISO 8601. X-Relay-Health=degraded correctly broadcasts §4.1.5 degradation signal.",
+        "confidence": 0.86
+      },
+      "redaction": {
+        "verdict": "approve",
+        "reason": "Redaction audit passed. All string fields scanned for leaks: no raw \"Cannot use a pool after calling end on the pool\" pg-pool error, no Postgres DSN (postgres://user:pwd@host), no absolute filesystem paths (/Users/, /home/, C:\\), no API keys (sk-, OPENROUTER_*, bearer tokens), no stack frames. The cause.message field contains a sanitized generic paraphrase \"connection pool unavailable\" rather than the raw pg-pool exception text, which satisfies §4.2.3 redaction requirements and §9 G5 gap closure. All spec anchors satisfied: required fields (code, message, messageKey, traceId, traceCode, timestamp, action) present; code=DB_UNAVAILABLE, http_status=503, action.kind=retry, messageKey=\"errors.system.dbUnavailable\" matches prefix; X-Trace-Id, X-Request-Id, X-Relay-Health=degraded headers all present per §4.1.5 global health banner contract. traceCode \"R-AGJV\" is a 4-char short code per §2.2 format. cause.layer=\"pg\" is within enum per §2.1.",
+        "confidence": 0.9
+      },
+      "trace": {
+        "verdict": "refute",
+        "reason": "traceCode mismatch. Per api/src/errors.ts:547 `traceCodeFromTraceId`, the code is a deterministic Crockford-base32 fold of the first 40 bits of the traceId hex. For traceId `01935f4e-aaaa-bbbb-cccc-deadbeef1234`: hex[0..10]=`01935f4eaa`, high=0x01935=6453, low=0xf4eaa=1003690, folded=1005263 → Crockford base32 of low 20 bits = `YNWZ`, so the expected traceCode is `R-YNWZ`. The envelope claims `R-AGJV`, which is not a valid derivation. This violates the docs/architecture/error-handling.md §2.2 single-rule that traceCode is the canonical short alias of traceId and breaks the support reverse-lookup contract (errors.ts:537-543). X-Trace-Id header matches body.error.traceId, requestId is consistent, code/http_status/action_kind/messageKey prefix/headers all conform — but traceCode integrity fails, so under TRACE_INTEGRITY lens with DEFAULT REFUTE this envelope must be refuted.",
+        "confidence": 0.97
+      },
+      "parsability": {
+        "verdict": "approve",
+        "reason": "Envelope contains all must_have_fields (code, message, messageKey, traceId, traceCode, timestamp, action). Spec anchors satisfied: code=DB_UNAVAILABLE, http_status=503, action.kind=retry, messageKey has \"errors.system\" prefix, and all three response headers (X-Trace-Id, X-Request-Id, X-Relay-Health) present with X-Relay-Health=degraded enabling the global banner per error-handling.md §4.1.5. resolveError() in web/src/lib/api-client.ts would cleanly parse error.code for surface routing (banner per §4.3.3), error.traceCode \"R-AGJV\" for <ErrorDetails> copyable display, error.action.kind=\"retry\" with after=5 for Retry CTA, and messageKey for i18n lookup. Headers mirror envelope IDs (X-Trace-Id matches error.traceId, X-Request-Id matches error.requestId). No parser-confusing shapes — JSON is well-formed, no field type mismatches, no nested error/error confusion. Matches the §13 postmortem example almost exactly.",
+        "confidence": 0.92
+      },
+      "quorum": "3-1",
+      "decision": "REFUTED"
+    },
+    "final_artifact": {
+      "body": {
+        "error": {
+          "code": "DB_UNAVAILABLE",
+          "message": "Database temporarily unavailable",
+          "messageKey": "errors.system.dbUnavailable",
+          "traceId": "01935f4e-aaaa-bbbb-cccc-deadbeef1234",
+          "traceCode": "R-AGJV",
+          "requestId": "5b9189a3-793c-45a0-98da-fd01430b964f",
+          "timestamp": "2026-06-30T00:00:00.000Z",
+          "action": {
+            "kind": "retry",
+            "after": 5
+          },
+          "cause": {
+            "layer": "pg",
+            "message": "connection pool unavailable"
+          }
+        }
+      },
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Trace-Id": "01935f4e-aaaa-bbbb-cccc-deadbeef1234",
+        "X-Request-Id": "5b9189a3-793c-45a0-98da-fd01430b964f",
+        "X-Relay-Health": "degraded"
+      },
+      "http_status": 503
+    }
+  }
+}
