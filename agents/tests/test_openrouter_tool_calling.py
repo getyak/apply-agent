@@ -40,11 +40,27 @@ def dummy_lookup(query: str) -> str:
 def _has_real_openrouter_key() -> bool:
     """CI sets OPENROUTER_API_KEY=dummy-for-unit-tests to satisfy code that
     requires the env var to be present; treat that placeholder as 'absent'
-    so smoke tests don't actually hit OpenRouter and 401."""
+    so smoke tests don't actually hit OpenRouter and 401.
+
+    Round-20 fix: `.env.example` ships the value `sk-or-CHANGE_ME` (and the
+    web/api scaffolds similarly use `CHANGE_ME` substrings as the
+    documented placeholder). A dev who copies `.env.example` to `.env` and
+    runs pytest would otherwise trip the smoke test against a fake key.
+    Extend the placeholder detection to recognise CHANGE_ME and the
+    `sk-or-` literal prefix as 'not a real key' rather than only the
+    leading word.
+    """
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
         return False
-    return not key.lower().startswith(("dummy", "test", "fake", "placeholder"))
+    lk = key.lower()
+    if lk.startswith(("dummy", "test", "fake", "placeholder")):
+        return False
+    if "change_me" in lk or "changeme" in lk:
+        return False
+    if lk == "sk-or-change_me" or lk.startswith("sk-or-change"):
+        return False
+    return True
 
 
 pytestmark = pytest.mark.skipif(
