@@ -83,33 +83,61 @@ def hash_content(content: str) -> str:
 
 @mark_auto
 async def redis_get(key: str) -> str | None:
-    """Read a string value from Redis (6380). Returns None on miss."""
+    """Read a string value from Redis (6380). Returns None on miss.
+
+    Cache is an optimisation, NOT a correctness requirement
+    (docs/architecture/error-handling.md: CACHE_UNAVAILABLE degrades).
+    When Redis is unreachable (dev box without infra, prod outage), return
+    None so callers treat it as a cache miss instead of crashing the saga
+    stage. Loop round 20 fix: previously a Connection-refused dropped the
+    entire customize_resume node into 'failed' on Redis-less envs.
+    """
     try:
         import redis.asyncio as redis  # local import
     except ImportError:
         return None
     url = os.environ.get("RELAY_REDIS_URL", "redis://localhost:6380/0")
-    client = redis.from_url(url, decode_responses=True)
+    try:
+        client = redis.from_url(url, decode_responses=True)
+    except Exception:  # noqa: BLE001 — URL parse / DNS at construct time
+        return None
     try:
         return await client.get(key)
+    except Exception:  # noqa: BLE001 — connection refused / timeout / auth
+        return None
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception:  # noqa: BLE001 — already torn down
+            pass
 
 
 @mark_auto
 async def redis_setex(key: str, ttl_seconds: int, value: str) -> bool:
-    """SETEX into Redis. Returns True on success."""
+    """SETEX into Redis. Returns True on success, False if cache unreachable.
+
+    Mirror of redis_get's degrade-on-failure stance: callers must NOT make
+    correctness depend on the cache write succeeding.
+    """
     try:
         import redis.asyncio as redis
     except ImportError:
         return False
     url = os.environ.get("RELAY_REDIS_URL", "redis://localhost:6380/0")
-    client = redis.from_url(url, decode_responses=True)
+    try:
+        client = redis.from_url(url, decode_responses=True)
+    except Exception:  # noqa: BLE001
+        return False
     try:
         await client.setex(key, ttl_seconds, value)
         return True
+    except Exception:  # noqa: BLE001 — connection refused / timeout
+        return False
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @mark_auto
