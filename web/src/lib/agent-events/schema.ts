@@ -277,6 +277,18 @@ export interface BrowserAction {
   ts: number;
 }
 
+// One row of a task-graph (plan) step. Mirrors the coordinator's plan
+// entries delivered via the relay.task_graph CUSTOM event; statuses are
+// driven forward by relay.task_graph_step / relay.agent_* events.
+export interface PlanStep {
+  step: string;
+  agent: string;
+  label: string;
+  status: "pending" | "running" | "done" | "review" | "failed";
+  requiresReview: boolean;
+  errorText?: string;
+}
+
 export interface Step {
   id: string;
   run_id: string;
@@ -316,6 +328,11 @@ export interface Step {
   };
   artifact?: { id: string; snapshot: unknown };
   narrator?: { text: string };
+  plan?: {
+    taskId: string;
+    userGoal?: string;
+    steps: PlanStep[];
+  };
 
   // raw events feed (soft cap 200; reducer keeps first 50 + last 50 + sentinel)
   events: AgentEvent[];
