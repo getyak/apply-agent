@@ -36,6 +36,17 @@ export default function LandingMotion() {
       document.querySelectorAll<HTMLElement>("[data-reveal]"),
     );
     let io: IntersectionObserver | null = null;
+    // Safety net: any [data-reveal] still hidden after this deadline is forced
+    // visible. Guards the "section exists but is opacity:0 forever" failure
+    // mode — fast scroll past observer registration, hash-jump landing past
+    // the section, or the observer never firing on a tab backgrounded during
+    // mount. Better to lose the entrance animation than the content.
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    const revealAll = () => {
+      for (const el of targets) {
+        if (!el.classList.contains("revealed")) el.classList.add("revealed");
+      }
+    };
     if (reduce) {
       targets.forEach((el) => el.classList.add("revealed"));
     } else {
@@ -51,6 +62,7 @@ export default function LandingMotion() {
         { rootMargin: "0px 0px -8% 0px", threshold: 0.12 },
       );
       targets.forEach((el) => io!.observe(el));
+      safetyTimer = setTimeout(revealAll, 2500);
     }
 
     // ── Scroll-spy nav (v37) ───────────────────────────────────────────────
@@ -178,6 +190,7 @@ export default function LandingMotion() {
       if (mRaf) cancelAnimationFrame(mRaf);
       io?.disconnect();
       spy?.disconnect();
+      if (safetyTimer) clearTimeout(safetyTimer);
       root.classList.remove("reveal-ready");
       root.style.removeProperty("--scroll-energy");
       delete root.dataset.scrolled;
