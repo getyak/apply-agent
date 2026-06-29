@@ -661,7 +661,8 @@
       "drafting": "Drafting…"
     },
     "message": {
-      "thinking": "Thinking"
+      "thinking": "Thinking",
+      "streamError": "Something interrupted the stream: {message}"
     },
     "artifact": {
       "confident": "{pct}% CONFIDENT",
@@ -720,6 +721,17 @@
       "wantsTo": "Vantage wants to <strong>{action}</strong>.",
       "optionalNote": "Optional note for the agent…",
       "cancelWithout": "Cancel without answering"
+    },
+    "fileEdit": {
+      "lines": "{count} {count, plural, one {line} other {lines}}",
+      "applied": "applied",
+      "preview": "preview",
+      "loadingDiff": "Loading diff…"
+    },
+    "browser": {
+      "label": "Browser",
+      "snapshotCount": "{count} {count, plural, one {snapshot} other {snapshots}}",
+      "screenshotAlt": "Screenshot of {url}"
     }
   },
   "resume": {

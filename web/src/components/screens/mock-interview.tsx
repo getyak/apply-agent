@@ -25,7 +25,7 @@ import {
   INTERVIEWING_DATA,
 } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
-import { sendAsk } from "@/lib/ask-stream";
+import { sendAsk } from "@/lib/agent-events";
 import { users as usersApi } from "@/lib/api";
 import { initialsOf } from "@/lib/dates";
 

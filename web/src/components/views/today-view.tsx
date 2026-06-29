@@ -12,7 +12,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { today as todayApi, type TodayAction } from "@/lib/api";
-import { sendAsk } from "@/lib/ask-stream";
+import { sendAsk } from "@/lib/agent-events";
 import { useDock } from "@/lib/ask-vantage-store";
 
 type Translator = ReturnType<typeof useTranslations>;

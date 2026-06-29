@@ -1,51 +1,79 @@
-"""Dock Agent — main-loop ReAct agent for the Ask Vantage dock.
+"""Dock Agent — main-loop ReAct agent for the Ask Vantage dock (AG-UI).
 
-Design reference: docs/design/chat-agent-system-redesign.md §5.1 (P0-A) +
-§5.2 (P0-B).
+Design reference:
+  - docs/architecture/agent-event-stream.md (AG-UI event stream protocol)
+  - docs/design/chat-agent-system-redesign.md §5.1 (P0-A) + §5.2 (P0-B)
 
 Caller:
-  - ``agents.api.server.ask_stream`` builds + invokes the graph per turn,
-    translating LangGraph events into the existing 5-event SSE protocol
-    plus the new ``task_graph`` / ``hitl`` events.
+  - ``agents.api.server.ask_stream`` calls ``run_dock_turn`` and streams the
+    yielded SSE frame strings straight through ``_with_heartbeat``.
 
-Behavior:
-  - Pure ``create_react_agent`` (LangGraph prebuilt) with our DOCK_TOOLS
-    registry — propose_plan + 4 domain tools + 3 recall tools + 3 admin
-    tools (build_resume, list_apps, trends_today).
-  - General-tier model (GLM-4.7) by default. Heavy-tier fallback only
-    when a plan step explicitly marks ``requires_review=true`` for a
-    high-cost decision (not implemented in P0; the registry is in place).
+What changed in PR2 (AG-UI cutover):
+  The old hand-rolled ``DockEvent`` → 13-name SSE protocol is gone. We now run
+  the dock graph through the official ``ag_ui_langgraph.LangGraphAgent`` adapter,
+  which emits the 16 standard AG-UI events (RUN_STARTED / REASONING_* /
+  TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED …) verbatim from the LangGraph
+  stream. ``run_dock_turn`` wraps that adapter to:
+
+    1. Inject the Relay envelope (id / seq / trace_id / run_id / thread_id /
+       protocol_version) into every event's ``raw_event`` via ``RelayEmitter``
+       so the web reducer can de-dup / order / aggregate by step.
+    2. Derive Relay product-semantic CUSTOM events (``relay.task_graph`` /
+       ``relay.narrator`` / ``relay.agent_start`` / ``relay.agent_done`` /
+       ``relay.artifact``) by watching the adapter's TOOL_CALL_START /
+       TOOL_CALL_RESULT pairs — the SDK has no notion of "a plan" or "an
+       artifact card", those are Relay concepts layered on top.
+    3. Handle HITL on the double track: when the graph parks on ``interrupt()``
+       the adapter surfaces a CUSTOM ``on_interrupt`` event; we re-emit it as
+       ``relay.hitl_prep`` (so the dock can render the approval card) followed
+       by a ``RUN_FINISHED`` with ``outcome=interrupt`` (so the run cleanly
+       ends and the client knows to collect a decision). Resume is a *new*
+       ``run_dock_turn`` call with ``command={"resume": ...}``.
+
+Concurrency: ``max_concurrency=1`` is forced in the run config to side-step
+ag-ui-langgraph #871 (concurrent tool-call events arriving out of order /
+dropped). The dock's ReAct loop is sequential in practice anyway; this just
+makes the guarantee explicit.
+
+Notes on harness wiring (unchanged from before):
+  - ``post_model_hook`` (token / cost guards) and ``dock_pre_model_hook``
+    (iteration budget + context compaction) stay registered on the graph.
   - Same PostgresSaver as the rest of the agent layer
-    (``harness.checkpointer.get_checkpointer``) so the dock keeps a
-    durable per-user thread and HITL ``interrupt()`` calls resume cleanly.
-  - The cheap regex router stays as a **fast path** in ``server.ask_stream``
-    (confidence ≥ 0.95 → direct dispatch, no main-loop LLM call). This
-    file only handles the cases the regex misses.
-
-Notes on harness wiring:
-  - ``post_model_hook`` from ``harness.guards`` is registered so token /
-    cost guards work the same way they do for other graphs. The hook
-    operates on the state dict and is NOT subject to LangGraph #4841
-    (we don't rely on InjectedState).
-  - Context window compaction is delegated to ``harness.context.maybe_compact``
-    on each turn entry (server.ask_stream does this; not the agent).
+    (``harness.checkpointer.get_checkpointer``) so HITL ``interrupt()`` resumes
+    cleanly across the lifetime per-user thread.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import time
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import structlog
-from langchain_core.messages import HumanMessage, SystemMessage
+from ag_ui.core import (
+    BaseEvent,
+    EventType,
+    Interrupt,
+    RunAgentInput,
+)
+from ag_ui.core import (
+    SystemMessage as AGUISystemMessage,
+)
+from ag_ui.core import (
+    UserMessage as AGUIUserMessage,
+)
+from ag_ui_langgraph import LangGraphAgent, LangGraphEventTypes
 from langgraph.prebuilt import create_react_agent
+from ulid import ULID
 
 from agents.coordinator.dock_tools import DOCK_TOOLS
 from agents.harness.checkpointer import get_checkpointer
 from agents.harness.context import dock_pre_model_hook
+from agents.harness.events import RelayEmitter
 from agents.harness.guards import post_model_hook
 from agents.harness.llm import pick_model
 
@@ -54,39 +82,44 @@ log = structlog.get_logger("agents.coordinator.dock_agent")
 
 DOCK_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "coordinator" / "dock_agent.v1.md"
 
+# Adapter "agent name" — purely a label the SDK stamps on its run metadata.
+_DOCK_AGENT_NAME = "vantage_dock"
 
-@dataclass(frozen=True)
-class DockEvent:
-    """One observable event from a dock turn, normalised across LangGraph stream types.
+# Tools whose TOOL_CALL_* events are *cosmetic* in the dock UI: they each have a
+# dedicated Relay product surface (task-graph card / narrator chip / recall
+# inline summary) so we suppress the generic agent_start/agent_done/artifact
+# derivation for them. Kept in sync with the gateway's old _CONSOLE_HIDDEN_TOOLS.
+_SYSTEM_TOOLS: frozenset[str] = frozenset(
+    {
+        "propose_plan",
+        "narrate",
+        "ask_clarification",
+        "recall_user_memory",
+        "recall_past_applications",
+        "recall_weak_points",
+    }
+)
 
-    ``kind`` is one of:
-      - "plan"             — propose_plan tool returned; payload = plan dict
-      - "narrator"         — narrate() tool returned; payload = {text}
-      - "tool_start"       — execution tool started; payload = {tool, args}
-      - "tool_end"         — execution tool finished; payload = {tool, result}
-      - "tool_error"       — execution tool raised; payload = {tool, error}
-      - "assistant_delta"  — model text delta; payload = {text}
-      - "reasoning_delta"  — model chain-of-thought delta (when the picked
-        tier returns OpenRouter ``reasoning``); payload = {text}. A single
-        chat-model chunk can produce *both* a reasoning_delta and an
-        assistant_delta in the same tick; the multi-event translator
-        emits both, in reasoning-then-text order.
-      - "partial_artifact" — Step 5: a tool emitted an in-progress snapshot
-        of the artifact it's still building. payload = {artifact_id, kind,
-        title?, sub?, progress, payload}. The dock UI merges these
-        snapshots into a single live card by ``artifact_id``.
-      - "interrupt"        — graph hit ``interrupt()``; payload = {value}
-      - "done"             — graph completed normally
-    """
-
-    kind: str
-    payload: dict[str, Any]
-
+# Mapping of execution-tool name → (agent, action). Used to derive the
+# ``relay.agent_start`` / ``relay.agent_done`` / ``relay.artifact`` CUSTOM
+# events so the dock can label the agent row + build the artifact card. Mirrors
+# the gateway's old _TOOL_AGENT_MAP.
+_TOOL_AGENT_MAP: dict[str, tuple[str, str]] = {
+    "list_my_applications": ("applications", "list"),
+    "tailor_resume": ("resume_agent", "customize"),
+    "polish_bullet": ("resume_agent", "polish_bullet"),
+    "find_jobs": ("jobmatch_agent", "find_matches"),
+    "start_mock_interview": ("interview_agent", "build_mock_graph"),
+    "draft_cover_letter": ("appprep_agent", "draft_cover_letter"),
+    "build_resume_from_scratch": ("resume_agent", "build_from_scratch"),
+    "trends_today": ("trend_agent", "daily_snapshot"),
+    "web_search": ("coordinator", "web_search"),
+    "web_fetch": ("coordinator", "web_fetch"),
+}
 
 # Tool result body cap. Anything larger gets stringified to this limit and
 # suffixed with "…[truncated]" so a single 100k-row find_matches dump can't
-# bloat an SSE frame. 8 KiB matches what the dock JsonBlock renders (~200
-# lines of pretty JSON); raise both ends together if you ever change it.
+# bloat an SSE frame. 8 KiB matches what the dock JsonBlock renders.
 _TOOL_RESULT_CAP_BYTES = 8 * 1024
 
 
@@ -96,8 +129,8 @@ def _load_dock_prompt() -> str:
         return DOCK_PROMPT_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
         # Defensive: tests sometimes patch the prompt path; surface as empty
-        # rather than crash so the dock still has a model session to fall
-        # back on (the LLM gets a less-opinionated system prompt).
+        # rather than crash so the dock still has a model session to fall back
+        # on (the LLM gets a less-opinionated system prompt).
         log.warning("dock_agent.prompt_missing", path=str(DOCK_PROMPT_PATH))
         return "You are Vantage. Reply briefly."
 
@@ -107,12 +140,8 @@ def build_dock_graph(tier: str = "general"):
     """Build (and cache) the dock ReAct graph.
 
     Cached by tier so a future "premium" path can swap the model without
-    leaking graphs. Each instance owns its own checkpointer reference,
-    which itself is cached at ``get_checkpointer``-level, so this is safe
-    to keep around for the process lifetime.
-
-    Returns the compiled LangGraph, ready for ``ainvoke`` /
-    ``astream_events``.
+    leaking graphs. Returns the compiled LangGraph, ready to hand to
+    ``LangGraphAgent``.
     """
     if tier not in ("heavy", "general", "fast"):
         raise ValueError(f"invalid dock tier: {tier!r}")
@@ -123,16 +152,7 @@ def build_dock_graph(tier: str = "general"):
         tools=DOCK_TOOLS,
         prompt=_load_dock_prompt(),
         checkpointer=checkpointer,
-        # pre_model_hook: iteration / consecutive-error budget AND token-budget
-        # compaction. dock_pre_model_hook composes guards.pre_model_hook with
-        # harness.context.maybe_compact so a long lifetime dock thread auto-
-        # summarises older turns when it crosses the 80k token line set by
-        # post_model_hook. Without this, long Ask Vantage sessions would
-        # silently bloat their context window.
         pre_model_hook=dock_pre_model_hook,
-        # post_model_hook gives us token + cost guards (see harness/guards.py).
-        # Cost gets sourced from the contextvar cost_tracker tally so direct
-        # model.ainvoke paths (resume_agent.customize etc.) also accumulate.
         post_model_hook=post_model_hook,
     )
     return graph
@@ -142,46 +162,104 @@ async def run_dock_turn(
     *,
     message: str,
     thread_id: str,
+    trace_id: str | None = None,
     extra_system_blocks: list[str] | None = None,
+    command: dict[str, Any] | None = None,
     recursion_limit: int = 12,
     tier: str = "general",
     graph_factory=None,
-):
-    """Yield ``DockEvent``s for one user turn.
+) -> AsyncIterator[str]:
+    """Yield encoded AG-UI SSE frame strings for one dock turn.
 
     The caller (``agents.api.server.ask_stream``) is responsible for:
-      - regex fast-path (confidence ≥ 0.95 → direct dispatch, skip this)
-      - setting the dock contextvars via
-        ``agents.coordinator.dock_tools.set_dock_context`` *before*
-        calling this generator.
-      - persisting the turn into conversation_messages once the stream
-        settles.
+      - regex fast-path (skip this when a cheap classifier is confident)
+      - setting the dock contextvars via ``dock_tools.set_dock_context``
+        *before* calling this generator
+      - wrapping the output in the heartbeat generator + StreamingResponse
 
-    ``extra_system_blocks`` are appended after the base prompt for
-    surface-specific context (e.g. resume_studio active résumé brief).
-    They're sent as additional SystemMessages so the persistent prompt
-    on the graph stays cacheable.
+    ``extra_system_blocks`` are prepended as AG-UI system messages for
+    surface-specific context (locale directive, résumé brief). They feed the
+    LangGraph state via the adapter's message merge.
 
-    ``recursion_limit`` caps the ReAct loop's depth. Default 12 = up to
-    6 thought/tool pairs. Higher values cost real money; lift it only if
-    you have a workflow that genuinely needs it.
+    ``command`` resumes a parked interrupt: pass ``{"resume": <decision>}`` and
+    it is forwarded to the adapter as ``forwarded_props.command``, which the SDK
+    turns into ``Command(resume=...)``. When ``command`` is set ``message`` may
+    be empty (the resume decision drives the turn).
 
-    ``graph_factory`` is a test seam — pass a zero-arg callable that
-    returns a pre-wired graph (e.g. one with a mock model + MemorySaver).
-    Production callers leave it as ``None`` to use ``build_dock_graph``.
+    ``graph_factory`` is a test seam — a zero-arg callable returning a pre-wired
+    graph (mock model + MemorySaver). Production leaves it ``None``.
+
+    Yields ``"data: {...}\\n\\n"`` SSE frames. ``ask_stream`` forwards them
+    verbatim; the Bun gateway passes them through untouched.
     """
     graph = graph_factory() if graph_factory else build_dock_graph(tier=tier)
-    cfg: dict[str, Any] = {
-        "configurable": {"thread_id": thread_id},
-        "recursion_limit": recursion_limit,
-    }
+    run_id = str(ULID())
+    tid = trace_id or str(uuid4())
+    emitter = RelayEmitter(run_id=run_id, thread_id=thread_id, trace_id=tid)
 
-    extras = [SystemMessage(content=blk) for blk in (extra_system_blocks or []) if blk]
-    messages = [*extras, HumanMessage(content=message)]
+    adapter = LangGraphAgent(
+        name=_DOCK_AGENT_NAME,
+        graph=graph,
+        # max_concurrency=1 hard-guards ag-ui-langgraph #871; thread_id pins the
+        # checkpointer so HITL resume lands on the same lifetime thread.
+        config={
+            "max_concurrency": 1,
+            "recursion_limit": recursion_limit,
+            "configurable": {"thread_id": thread_id},
+        },
+    )
 
-    async for event in graph.astream_events({"messages": messages}, version="v2", config=cfg):
-        for evt in _translate_event_multi(event):
-            yield evt
+    messages: list[Any] = []
+    for blk in extra_system_blocks or []:
+        if blk:
+            messages.append(AGUISystemMessage(id=str(ULID()), role="system", content=blk))
+    if message:
+        messages.append(AGUIUserMessage(id=str(ULID()), role="user", content=message))
+
+    forwarded_props: dict[str, Any] = {}
+    if command:
+        forwarded_props["command"] = command
+
+    run_input = RunAgentInput(
+        thread_id=thread_id,
+        run_id=run_id,
+        state={},
+        messages=messages,
+        tools=[],
+        context=[],
+        forwarded_props=forwarded_props,
+    )
+
+    # Derivation state across the run.
+    tracker = _ToolTracker()
+    saw_interrupt = False
+
+    async for event in adapter.run(run_input):
+        # The SDK surfaces interrupts as a CUSTOM event named "on_interrupt".
+        # Translate that to the Relay double-track (hitl_prep CUSTOM + a
+        # RUN_FINISHED interrupt outcome) and swallow the adapter's own
+        # RUN_FINISHED so the client sees exactly one terminal frame.
+        if _is_interrupt_event(event):
+            saw_interrupt = True
+            for frame in _emit_hitl(emitter, event):
+                yield frame
+            continue
+        if saw_interrupt and event.type == EventType.RUN_FINISHED:
+            # Already emitted our interrupt RUN_FINISHED — drop the SDK's.
+            continue
+
+        # Stamp the Relay envelope onto whatever the adapter produced, then
+        # encode + yield. _encode_with_envelope mutates raw_event in place.
+        yield _encode_with_envelope(emitter, event)
+
+        # Derive Relay product CUSTOM events around tool calls.
+        for frame in _derive_custom_events(emitter, event, tracker):
+            yield frame
+
+
+# ---------------------------------------------------------------------------
+# Partial-artifact stream (Step 5) — tools call this from inside the graph.
+# ---------------------------------------------------------------------------
 
 
 async def emit_partial_artifact(
@@ -195,28 +273,11 @@ async def emit_partial_artifact(
 ) -> None:
     """Stream an in-progress artifact snapshot from inside a LangGraph tool.
 
-    Step 5 contract — long-running tools (e.g. tailor_resume) call this
-    repeatedly as they generate; the dock UI merges the snapshots into a
-    single live card identified by ``artifact_id``. The final tool_end
-    still produces the canonical artifact frame; partials are
-    *previews*, not authoritative state.
+    Dispatches a LangGraph custom event named ``relay.partial_artifact``; the
+    ag-ui-langgraph adapter forwards it verbatim as an AG-UI CUSTOM event, so
+    the dock merges the snapshots into one live card by ``artifact_id``.
 
-    Args:
-      artifact_id: stable id the dock uses to merge updates. Reuse the
-        same id across calls within one tool invocation.
-      kind: human-meaningful category — "resume_bullet" / "cover_letter" /
-        "form_answers" / ... — purely descriptive, the dock chooses how
-        to render based on this.
-      progress: optional 0.0–1.0 completion estimate. ``None`` for tools
-        that can't estimate.
-      title: short header ("Tailored résumé v7"). Updates the card title.
-      sub: one-line subline ("Bullet 2 of 5"). Updates each tick.
-      payload: free-form chunk content. The dock will merge by ``kind``:
-        for resume_bullet etc., the payload is appended to a list under
-        ``payload.items``; otherwise replaced wholesale.
-
-    The dispatcher is a no-op outside a LangGraph callback context — so
-    calling this from tests / a REPL won't crash, it just logs no event.
+    No-op outside a LangGraph callback context (tests / REPL).
     """
     from langchain_core.callbacks.manager import adispatch_custom_event
 
@@ -230,220 +291,226 @@ async def emit_partial_artifact(
     if payload is not None:
         data["payload"] = payload
     try:
-        await adispatch_custom_event("partial_artifact", data)
+        await adispatch_custom_event("relay.partial_artifact", data)
     except RuntimeError:
-        # Outside a callback context (no run_manager). Treat as no-op so
-        # tools can call this freely during unit tests without monkey
-        # patching the callback runner.
+        # Outside a callback context (no run_manager). Treat as no-op.
         log.debug("emit_partial_artifact.no_runner", artifact_id=artifact_id)
 
 
-def _translate_event_multi(event: dict[str, Any]) -> list[DockEvent]:
-    """Translate one LangGraph stream event into 0..n DockEvents.
+# ---------------------------------------------------------------------------
+# Internals — envelope injection, custom-event derivation, HITL.
+# ---------------------------------------------------------------------------
 
-    Most LangGraph events still map 1:1 — those delegate straight to the
-    single-event ``_translate_event``. The exception is
-    ``on_chat_model_stream``: a single chunk may carry *both* a reasoning
-    delta (provider chain-of-thought, surfaced when OpenRouter's
-    ``reasoning`` passthrough is enabled in harness/llm.py) *and* a normal
-    text delta. Emitting them as two separate DockEvents — reasoning first
-    so the dock can paint the "Thinking" body live before any user-visible
-    text — lets the UI render both lanes without us re-shaping the chunk.
+
+class _ToolTracker:
+    """Per-run map of tool_call_id → tool name, plus a plan ordinal cursor.
+
+    Lets us label a TOOL_CALL_RESULT (which only carries tool_call_id) with the
+    tool name from the matching TOOL_CALL_START, and assign each execution tool
+    a monotonic plan_step ordinal so the dock can light up plan rows in order.
     """
-    name = event.get("event") or ""
-    if name == "on_chat_model_stream":
-        data = event.get("data") or {}
-        chunk = data.get("chunk")
-        out: list[DockEvent] = []
-        reasoning = _extract_reasoning(chunk)
-        if reasoning:
-            out.append(DockEvent(kind="reasoning_delta", payload={"text": reasoning}))
-        text = _extract_text(chunk)
-        if text:
-            out.append(DockEvent(kind="assistant_delta", payload={"text": text}))
-        return out
-    evt = _translate_event(event)
-    return [evt] if evt is not None else []
+
+    def __init__(self) -> None:
+        self._names: dict[str, str] = {}
+        self._step_seq = 0
+
+    def remember(self, tool_call_id: str, name: str) -> None:
+        if tool_call_id and name:
+            self._names[tool_call_id] = name
+
+    def name_for(self, tool_call_id: str) -> str:
+        return self._names.get(tool_call_id, "")
+
+    def next_step_id(self) -> str:
+        self._step_seq += 1
+        return f"step-{self._step_seq}"
 
 
-def _translate_event(event: dict[str, Any]) -> DockEvent | None:
-    """Translate a LangGraph astream event into a DockEvent (or None to skip).
+def _encode_with_envelope(emitter: RelayEmitter, event: BaseEvent) -> str:
+    """Stamp the Relay envelope onto an adapter event and SSE-encode it.
 
-    Coverage:
-      - ``on_tool_start`` / ``on_tool_end`` / ``on_tool_error``: 1:1 → tool_*
-      - ``on_chat_model_stream``: token delta → assistant_delta
-        (reasoning lane is handled by ``_translate_event_multi``; this
-        single-event entry point still emits only the assistant text for
-        backwards compatibility with the existing test suite.)
-      - ``on_chain_end`` on the root: → done
-      - everything else (chain_start, retriever events, ...): None
+    The adapter already set ``event.raw_event`` to its own LangGraph context.
+    We *merge* the Relay envelope into it (keeping the SDK's debug payload under
+    ``_langgraph``) so both the SDK's context and our de-dup/order keys travel
+    together.
     """
-    name = event.get("event") or ""
-    data = event.get("data") or {}
+    base = event.raw_event if isinstance(event.raw_event, dict) else None
+    relay_meta = emitter._meta()
+    if base:
+        event.raw_event = {**relay_meta, "_langgraph": base}
+    else:
+        event.raw_event = relay_meta
+    if event.timestamp is None:
+        event.timestamp = int(time.time() * 1000)
+    return emitter._encoder.encode(event)
 
-    if name == "on_tool_start":
-        tool_name = event.get("name") or ""
-        # ``narrate`` is a cosmetic tool — surface only the *end* event as a
-        # narrator chip; emitting a spinner row for it would defeat the point.
-        if tool_name == "narrate":
-            return None
-        tool_args = data.get("input") or {}
-        return DockEvent(kind="tool_start", payload={"tool": tool_name, "args": tool_args})
 
-    if name == "on_tool_end":
-        tool_name = event.get("name") or ""
-        result = data.get("output")
-        # LangGraph wraps tool returns in a ToolMessage; we want the raw
-        # dict for downstream consumers. Try to decode JSON content first,
-        # then fall through to a plain string / dict / list.
-        decoded = _decode_tool_output(result)
-        # ``propose_plan`` gets a dedicated event so the caller can fan out
-        # a ``task_graph`` SSE frame ahead of any agent_start.
-        if tool_name == "propose_plan" and isinstance(decoded, dict):
-            return DockEvent(kind="plan", payload={"plan": decoded})
-        # ``narrate`` is the "thought aloud" chip that fires right before each
-        # execution tool. We surface it as a dedicated event so the dock can
-        # render an italic narrator line (Manus-style) — and so we never let
-        # it slip into ``tool_end`` and pollute the tool console.
-        if tool_name == "narrate" and isinstance(decoded, dict):
-            text = str(decoded.get("narration") or "").strip()
-            if not text:
-                # Drop empty narrations — model was over-eager but had nothing
-                # meaningful to say. Don't surface a blank chip.
-                return None
-            return DockEvent(kind="narrator", payload={"text": text})
-        capped = _cap_for_wire(decoded if decoded is not None else result)
-        return DockEvent(
-            kind="tool_end",
-            payload={"tool": tool_name, "result": capped},
-        )
+def _is_interrupt_event(event: BaseEvent) -> bool:
+    return (
+        event.type == EventType.CUSTOM
+        and getattr(event, "name", None) == LangGraphEventTypes.OnInterrupt.value
+    )
 
-    if name == "on_tool_error":
-        tool_name = event.get("name") or ""
-        err = data.get("error")
-        return DockEvent(
-            kind="tool_error",
-            payload={"tool": tool_name, "error": _safe_str(err)},
-        )
 
-    if name == "on_chat_model_stream":
-        chunk = data.get("chunk")
-        text = _extract_text(chunk)
-        if not text:
-            return None
-        return DockEvent(kind="assistant_delta", payload={"text": text})
+def _emit_hitl(emitter: RelayEmitter, event: BaseEvent) -> list[str]:
+    """Translate the adapter's on_interrupt CUSTOM into the Relay HITL track.
 
-    # Step 5 — partial artifact stream from inside a tool. Tools call
-    # ``await emit_partial_artifact(...)`` which dispatches a custom event
-    # named "partial_artifact"; we translate that into a DockEvent.
-    if name == "on_custom_event" and event.get("name") == "partial_artifact":
-        snap = data if isinstance(data, dict) else {}
-        # ``data`` is whatever the tool passed as the dispatcher's ``data``
-        # arg — already the payload dict, no further unwrapping needed.
-        # We defensively coerce so a tool that emits garbage doesn't crash
-        # the stream. The translator just drops empties.
-        if not snap:
-            return None
-        return DockEvent(kind="partial_artifact", payload=dict(snap))
+    Double track (per plan + agent-harness.md HITL design):
+      1. ``relay.hitl_prep`` CUSTOM — carries the interrupt payload so the dock
+         renders the ask_user / diff / approval card.
+      2. ``RUN_FINISHED`` with ``outcome=interrupt`` — terminates the run; the
+         client collects a decision and resumes via a new turn with
+         ``command={"resume": ...}``.
+    """
+    # The SDK serialises the LangGraph interrupt value to a JSON string via
+    # dump_json_safe — decode it back to a dict so the dock gets structured
+    # data and our reason/message classifiers can read its fields.
+    value = _decode_tool_content(getattr(event, "value", None))
+    interrupt_id = str(ULID())
+    reason = _interrupt_reason(value)
+    return [
+        emitter.emit_custom("relay.hitl_prep", value, step_id=interrupt_id),
+        emitter.emit_run_finished_interrupt(
+            [
+                Interrupt(
+                    id=interrupt_id,
+                    reason=reason,
+                    message=_interrupt_message(value),
+                    metadata=value if isinstance(value, dict) else None,
+                )
+            ]
+        ),
+    ]
 
-    # LangGraph emits this when interrupt() fires inside a tool.
-    if name == "on_chain_stream" and isinstance(data.get("chunk"), dict):
-        chunk = data["chunk"]
-        if "__interrupt__" in chunk:
-            return DockEvent(
-                kind="interrupt",
-                payload={"value": chunk["__interrupt__"]},
-            )
 
-    if name == "on_chain_end" and event.get("name") == "LangGraph":
-        return DockEvent(kind="done", payload={})
+def _interrupt_reason(value: Any) -> str:
+    """Best-effort classification of the interrupt for the dock to branch on."""
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        if isinstance(kind, str) and kind:
+            return kind
+        if "before" in value and "after" in value:
+            return "diff"
+        if "question" in value:
+            return "ask_user"
+        if "action" in value:
+            return "approval"
+    return "approval"
 
+
+def _interrupt_message(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key in ("message", "question", "summary"):
+            v = value.get(key)
+            if isinstance(v, str) and v:
+                return v[:500]
     return None
 
 
-def _extract_text(chunk: Any) -> str:
-    """Pull a text delta out of any of the chunk shapes LangGraph hands us."""
-    if chunk is None:
-        return ""
-    # AIMessageChunk-style: .content is a str OR a list of dicts.
-    content = getattr(chunk, "content", chunk)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        out: list[str] = []
-        for part in content:
-            if isinstance(part, dict):
-                # Reasoning blocks (when the provider returns them inside
-                # ``content`` instead of additional_kwargs) belong to the
-                # reasoning lane — skip them here so they don't leak into
-                # the user-visible assistant text.
-                if part.get("type") == "reasoning":
-                    continue
-                txt = part.get("text") or part.get("content") or ""
-                if isinstance(txt, str):
-                    out.append(txt)
-            elif isinstance(part, str):
-                out.append(part)
-        return "".join(out)
-    return ""
+def _derive_custom_events(
+    emitter: RelayEmitter, event: BaseEvent, tracker: _ToolTracker
+) -> list[str]:
+    """Emit Relay product CUSTOM events around the adapter's tool-call events.
 
-
-def _extract_reasoning(chunk: Any) -> str:
-    """Pull a reasoning (chain-of-thought) delta out of the chunk.
-
-    OpenRouter's extended-thinking passthrough (enabled in harness/llm.py
-    when ``reasoning_effort`` is set) hands reasoning back in one of three
-    shapes, and we accept all of them so a langchain-openai version bump
-    or a provider quirk doesn't silently kill the "Thinking" body in the
-    dock:
-
-      1. ``chunk.additional_kwargs["reasoning"]`` — string (OpenRouter
-         primary path; what most DeepSeek / GLM responses use).
-      2. ``chunk.additional_kwargs["reasoning_content"]`` — string
-         fallback used by a few providers and by older OpenRouter docs.
-      3. ``chunk.content`` is a list with ``{"type": "reasoning", "text"}``
-         blocks — Anthropic-style "thinking" blocks, defensive against a
-         future routing change.
-
-    Returns the empty string when nothing is found (caller treats that as
-    "no reasoning this tick").
+    - TOOL_CALL_START: remember tool_call_id → name; for non-system execution
+      tools, emit ``relay.agent_start`` (so the dock shows the agent row).
+    - TOOL_CALL_RESULT: decode the tool body; emit ``relay.task_graph`` for
+      propose_plan, ``relay.narrator`` for narrate, otherwise
+      ``relay.agent_done`` + ``relay.artifact`` for execution tools.
     """
-    if chunk is None:
-        return ""
-    extras = getattr(chunk, "additional_kwargs", None)
-    if isinstance(extras, dict):
-        for key in ("reasoning", "reasoning_content"):
-            val = extras.get(key)
-            if isinstance(val, str) and val:
-                return val
-    content = getattr(chunk, "content", None)
-    if isinstance(content, list):
-        out: list[str] = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "reasoning":
-                txt = part.get("text") or part.get("content") or ""
-                if isinstance(txt, str):
-                    out.append(txt)
-        if out:
-            return "".join(out)
-    return ""
+    if event.type == EventType.TOOL_CALL_START:
+        tool_call_id = getattr(event, "tool_call_id", "") or ""
+        name = getattr(event, "tool_call_name", "") or ""
+        tracker.remember(tool_call_id, name)
+        if name and name not in _SYSTEM_TOOLS:
+            agent, action = _TOOL_AGENT_MAP.get(name, ("coordinator", name))
+            step_id = tracker.next_step_id()
+            return [
+                emitter.emit_custom(
+                    "relay.agent_start",
+                    {"agent": agent, "action": action, "tool": name},
+                    step_id=step_id,
+                    extra={"agent": agent, "tool": name},
+                )
+            ]
+        return []
+
+    if event.type == EventType.TOOL_CALL_RESULT:
+        tool_call_id = getattr(event, "tool_call_id", "") or ""
+        name = tracker.name_for(tool_call_id)
+        decoded = _decode_tool_content(getattr(event, "content", None))
+        return _custom_for_tool_result(emitter, name, decoded)
+
+    return []
+
+
+def _custom_for_tool_result(emitter: RelayEmitter, name: str, decoded: Any) -> list[str]:
+    if name == "propose_plan" and isinstance(decoded, dict):
+        return [emitter.emit_custom("relay.task_graph", decoded)]
+
+    if name == "narrate" and isinstance(decoded, dict):
+        text = str(decoded.get("narration") or "").strip()
+        if not text:
+            return []
+        return [emitter.emit_custom("relay.narrator", {"text": text[:160]})]
+
+    if name in _SYSTEM_TOOLS or not name:
+        # recall_* / ask_clarification — no extra product surface here.
+        return []
+
+    agent, action = _TOOL_AGENT_MAP.get(name, ("coordinator", name))
+    out = [
+        emitter.emit_custom(
+            "relay.agent_done",
+            {"agent": agent, "action": action, "tool": name},
+            extra={"agent": agent, "tool": name},
+        )
+    ]
+    # Execution tools that returned a structured envelope become an artifact
+    # card. Pure-text returns are already carried by the standard TEXT_MESSAGE_*
+    # stream, so we only build an artifact for dict results.
+    if isinstance(decoded, dict):
+        out.append(
+            emitter.emit_custom(
+                "relay.artifact",
+                {
+                    "agent": agent,
+                    "action": action,
+                    "tool": name,
+                    "result": _cap_for_wire(decoded),
+                },
+                extra={"agent": agent},
+            )
+        )
+    return out
+
+
+def _decode_tool_content(content: Any) -> Any:
+    """Decode an AG-UI TOOL_CALL_RESULT.content (str | list | dict) to a dict.
+
+    The adapter serialises tool returns to a string (json.dumps of the dict, or
+    a plain string for text returns). Undo that so we can branch on the shape.
+    """
+    if content is None:
+        return None
+    if isinstance(content, (dict, list)):
+        return content
+    if isinstance(content, str):
+        s = content.strip()
+        if s.startswith("{") or s.startswith("["):
+            try:
+                return json.loads(s)
+            except (ValueError, TypeError):
+                return content
+        return content
+    return content
 
 
 def _cap_for_wire(value: Any, *, cap_bytes: int = _TOOL_RESULT_CAP_BYTES) -> Any:
     """Cap a tool result so a single SSE frame can't bloat past the limit.
 
-    Strategy:
-      - JSON-encodable values that fit under ``cap_bytes`` pass through
-        unchanged (the dock JsonBlock renders them as pretty JSON).
-      - Anything bigger is serialised to a string, truncated to
-        ``cap_bytes`` characters, and suffixed with the elision marker so
-        the dock can show "huge result" without truncating mid-codepoint
-        being too obvious.
-      - Non-JSON-serialisable values (objects, sets, …) are str()-coerced
-        first, then capped via the same path.
-
-    The dock UI matches this cap and stops rendering past 200 lines, so
-    they're sized together: if you raise one, raise the other.
+    Values that fit under ``cap_bytes`` pass through unchanged; bigger ones are
+    stringified, truncated, and suffixed with the elision marker.
     """
     try:
         encoded = json.dumps(value, default=str)
@@ -451,50 +518,12 @@ def _cap_for_wire(value: Any, *, cap_bytes: int = _TOOL_RESULT_CAP_BYTES) -> Any
         encoded = str(value)
     if len(encoded.encode("utf-8")) <= cap_bytes:
         return value
-    # Truncate the *string* form (not the encoded bytes) so we never split
-    # a multibyte codepoint mid-character. cap_bytes is an upper bound on
-    # the resulting UTF-8 length; the elision tail is ASCII so it adds
-    # exactly 12 bytes on top, well within typical SSE frame budgets.
     truncated = encoded[:cap_bytes]
     return f"{truncated}…[truncated]"
 
 
-def _safe_str(value: Any, *, cap: int = 400) -> str:
-    s = str(value) if value is not None else ""
-    return s[:cap]
-
-
-def _decode_tool_output(value: Any) -> Any:
-    """Best-effort decode of a LangGraph tool return.
-
-    LangGraph wraps tool outputs in ``ToolMessage`` whose ``content`` is the
-    string-serialised return value (LangGraph stringifies non-string returns
-    via ``json.dumps``). We undo that wrapping so downstream consumers (the
-    SSE translator, the tests) can deal with the original dict/list/str
-    directly instead of having to parse JSON every time.
-    """
-    if value is None:
-        return None
-    # Direct dict/list passthrough (some tool flows preserve the return type).
-    if isinstance(value, (dict, list)):
-        return value
-    # ToolMessage shape: pluck .content. Could be a str (most common) or
-    # a list of content blocks.
-    content = getattr(value, "content", None)
-    if content is None:
-        return value
-    if isinstance(content, (dict, list)):
-        return content
-    if isinstance(content, str):
-        # Try JSON first; if it's a plain string (e.g. "Found 1 row") leave
-        # it as-is.
-        import json as _json
-
-        s = content.strip()
-        if s.startswith("{") or s.startswith("["):
-            try:
-                return _json.loads(s)
-            except (ValueError, TypeError):
-                pass
-        return content
-    return value
+__all__ = [
+    "build_dock_graph",
+    "run_dock_turn",
+    "emit_partial_artifact",
+]

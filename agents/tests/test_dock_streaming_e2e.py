@@ -2,27 +2,25 @@
 
 Regression we are locking down (traceId 68f6d78f / ed4f208e, 2026-06-28):
 the dock's ``graph.astream_events(...)`` path crashed with
-``NotImplementedError`` at
-``langgraph/checkpoint/base/__init__.py:441 aget_tuple``. Root cause: the
-checkpointer factory was returning the **sync** ``PostgresSaver``, which
-does not implement the async API; LangGraph's async streaming requires
-``aget_tuple`` / ``aput`` / etc.
+``NotImplementedError`` at ``aget_tuple``. Root cause: the checkpointer
+factory returned the **sync** ``PostgresSaver``, which lacks the async API
+LangGraph streaming requires.
 
-The pre-existing ``test_ask_stream_dock_route.py`` mocks
-``dock_agent.run_dock_turn`` wholesale, so it would have stayed green even
-through that bug. This file complements it by exercising the REAL graph
-build and the REAL ``astream_events`` plumbing, swapping ONLY the model
-boundary (``harness.llm.pick_model``) for a FakeMessagesListChatModel.
+PR2 cutover: the dock now streams native AG-UI frames (RUN_STARTED …
+RUN_FINISHED) instead of the old ``event: thinking/intent/result/done``
+vocabulary. This file exercises the REAL graph build + the REAL adapter
+plumbing, swapping ONLY the model boundary (``harness.llm.pick_model``) for a
+FakeMessagesListChatModel.
 
 Invariants:
-  1. ``hi`` → /ask/stream → SSE stream completes with a ``done`` frame and
-     contains no ``error`` frame.
+  1. ``hi`` → /ask/stream → AG-UI stream contains RUN_STARTED + RUN_FINISHED
+     and no RUN_ERROR frame.
   2. No ``dock_turn_failed`` log line is emitted.
   3. The path works for both the lifetime ``ask_vantage:`` thread AND the
-     scoped ``resume_studio:`` thread (the surface that triggered the
-     original report).
-  4. Whatever ``get_checkpointer()`` returns implements BOTH the sync and
-     the async checkpoint API (``aget_tuple`` / ``aput`` / ``alist``).
+     scoped ``resume_studio:`` thread (the surface that triggered the original
+     report).
+  4. Whatever ``get_checkpointer()`` returns implements BOTH the sync and the
+     async checkpoint API (``aget_tuple`` / ``aput`` / ``alist``).
 """
 
 from __future__ import annotations
@@ -93,12 +91,6 @@ class _ToolBindableFakeChat(FakeMessagesListChatModel):
     """FakeMessagesListChatModel + a no-op ``bind_tools`` so create_react_agent
     can wire its tool registry without tripping the base-class
     ``NotImplementedError``.
-
-    LangGraph's ReAct prebuilt calls ``model.bind_tools(tools)`` while
-    building the graph. The stock ``FakeMessagesListChatModel`` inherits the
-    abstract default that just raises — so the dock graph build fails
-    before any message is ever streamed. Returning ``self`` is fine here
-    because the canned responses already decide every turn's reply.
     """
 
     def bind_tools(self, tools, **_kwargs):  # type: ignore[override]
@@ -107,13 +99,7 @@ class _ToolBindableFakeChat(FakeMessagesListChatModel):
 
 @pytest.fixture
 def fake_model(monkeypatch):
-    """Replace harness.llm.pick_model with a deterministic chat model.
-
-    Returning the canned ``AIMessage`` as a single reply matches the
-    "assistant says hi back" path — no tool calls, no follow-up turn. That's
-    enough to drive ``astream_events`` end-to-end and trip any async-only
-    checkpointer hook on the way through.
-    """
+    """Replace harness.llm.pick_model with a deterministic chat model."""
     fake = _ToolBindableFakeChat(responses=[AIMessage(content="Hi! I'm Vantage. How can I help?")])
 
     def _pick(*_args, **_kwargs):
@@ -137,6 +123,11 @@ def client():
 
 
 def _parse_sse(body: str) -> list[dict]:
+    """Parse the SSE body into a list of decoded JSON event dicts.
+
+    AG-UI frames are ``data: {...}\\n\\n``; heartbeat frames are
+    ``event: heartbeat\\ndata: {}\\n\\n``. We only decode the data lines.
+    """
     out = []
     for line in body.splitlines():
         if not line.startswith("data:"):
@@ -149,19 +140,19 @@ def _parse_sse(body: str) -> list[dict]:
     return out
 
 
-def _has_no_error_frame(events: list[dict]) -> None:
-    """Assert there's no SSE ``error`` frame — the original bug emitted one."""
-    errs = [e for e in events if e.get("event") == "error"]
-    assert errs == [], f"unexpected error frames: {errs}"
+def _has_no_run_error(events: list[dict]) -> None:
+    """Assert there's no AG-UI RUN_ERROR frame — the original bug emitted one."""
+    errs = [e for e in events if e.get("type") == "RUN_ERROR"]
+    assert errs == [], f"unexpected RUN_ERROR frames: {errs}"
 
 
 def test_dock_streams_hi_through_real_graph(client, fake_model, monkeypatch, caplog):
-    """``hi`` → real build_dock_graph + astream_events → SSE done.
+    """``hi`` → real build_dock_graph + AG-UI adapter → RUN_FINISHED, no error.
 
     This was the failing case at traceId 68f6d78f. Locks down:
-      - astream_events runs without raising NotImplementedError
+      - the adapter runs without raising NotImplementedError
       - checkpointer.get_checkpointer() returns a saver whose async API works
-      - the dock emits a normal ``done`` frame instead of an ``error`` frame
+      - the dock emits a normal RUN_FINISHED frame instead of RUN_ERROR
     """
     monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
     tc, user_id = client
@@ -174,22 +165,23 @@ def test_dock_streams_hi_through_real_graph(client, fake_model, monkeypatch, cap
     assert resp.status_code == 200, resp.text
     events = _parse_sse(resp.text)
 
-    _has_no_error_frame(events)
-    kinds = [e.get("event") for e in events]
-    assert "done" in kinds, f"missing 'done' frame, got {kinds}"
+    _has_no_run_error(events)
+    types = [e.get("type") for e in events]
+    assert "RUN_STARTED" in types, f"missing RUN_STARTED, got {types}"
+    assert "RUN_FINISHED" in types, f"missing RUN_FINISHED, got {types}"
 
-    # The legacy router test path can leak in if _DOCK_REACT_ENABLED slips
-    # off — that path emits an ``intent`` frame. The dock branch does not.
-    assert "intent" not in kinds, f"dock branch wrongly fell through to legacy router: {kinds}"
+    # The legacy router path emits ``event: intent`` SSE frames; the dock
+    # branch never does. If _DOCK_REACT_ENABLED slipped off we'd see one.
+    assert not any(e.get("event") == "intent" for e in events), (
+        f"dock branch wrongly fell through to legacy router: {types}"
+    )
 
     failures = [r for r in caplog.records if "dock_turn_failed" in r.getMessage()]
     assert failures == [], f"dock_turn_failed was logged: {[r.getMessage() for r in failures]}"
 
 
 def test_dock_streams_hi_on_resume_studio_thread(client, fake_model, monkeypatch, caplog):
-    """Same as above, but for the scoped resume_studio thread (the actual
-    surface where the bug was originally reported).
-    """
+    """Same as above, but for the scoped resume_studio thread."""
     monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
     tc, user_id = client
     thread_id = f"resume_studio:{user_id}:{uuid4()}"
@@ -206,26 +198,37 @@ def test_dock_streams_hi_on_resume_studio_thread(client, fake_model, monkeypatch
     assert resp.status_code == 200, resp.text
     events = _parse_sse(resp.text)
 
-    _has_no_error_frame(events)
-    kinds = [e.get("event") for e in events]
-    assert "done" in kinds, f"missing 'done' frame, got {kinds}"
+    _has_no_run_error(events)
+    types = [e.get("type") for e in events]
+    assert "RUN_FINISHED" in types, f"missing RUN_FINISHED, got {types}"
 
     failures = [r for r in caplog.records if "dock_turn_failed" in r.getMessage()]
     assert failures == [], f"dock_turn_failed was logged: {[r.getMessage() for r in failures]}"
 
 
+def test_dock_stream_frames_carry_relay_envelope(client, fake_model, monkeypatch):
+    """Every AG-UI frame on the wire carries the Relay envelope in rawEvent."""
+    monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
+    tc, user_id = client
+
+    resp = tc.post("/ask/stream", json={"message": "hi"}, headers={"X-Relay-Surface": "dock"})
+    assert resp.status_code == 200, resp.text
+    events = _parse_sse(resp.text)
+    agui = [e for e in events if "type" in e]
+    assert agui, "no AG-UI frames found"
+    for e in agui:
+        raw = e.get("rawEvent") or {}
+        assert raw.get("run_id"), e
+        assert raw.get("protocol_version"), e
+        assert isinstance(raw.get("seq"), int), e
+
+
 def test_checkpointer_singleton_supports_async_api():
     """Whatever ``get_checkpointer()`` returns MUST have both sync and async
     APIs callable — the bug was that ``aget_tuple`` raised NotImplementedError.
-
-    With no RELAY_PG_DSN we get MemorySaver; MemorySaver implements both
-    APIs by design. The point of this test is not the type, but the
-    contract: any saver the factory returns must answer the async path
-    without raising NotImplementedError.
     """
     saver = cp.get_checkpointer()
     for attr in ("get_tuple", "put", "list"):
         assert callable(getattr(saver, attr, None)), f"missing sync {attr}"
-    # Async API attributes — the failing methods in the original traceback.
     for attr in ("aget_tuple", "aput", "alist"):
         assert callable(getattr(saver, attr, None)), f"missing async {attr}"

@@ -661,7 +661,8 @@
       "drafting": "草拟中…"
     },
     "message": {
-      "thinking": "思考中"
+      "thinking": "思考中",
+      "streamError": "流被中断：{message}"
     },
     "artifact": {
       "confident": "{pct}% 把握",
@@ -720,6 +721,17 @@
       "wantsTo": "Vantage 想要<strong>{action}</strong>。",
       "optionalNote": "给智能体的备注（可选）…",
       "cancelWithout": "不回复直接取消"
+    },
+    "fileEdit": {
+      "lines": "{count} 行",
+      "applied": "已应用",
+      "preview": "预览",
+      "loadingDiff": "正在加载差异…"
+    },
+    "browser": {
+      "label": "浏览器",
+      "snapshotCount": "{count} 张快照",
+      "screenshotAlt": "{url} 的截图"
     }
   },
   "resume": {

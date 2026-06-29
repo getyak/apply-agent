@@ -1,0 +1,239 @@
+{
+  "task_id": "w3fp4s001",
+  "summary": "Push from 99 → 100 via diverse-strategy tournament + finer-grained rubric + adversarial verify",
+  "agent_count": 32,
+  "duration_ms": null,
+  "logs": [
+    "Goal: resume.customize.stripe-srm.v2  target=100",
+    "Strategy: diverse-generation tournament (3 strategies in parallel)",
+    "Generated 3/3 variants",
+    "  [precision-anchor] summary opens with: \"Incident response and on-call leader: at Synthetic Labs, owned the payments ingestion pipe...\"",
+    "  [signal-density] summary opens with: \"Lead incident response for high-throughput payment flows: at Synthetic Labs, own the payme...\"",
+    "  [verbatim-reorder] summary opens with: \"Backend engineer with 6 years building distributed systems. At Synthetic Labs, led on-call...\"",
+    "[precision-anchor] total=90/100 ",
+    "    jd_signal_strength: 22/22 ✓",
+    "    attribution_precision: 18/18 ✓",
+    "    honest_rephrase: 19/20  (1 deductions)",
+    "    structure_quality: 11/15  (3 deductions)",
+    "    skills_ordering: 8/10  (1 deductions)",
+    "    recruiter_scan_value: 12/15  (3 deductions)",
+    "[signal-density] total=89/100 ",
+    "    jd_signal_strength: 22/22 ✓",
+    "    attribution_precision: 18/18 ✓",
+    "    honest_rephrase: 17/20  (2 deductions)",
+    "    structure_quality: 11/15  (2 deductions)",
+    "    skills_ordering: 9/10  (1 deductions)",
+    "    recruiter_scan_value: 12/15  (3 deductions)",
+    "[verbatim-reorder] total=82/100 ",
+    "    jd_signal_strength: 16/22  (3 deductions)",
+    "    attribution_precision: 18/18 ✓",
+    "    honest_rephrase: 15/20  (1 deductions)",
+    "    structure_quality: 11/15  (2 deductions)",
+    "    skills_ordering: 10/10 ✓",
+    "    recruiter_scan_value: 12/15  (3 deductions)",
+    "🏆 Winner: [precision-anchor] with 90/100",
+    "Polishing winner with 8 targeted deductions",
+    "  [honest_rephrase] Summary adds 'at Synthetic Labs' attribution twice — technically inferable from work entry but introduces a phrasing not in base summary; minor stylistic amplification",
+    "  [structure_quality] Summary is one long run-on sentence with multiple semicolons; borderline readability though technically <=3 sentences.",
+    "  [structure_quality] Highlight 'Owned the payments ingestion pipeline (50M events/day, p99 < 80ms).' lacks an action verb beyond 'Owned' and no improvement quantification (it's a scope statement, not an achievement).",
+    "  [structure_quality] Highlight 'Wrote postmortems for 11 incidents; introduced runbook templating across team.' — 'introduced runbook templating' has no quantified impact.",
+    "  [skills_ordering] No explicit SLO/SLI tooling skill listed despite JD requirement #3",
+    "  [recruiter_scan_value] Summary omits explicit SLO/SLI tooling language (JD req #3 partially covered only via postmortems/runbooks)",
+    "  [recruiter_scan_value] Summary doesn't explicitly call out 'payments' as the domain anchor in the opening clause — buries it after on-call framing",
+    "  [recruiter_scan_value] Top skill 'On-call / incident response' reordered to front but no payments-specific skill (e.g., 'SLO/SLI definition', 'payment systems') surfaced",
+    "After polish: 86/100  (was 90)",
+    "⚠️ Polish regressed (90 → 86). Reverting to pre-polish winner.",
+    "Running 4-judge adversarial verify (default to REFUTE on doubt)",
+    "Verify quorum: 2-2 → REFUTED",
+    "  correctness: approve  conf=0.92",
+    "  safety: approve  conf=0.9",
+    "  user_value: refute  conf=0.78",
+    "  red_team: refute  conf=0.62",
+    "═══════════════════════════════════════════════════════════════",
+    "STATUS:    REFUTED_BY_VERIFY",
+    "FINAL:     90/100",
+    "PATH:      panel=90 → polish=86",
+    "WINNER:    precision-anchor",
+    "VERIFY:    2-2 REFUTED",
+    "═══════════════════════════════════════════════════════════════"
+  ],
+  "failures": null,
+  "result": {
+    "goal_id": "resume.customize.stripe-srm.v2",
+    "target_score": 100,
+    "status": "REFUTED_BY_VERIFY",
+    "final_score": 90,
+    "winning_strategy": "precision-anchor",
+    "trajectory": [
+      {
+        "round": "panel",
+        "strategy": "precision-anchor",
+        "score": 90
+      },
+      {
+        "round": "polish",
+        "strategy": "precision-anchor+polish",
+        "score": 86
+      }
+    ],
+    "panel_results": [
+      {
+        "strategy": "precision-anchor",
+        "score": 90,
+        "terminal": false
+      },
+      {
+        "strategy": "signal-density",
+        "score": 89,
+        "terminal": false
+      },
+      {
+        "strategy": "verbatim-reorder",
+        "score": 82,
+        "terminal": false
+      }
+    ],
+    "final_breakdown": {
+      "jd_signal_strength": {
+        "score": 22,
+        "weight": 22,
+        "deductions": []
+      },
+      "attribution_precision": {
+        "score": 18,
+        "weight": 18,
+        "deductions": []
+      },
+      "honest_rephrase": {
+        "score": 19,
+        "weight": 20,
+        "deductions": [
+          {
+            "what": "Summary adds 'at Synthetic Labs' attribution twice — technically inferable from work entry but introduces a phrasing not in base summary; minor stylistic amplification",
+            "fix_hint": "Drop the second 'at Synthetic Labs' to avoid redundant attribution: 'authored 11 postmortems and introduced runbook templating.'"
+          }
+        ]
+      },
+      "structure_quality": {
+        "score": 11,
+        "weight": 15,
+        "deductions": [
+          {
+            "what": "Summary is one long run-on sentence with multiple semicolons; borderline readability though technically <=3 sentences.",
+            "fix_hint": "Split into 2-3 clean sentences: 'Incident response and on-call leader with 6 years in distributed systems. At Synthetic Labs, owned payments ingestion (50M events/day, p99 <80ms) and led on-call across 8 services, cutting MTTR from 45min to 12min. Authored 11 postmortems and introduced runbook templating.'"
+          },
+          {
+            "what": "Highlight 'Owned the payments ingestion pipeline (50M events/day, p99 < 80ms).' lacks an action verb beyond 'Owned' and no improvement quantification (it's a scope statement, not an achievement).",
+            "fix_hint": "Rephrase as: 'Operated payments ingestion pipeline processing 50M events/day at p99 <80ms, sustaining 99.95% availability across 6 quarters.'"
+          },
+          {
+            "what": "Highlight 'Wrote postmortems for 11 incidents; introduced runbook templating across team.' — 'introduced runbook templating' has no quantified impact.",
+            "fix_hint": "Add outcome: '...introduced runbook templating adopted by 8 services, reducing repeat-incident rate by X%.'"
+          }
+        ]
+      },
+      "skills_ordering": {
+        "score": 8,
+        "weight": 10,
+        "deductions": [
+          {
+            "what": "No explicit SLO/SLI tooling skill listed despite JD requirement #3",
+            "fix_hint": "Add 'SLO/SLI tooling' or 'Observability' as a skill entry after incident response"
+          }
+        ]
+      },
+      "recruiter_scan_value": {
+        "score": 12,
+        "weight": 15,
+        "deductions": [
+          {
+            "what": "Summary omits explicit SLO/SLI tooling language (JD req #3 partially covered only via postmortems/runbooks)",
+            "fix_hint": "Add phrase like 'built SLO/SLI dashboards' or 'defined SLOs for payment ingestion' to summary"
+          },
+          {
+            "what": "Summary doesn't explicitly call out 'payments' as the domain anchor in the opening clause — buries it after on-call framing",
+            "fix_hint": "Lead with 'Payments infrastructure engineer focused on incident response...' so top-1/3 instantly signals payment-flow fit"
+          },
+          {
+            "what": "Top skill 'On-call / incident response' reordered to front but no payments-specific skill (e.g., 'SLO/SLI definition', 'payment systems') surfaced",
+            "fix_hint": "Add a skill entry 'SLO/SLI tooling' and/or 'Payment systems reliability'"
+          }
+        ]
+      }
+    },
+    "verify": {
+      "correctness": {
+        "verdict": "approve",
+        "reason": "Every factual claim is a literal subset of base. Numbers match exactly: 50M events/day, p99 < 80ms, 8 services, MTTR 45→12min, 6 quarters, 11 postmortems, 8M msgs/day, 40% latency reduction. All three Synthetic Labs highlights and both PriorCo highlights are verbatim from base (reordering only). All six skills present in base. The summary is reframed from generic \"Backend engineer with 6 years\" to incident-response-focused, but every supporting fact in the new summary is drawn directly from the base work highlights — \"owned the payments ingestion pipeline (50M events/day, p99 < 80ms)\", \"led on-call across 8 services\", \"cutting MTTR from 45min to 12min over 6 quarters\", \"authored postmortems for 11 incidents\", \"introduced runbook templating\" — all traceable to base. No fabricated entities, no inflated numbers, no claimed scope expansion. JD alignment (Stripe SRE: incident response, on-call/MTTR, postmortems) is achieved purely by reordering and emphasis, which is exactly what tailoring should do. I would send this to a Stripe recruiter.",
+        "confidence": 0.92
+      },
+      "safety": {
+        "verdict": "approve",
+        "reason": "Every claim in the optimized summary is directly defensible from the base résumé. Specifically: \"owned the payments ingestion pipeline (50M events/day, p99 < 80ms)\" is verbatim from base Synthetic Labs highlight #1; \"led on-call across 8 services, cutting MTTR from 45min to 12min over 6 quarters\" is verbatim from highlight #2; \"authored postmortems for 11 incidents... introduced runbook templating\" is verbatim from highlight #3 (the Synthetic Labs attribution is sound because that highlight sits under the Synthetic Labs work block in base). The work[] entries are factually identical to base (only reordered within Synthetic Labs). The added skill \"On-call / incident response\" exists in base skills. No new companies, no new metrics, no fabricated tech. A Stripe recruiter challenging any top-3 line can be answered with a citation to the base — no invention required to defend.",
+        "confidence": 0.9
+      },
+      "user_value": {
+        "confidence": 0.78,
+        "reason": "Refute. The tailored version is largely cosmetic with one meaningful change and one quality regression. Material analysis vs base:\n\n1) Summary rewrite is the only real change with substance: it foregrounds incident response, on-call leadership, MTTR reduction (45→12min), postmortem authorship (11), and runbook templating — all three Stripe JD core requirements are now in the top 4 lines instead of buried as bullets. That is genuinely useful for a recruiter 6-second scan.\n\n2) But the summary is also bloated and repetitive — \"at Synthetic Labs\" appears twice in one sentence, and every concrete fact in the summary is then restated verbatim as a work bullet. A Stripe reliability recruiter will notice the duplication and read it as padding, not signal.\n\n3) Work highlights: reordered (on-call/MTTR moved to position 1, payments pipeline demoted to position 3). This is defensible for the JD but it buries the strongest quantitative achievement (50M events/day, p99 < 80ms) — which is arguably the single most Stripe-relevant line in the whole résumé — at the bottom of the most recent role. Net: probably neutral, possibly negative.\n\n4) Skills: only change is moving \"On-call / incident response\" from position 6 to position 1. Cosmetic. Skills order rarely matters to ATS or human readers at this seniority.\n\n5) Critical gap untouched: JD explicitly calls out \"SLO/SLI tooling\" as a core requirement. Base résumé has zero SLO/SLI evidence and the tailored version adds none (correctly — fabrication red line). A useful tailoring pass would have flagged this gap to the candidate, not silently shipped a résumé that's still missing 1/3 of the JD's stated core requirements.\n\n6) No new tailoring of the PriorCo bullets toward reliability framing (e.g., the partition rebalancing work could legitimately be reframed as reliability/latency work without fabrication, but wasn't).\n\nNet assessment: the summary rewrite has real value (~15% lift), but it's offset by burying the strongest quant bullet, leaving the SLO/SLI gap unsurfaced, and adding verbose duplication. I would not stake my reputation on sending this to a Stripe recruiter as a meaningful improvement over the base — a careful human editor would tweak the base summary in 5 minutes and produce something tighter. The tailoring agent did not earn its keep.",
+        "verdict": "refute"
+      },
+      "red_team": {
+        "verdict": "refute",
+        "reason": "The summary opens with \"Incident response and on-call leader\" as the candidate's primary identity, but base facts only support \"led on-call rotation\" (i.e., rotation/scheduling leadership) — not Incident Commander or incident-response leadership. A hostile Stripe panel asking \"walk me through a sev1 you led as IC — comms tree, exec escalation, customer comms\" would expose that the base only establishes rotation ownership and postmortem authorship, not live incident command. This is a framing-level overreach that a reliability panel will probe within the first 5 minutes. Recommend softening to \"On-call rotation lead and postmortem author\" to stay defensible from base alone.",
+        "confidence": 0.62
+      },
+      "quorum": "2-2",
+      "decision": "REFUTED"
+    },
+    "final_artifact": {
+      "basics": {
+        "name": "Alice Engineer",
+        "email": "alice@example.com",
+        "summary": "Incident response and on-call leader: at Synthetic Labs, owned the payments ingestion pipeline (50M events/day, p99 < 80ms) and led on-call across 8 services, cutting MTTR from 45min to 12min over 6 quarters; authored postmortems for 11 incidents at Synthetic Labs and introduced runbook templating."
+      },
+      "work": [
+        {
+          "company": "Synthetic Labs",
+          "position": "Senior Engineer",
+          "startDate": "2022",
+          "endDate": "2026",
+          "highlights": [
+            "Led on-call rotation for 8 services; cut MTTR from 45min to 12min over 6 quarters.",
+            "Wrote postmortems for 11 incidents; introduced runbook templating across team.",
+            "Owned the payments ingestion pipeline (50M events/day, p99 < 80ms)."
+          ]
+        },
+        {
+          "company": "PriorCo Robotics",
+          "position": "Engineer",
+          "startDate": "2020",
+          "endDate": "2022",
+          "highlights": [
+            "Built Kafka → Postgres ingestion service handling 8M msgs/day.",
+            "Reduced replay job latency 40% via partition rebalancing."
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "name": "On-call / incident response"
+        },
+        {
+          "name": "Python"
+        },
+        {
+          "name": "PostgreSQL"
+        },
+        {
+          "name": "Kafka"
+        },
+        {
+          "name": "Kubernetes"
+        },
+        {
+          "name": "Terraform"
+        }
+      ]
+    }
+  }
+}

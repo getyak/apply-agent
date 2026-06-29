@@ -1,0 +1,21 @@
+{
+  "task_id": "wr8c2p0aa",
+  "summary": "Self-improving loop on AppPrepAgent.cover_letter (warm tone). Tests if higher-creativity tasks can still pass strict verify.",
+  "agent_count": 3,
+  "duration_ms": null,
+  "logs": [
+    "Goal: appprep.cover_letter.warm.linear-staff-eng",
+    "[gen:daily-user-bridge] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[gen:craft-mirror] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[gen:sync-engine-anchor] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "Generated 0/3",
+    "[craft-mirror] total=0/100 (TERMINAL)",
+    "[sync-engine-anchor] total=0/100 (TERMINAL)",
+    "[daily-user-bridge] total=0/100 (TERMINAL)"
+  ],
+  "failures": null,
+  "result": {
+    "goal_id": "appprep.cover_letter.warm.linear-staff-eng",
+    "status": "FAIL_ALL_TERMINAL"
+  }
+}

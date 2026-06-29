@@ -1,0 +1,142 @@
+{
+  "task_id": "w0iis148n",
+  "summary": "Self-improving loop on JobMatchAgent.parse_jd. Pure extraction task — should hit 100 if rubric is honest.",
+  "agent_count": 32,
+  "duration_ms": null,
+  "logs": [
+    "Goal: jobmatch.parse_jd.greenhouse-stripe-srm",
+    "JD length: 904 chars",
+    "Generated 3/3 variants",
+    "  [literal-extraction] hard_skills=6  level=senior",
+    "  [canonical-normalize] hard_skills=7  level=senior",
+    "  [two-pass-conservative] hard_skills=7  level=senior",
+    "[literal-extraction] total=90/100 ",
+    "    extraction_completeness: 28/28  ✓",
+    "    salary_precision: 14/14  ✓",
+    "    skill_classification: 10/18  (3d)",
+    "    no_hallucination: 20/20  ✓",
+    "    normalization_quality: 12/12  ✓",
+    "    boilerplate_strip: 6/8  (2d)",
+    "[canonical-normalize] total=96/100 ",
+    "    extraction_completeness: 28/28  ✓",
+    "    salary_precision: 14/14  ✓",
+    "    skill_classification: 17/18  (1d)",
+    "    no_hallucination: 20/20  ✓",
+    "    normalization_quality: 10/12  (1d)",
+    "    boilerplate_strip: 7/8  (1d)",
+    "[two-pass-conservative] total=92/100 ",
+    "    extraction_completeness: 28/28  ✓",
+    "    salary_precision: 14/14  ✓",
+    "    skill_classification: 12/18  (4d)",
+    "    no_hallucination: 20/20  ✓",
+    "    normalization_quality: 12/12  ✓",
+    "    boilerplate_strip: 6/8  (1d)",
+    "🏆 Winner: [canonical-normalize] = 96/100",
+    "Polishing — fix 3 axes",
+    "[polish:surgical] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "After polish: 97/100",
+    "[verify:correctness] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:normalization] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:downstream] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "[verify:completeness] failed: API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited",
+    "Verify: 0-4 → REFUTED",
+    "═══════════════════════════════════════════════════════════════",
+    "STATUS: REFUTED_BY_VERIFY  FINAL: 97/100",
+    "PATH: panel=96 → polish=97",
+    "VERIFY: 0-4 REFUTED",
+    "═══════════════════════════════════════════════════════════════"
+  ],
+  "failures": null,
+  "result": {
+    "goal_id": "jobmatch.parse_jd.greenhouse-stripe-srm",
+    "target_score": 100,
+    "status": "REFUTED_BY_VERIFY",
+    "final_score": 97,
+    "winning_strategy": "canonical-normalize",
+    "trajectory": [
+      {
+        "round": "panel",
+        "strategy": "canonical-normalize",
+        "score": 96
+      },
+      {
+        "round": "polish",
+        "strategy": "canonical-normalize+polish",
+        "score": 97
+      }
+    ],
+    "panel_results": [
+      {
+        "strategy": "literal-extraction",
+        "score": 90,
+        "terminal": false
+      },
+      {
+        "strategy": "canonical-normalize",
+        "score": 96,
+        "terminal": false
+      },
+      {
+        "strategy": "two-pass-conservative",
+        "score": 92,
+        "terminal": false
+      }
+    ],
+    "final_breakdown": {
+      "extraction_completeness": {
+        "score": 28,
+        "weight": 28,
+        "deductions": []
+      },
+      "salary_precision": {
+        "score": 14,
+        "weight": 14,
+        "deductions": []
+      },
+      "skill_classification": {
+        "score": 17,
+        "weight": 18,
+        "deductions": [
+          {
+            "what": "'python' and 'go' both placed in hard_skills as if both required, but JD says 'Strong Python OR Go' (either/or)",
+            "fix_hint": "Represent OR-skills as a group/alternatives, or annotate as 'python|go'; otherwise scoring a candidate with only one will under-credit the OR semantics"
+          }
+        ]
+      },
+      "no_hallucination": {
+        "score": 20,
+        "weight": 20,
+        "deductions": []
+      },
+      "normalization_quality": {
+        "score": 11,
+        "weight": 12,
+        "deductions": [
+          {
+            "what": "role_categories missing 'platform' despite JD 'Payments Platform'",
+            "fix_hint": "Add 'platform' to role_categories when title contains 'Platform'"
+          }
+        ]
+      },
+      "boilerplate_strip": {
+        "score": 7,
+        "weight": 8,
+        "deductions": [
+          {
+            "what": "Kept 'About the role'-style narrative framing ('Own incident response...') rather than maximally tight skills/responsibilities extraction",
+            "fix_hint": "Acceptable retention since responsibilities are signal, not boilerplate; minor verbosity only"
+          }
+        ]
+      }
+    },
+    "verify": {
+      "correctness": null,
+      "completeness": null,
+      "normalization": null,
+      "downstream": null,
+      "quorum": "0-4",
+      "decision": "REFUTED"
+    },
+    "final_artifact": null
+  }
+}

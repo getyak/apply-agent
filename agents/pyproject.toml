@@ -26,6 +26,26 @@ dependencies = [
     "tiktoken>=0.8.0",
     "structlog>=24.4.0",
     "python-dotenv>=1.0.0",
+    # AG-UI agent event stream protocol — see docs/architecture/agent-event-stream.md.
+    # 0.1.19 (2026-06): 16 standard event types, Pydantic-validated, camelCase serialization.
+    "ag-ui-protocol==0.1.19",
+    # LangGraph → AG-UI adapter. Emits the standard AG-UI events from a compiled
+    # LangGraph stream (dock_agent.run_dock_turn wraps it). Pinned: 0.0.42 has the
+    # concurrent-tool-call bug #871 we work around via max_concurrency=1. Upgrade
+    # only behind the contract test (tests/contract/test_agui_compat.py).
+    "ag-ui-langgraph==0.0.42",
+    # ULID for monotonic event IDs in RelayEmitter envelope (agents/harness/events.py).
+    "python-ulid>=3.1.0",
+    # MCP client — connects to the Playwright Chrome Web Store Extension so
+    # browser tools (agents/tools/browser.py) drive the user's own logged-in
+    # tab. Promoted from `experimental` in PR4 because browser tools are now a
+    # first-class tool surface for AppPrepAgent (docs/architecture/agent-event-stream.md §8).
+    "mcp>=1.0.0",
+    # MinIO/S3 client — offloads large browser screenshots (>256 KiB) to object
+    # storage so CUSTOM browser_snapshot events carry a URL, not inline base64
+    # (agents/harness/screenshot_store.py). Mirrors the TS StorageClient in
+    # api/src/storage.ts; same S3_* env vars (infra/.env.example).
+    "minio>=7.2.0",
 ]
 
 [project.optional-dependencies]
@@ -39,11 +59,10 @@ dev = [
     "pyyaml>=6.0",  # eval/delivery-loop/run.py reads golden.yaml
 ]
 # Hidden MCP probe — see docs/architecture/agent-marketplace-deferred.md.
-# Kept out of main deps so a normal `uv sync` doesn't pull MCP SDK.
-# langchain-mcp-adapters bridges MCP tools into LangGraph create_react_agent
-# (used by tests/mcp_probe/test_e2e_live.py for the live OpenRouter round-trip).
+# `mcp` itself is now a main dependency (PR4 browser tools). Only the
+# langchain↔MCP adapter stays optional — it's used by
+# tests/mcp_probe/test_e2e_live.py for the live OpenRouter round-trip.
 experimental = [
-    "mcp>=1.0.0",
     "langchain-mcp-adapters>=0.1.0",
 ]
 
