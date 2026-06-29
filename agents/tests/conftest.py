@@ -44,19 +44,48 @@ _TESTS_NEEDING_PRISTINE_OPENROUTER = ("test_prepare_application_sensitive_field_
 
 @pytest.fixture(autouse=True)
 def _restore_env_leak_guard(request):
-    """Restore .env-leak-prone vars for tests that depend on the pristine state.
+    """Force LLM/PG keys unset for tests that assert "no LLM key" behaviour.
 
     Conditional autouse rather than blanket: ``test_openrouter_tool_calling``
     legitimately needs ``OPENROUTER_API_KEY`` set when it runs (it's the
     smoke test that *exercises* the real provider). Indiscriminately
     stripping the key would make that test fail at runtime even though its
     ``skipif`` was evaluated against the populated env at collection time.
+
+    Earlier versions of this fixture "restored the snapshot taken at
+    conftest import". That was insufficient: when the dev shell has
+    already sourced ``.env`` *before* invoking pytest (typical local
+    workflow), the snapshot itself captured the leaked state — restoring
+    it was a no-op and the test silently flipped to running with a real
+    LLM key. The ``no_llm_key`` skip branch then never fired and
+    ``first_name`` got a real answer, breaking the assertion.
+
+    Fix: for tests in the opt-in list, *force-delete* the leak-prone keys,
+    regardless of what the snapshot held. The test's intent is absolute
+    ("no LLM, no PG"), not relative to whatever the dev's shell looked
+    like.
     """
     nodeid = getattr(request.node, "nodeid", "")
-    if any(needle in nodeid for needle in _TESTS_NEEDING_PRISTINE_OPENROUTER):
-        for k, v in _PRISTINE_ENV.items():
+    needs_pristine = any(
+        needle in nodeid for needle in _TESTS_NEEDING_PRISTINE_OPENROUTER
+    )
+    if not needs_pristine:
+        yield
+        return
+
+    # Snapshot the live env *now* (after dotenv has loaded), strip the
+    # leak-prone keys for the duration of this test, then restore the
+    # exact pre-test values on teardown. Using a per-test snapshot
+    # instead of the module-level _PRISTINE_ENV avoids the "snapshot
+    # itself was already polluted by the dev shell" trap.
+    saved: dict[str, str | None] = {k: os.environ.get(k) for k in _LEAK_GUARD_KEYS}
+    for k in _LEAK_GUARD_KEYS:
+        os.environ.pop(k, None)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
             if v is None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-    yield
