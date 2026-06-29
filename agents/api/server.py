@@ -213,6 +213,33 @@ def _http_status_code(status_code: int) -> str:
     }.get(status_code, "INTERNAL")
 
 
+def _default_action_for(code: str) -> dict[str, Any]:
+    """Return the canonical UI action for a v2 ErrorCode.
+
+    Per docs/architecture/error-handling.md § 4.3.3 surface decision matrix
+    + § 2.1 ErrorAction. Mirrors api/src/errors.ts on the gateway side so
+    both layers agree on the recovery hint.
+    """
+    return {
+        "AUTH_REQUIRED": {"kind": "reauth", "redirect": "/auth"},
+        "AUTH_SESSION_EXPIRED": {"kind": "reauth", "redirect": "/auth"},
+        "AUTH_INVALID_CREDENTIALS": {"kind": "none"},
+        "AUTH_FORBIDDEN": {"kind": "none"},
+        "VALIDATION_FAILED": {"kind": "fix-input", "fields": []},
+        "INPUT_FORMAT_UNSUPPORTED": {"kind": "fix-input", "fields": []},
+        "RESOURCE_NOT_FOUND": {"kind": "none"},
+        "RESOURCE_CONFLICT": {"kind": "none"},
+        "RESOURCE_GONE": {"kind": "none"},
+        "RATE_LIMITED": {"kind": "retry", "after": 30},
+        "QUOTA_EXCEEDED": {"kind": "contact", "channel": "in-app"},
+        "UPSTREAM_TIMEOUT": {"kind": "retry", "after": 5},
+        "UPSTREAM_UNAVAILABLE": {"kind": "retry", "after": 5},
+        "DB_UNAVAILABLE": {"kind": "retry", "after": 5},
+        "CACHE_UNAVAILABLE": {"kind": "retry", "after": 5},
+        "LLM_UNAVAILABLE": {"kind": "retry", "after": 5},
+    }.get(code, {"kind": "none"})
+
+
 def _error_envelope(
     exc: BaseException,
     trace_id: str,
@@ -255,11 +282,16 @@ def _error_envelope(
             domain = "system"
         if domain in ("validation",):
             domain = "validation"
+        # Loop round 20 fix: populate `action` per error-handling.md § 1 P4
+        # ("能恢复的错误优于能解释的错误") — every code needs a UI CTA, not
+        # just BudgetExhausted / INTERNAL. Default mapping per code; falls
+        # back to {kind: "none"} for codes the UI shouldn't reflexively act on.
         return {
             **base,
             "code": code,
             "message": detail,
             "messageKey": f"errors.{domain}.{leaf or code.lower()}",
+            "action": _default_action_for(code),
         }
     # Catch-all — never leak str(exc). Support reads the log via traceId.
     return {
