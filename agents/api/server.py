@@ -201,16 +201,89 @@ def _http_status_code(status_code: int) -> str:
     return {
         400: "VALIDATION_FAILED",
         401: "AUTH_REQUIRED",
+        402: "LLM_BUDGET_EXHAUSTED",
         403: "AUTH_FORBIDDEN",
         404: "RESOURCE_NOT_FOUND",
         409: "RESOURCE_CONFLICT",
+        410: "RESOURCE_GONE",
         413: "VALIDATION_FAILED",
+        422: "VALIDATION_FAILED",
         429: "RATE_LIMITED",
         500: "INTERNAL",
         502: "UPSTREAM_UNAVAILABLE",
         503: "UPSTREAM_UNAVAILABLE",
         504: "UPSTREAM_TIMEOUT",
     }.get(status_code, "INTERNAL")
+
+
+# Map the `reason` strings node code returns when it can't proceed onto v2
+# envelope fields. Keeping this table here (next to the envelope builder)
+# means routes can keep raising `HTTPException(detail={"ok": False, "reason":
+# ...})` without having to know the v2 catalog — error-handling.md §3 stays
+# the single source of truth for which codes exist.
+_REASON_TO_ENVELOPE: dict[str, dict[str, Any]] = {
+    "fabrication_guard_failed": {
+        "code": "LLM_FABRICATION_BLOCKED",
+        "messageKey": "errors.llm.fabricationBlocked",
+        "message": "Stopped before inventing experience that isn't in your résumé.",
+        "action": {"kind": "fix-input", "fields": []},
+    },
+    "resume_not_found": {
+        "code": "RESOURCE_NOT_FOUND",
+        "messageKey": "errors.resource.notFound",
+        "message": "We couldn't find that résumé.",
+    },
+    "source_resume_not_found": {
+        "code": "RESOURCE_NOT_FOUND",
+        "messageKey": "errors.resource.notFound",
+        "message": "We couldn't find the source résumé this suggestion came from.",
+    },
+    "bullet_not_found": {
+        "code": "RESOURCE_NOT_FOUND",
+        "messageKey": "errors.resource.notFound",
+        "message": "We couldn't find that bullet in the current résumé.",
+    },
+    "no_valid_suggestions": {
+        "code": "VALIDATION_FAILED",
+        "messageKey": "errors.validation.failed",
+        "message": "None of those suggestions are still valid — they may have already been accepted or rejected.",
+    },
+    "no_edit": {
+        "code": "VALIDATION_FAILED",
+        "messageKey": "errors.validation.failed",
+        "message": "Couldn't produce a meaningful edit from that instruction — try rephrasing.",
+    },
+}
+
+
+def _envelope_from_dict_detail(
+    detail: dict[str, Any], status_code: int
+) -> dict[str, Any] | None:
+    """Map a structured node response (`{"ok": False, "reason": ...}`) to v2
+    envelope fields. Returns None when the dict doesn't match a known shape;
+    caller falls back to the generic HTTPException path.
+
+    Surfaces fabricated entities via `details.rejectedEntities` exactly as
+    docs/architecture/error-handling.md §3 demands so the UI's fix-input CTA
+    can list them. Unknown reasons fall through to the status-code default."""
+    reason = detail.get("reason")
+    if not isinstance(reason, str):
+        return None
+    mapped = _REASON_TO_ENVELOPE.get(reason)
+    if mapped is None:
+        return None
+    out: dict[str, Any] = dict(mapped)
+    # Surface fabricated entities so the UI can render which ones tripped
+    # the red line. Trimmed to 20 so we never balloon the response.
+    fabricated = detail.get("fabricated")
+    if isinstance(fabricated, list) and fabricated:
+        details_dict = dict(out.get("details") or {})
+        details_dict["rejectedEntities"] = [str(e) for e in fabricated[:20]]
+        out["details"] = details_dict
+    # Carry the original status — handler chooses the response code from
+    # the exception, not this dict, but log/debug needs it.
+    out.setdefault("status", status_code)
+    return out
 
 
 def _error_envelope(
@@ -244,6 +317,17 @@ def _error_envelope(
             "action": {"kind": "contact", "channel": "in-app"},
         }
     if isinstance(exc, HTTPException):
+        # Structured node responses (`{"ok": False, "reason": "..."}` raised as
+        # detail) land here. Map them to the v2 catalog so callers see
+        # `LLM_FABRICATION_BLOCKED` / `RESOURCE_NOT_FOUND` / ... instead of a
+        # bare HTTP-status fallback that loses the rejection signal.
+        if isinstance(exc.detail, dict):
+            mapped = _envelope_from_dict_detail(exc.detail, exc.status_code)
+            if mapped is not None:
+                # The status field on `mapped` is informational only — the
+                # response status comes from the exception itself.
+                mapped.pop("status", None)
+                return {**base, **mapped}
         detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
         code = _http_status_code(exc.status_code)
         # Derive a plausible messageKey from the code (UPSTREAM_TIMEOUT →
