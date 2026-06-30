@@ -38,13 +38,27 @@ def dummy_lookup(query: str) -> str:
 
 
 def _has_real_openrouter_key() -> bool:
-    """CI sets OPENROUTER_API_KEY=dummy-for-unit-tests to satisfy code that
-    requires the env var to be present; treat that placeholder as 'absent'
-    so smoke tests don't actually hit OpenRouter and 401."""
+    """CI / dev sets OPENROUTER_API_KEY to a placeholder to satisfy code
+    that requires the env var to be present; treat any of these placeholders
+    as 'absent' so smoke tests don't actually hit OpenRouter and 401.
+
+    Placeholder patterns seen in the wild:
+      - dummy/test/fake/placeholder prefix (CI sentinels)
+      - the `CHANGE_ME` token from .env.example (e.g. `sk-or-CHANGE_ME`)
+      - bare `sk-or-` with no random suffix (placeholder shape)
+    """
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
         return False
-    return not key.lower().startswith(("dummy", "test", "fake", "placeholder"))
+    lower = key.lower()
+    if lower.startswith(("dummy", "test", "fake", "placeholder")):
+        return False
+    if "change_me" in lower or "changeme" in lower:
+        return False
+    # Real OpenRouter keys are `sk-or-v1-<long-random>` — at least 40 chars.
+    if len(key) < 40:
+        return False
+    return True
 
 
 pytestmark = pytest.mark.skipif(
