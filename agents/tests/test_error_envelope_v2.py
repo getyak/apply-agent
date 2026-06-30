@@ -150,9 +150,7 @@ def test_string_detail_still_maps_by_status(client, monkeypatch):
     async def fake_get_suggestion(_sid, _user):
         return None  # → route raises HTTPException(404, "suggestion not found")
 
-    monkeypatch.setattr(
-        "agents.nodes.resume_store.get_suggestion", fake_get_suggestion
-    )
+    monkeypatch.setattr("agents.nodes.resume_store.get_suggestion", fake_get_suggestion)
 
     resp = tc.post(
         f"/resume/suggestions/{uuid4()}/decision",

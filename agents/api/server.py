@@ -256,9 +256,7 @@ _REASON_TO_ENVELOPE: dict[str, dict[str, Any]] = {
 }
 
 
-def _envelope_from_dict_detail(
-    detail: dict[str, Any], status_code: int
-) -> dict[str, Any] | None:
+def _envelope_from_dict_detail(detail: dict[str, Any], status_code: int) -> dict[str, Any] | None:
     """Map a structured node response (`{"ok": False, "reason": ...}`) to v2
     envelope fields. Returns None when the dict doesn't match a known shape;
     caller falls back to the generic HTTPException path.
