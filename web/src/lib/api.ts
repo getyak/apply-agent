@@ -907,6 +907,81 @@ export const ask = {
     api<{ items: Array<{ id: string; preview: string; createdAt: string }> }>(
       `/api/ask/recent?limit=${encodeURIComponent(String(limit))}`,
     ),
+  // Full thread history for hydrating the dock's step timeline. Without this
+  // every dock mount looked like a fresh window because the AG-UI step graph
+  // only ever reflected the current turn — even though the lifetime thread
+  // already had every prior message persisted in PG. Backed by
+  // api/src/routes/ask.ts GET /history; threadId omitted defaults to the
+  // lifetime ask_vantage:{user_id} thread.
+  history: (threadId?: string, limit = 50) => {
+    const params = new URLSearchParams();
+    if (threadId) params.set("threadId", threadId);
+    params.set("limit", String(limit));
+    return api<{
+      threadId: string;
+      items: Array<{
+        id: string;
+        role: "user" | "assistant" | "system" | "tool";
+        content: string;
+        metadata: Record<string, unknown>;
+        createdAt: string;
+      }>;
+    }>(`/api/ask/history?${params.toString()}`);
+  },
+  // Multi-session CRUD (migration 019). The dock's SessionSwitcher
+  // (web/src/components/ask-vantage/session-switcher.tsx) drives every call.
+  // The "+ New session" affordance hits create(), which the gateway answers
+  // with a fresh ask_vantage:{userId}:{uuid} thread.
+  sessions: {
+    list: () =>
+      api<{ items: AskSession[] }>(`/api/ask/sessions`),
+    create: (label?: string) =>
+      api<{ session: AskSession }>(`/api/ask/sessions`, {
+        method: "POST",
+        body: JSON.stringify(label ? { label } : {}),
+      }),
+    rename: (id: string, label: string) =>
+      api<{ session: AskSession }>(`/api/ask/sessions/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ label }),
+      }),
+    remove: (id: string) =>
+      api<{ deleted: string }>(`/api/ask/sessions/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+  },
+};
+
+export interface AskSession {
+  id: string;
+  threadId: string;
+  label: string;
+  preview: string | null;
+  messageCount: number;
+  lastActiveAt: string;
+  createdAt: string;
+}
+
+// Slash-command catalog (api/src/routes/slash.ts). Read once per palette
+// open; the server-side cache absorbs the cost of repeated opens.
+export interface SlashEntry {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  category: "skills" | "prompts" | "memory" | "agents";
+}
+
+export interface SlashCatalog {
+  skills: SlashEntry[];
+  prompts: SlashEntry[];
+  memory: SlashEntry[];
+  agents: SlashEntry[];
+  generatedAt: string;
+}
+
+export const slash = {
+  catalog: () => api<SlashCatalog>("/api/slash/catalog"),
 };
 
 // Today action queue (P3.1). Mixes prep / interview / learn signals
