@@ -83,33 +83,68 @@ def hash_content(content: str) -> str:
 
 @mark_auto
 async def redis_get(key: str) -> str | None:
-    """Read a string value from Redis (6380). Returns None on miss."""
+    """Read a string value from Redis (6380). Returns None on miss.
+
+    Fail-open: if Redis is unreachable, returns None so the caller treats it
+    as a cache miss and runs the underlying loader. Cache is best-effort —
+    a dead cache must not crash the saga (delivery-loop-plan.md § 2.3).
+    """
     try:
         import redis.asyncio as redis  # local import
     except ImportError:
         return None
     url = os.environ.get("RELAY_REDIS_URL", "redis://localhost:6380/0")
-    client = redis.from_url(url, decode_responses=True)
+    try:
+        client = redis.from_url(url, decode_responses=True)
+    except Exception:  # noqa: BLE001 boundary
+        return None
     try:
         return await client.get(key)
+    except (
+        redis.ConnectionError,
+        redis.TimeoutError,
+        redis.RedisError,
+        OSError,
+    ):
+        return None
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception:  # noqa: BLE001 — closing a dead client should never propagate
+            pass
 
 
 @mark_auto
 async def redis_setex(key: str, ttl_seconds: int, value: str) -> bool:
-    """SETEX into Redis. Returns True on success."""
+    """SETEX into Redis. Returns True on success, False if Redis is down.
+
+    Fail-open: a dead cache silently no-ops the write. See ``redis_get`` for
+    the matching read-side behaviour.
+    """
     try:
         import redis.asyncio as redis
     except ImportError:
         return False
     url = os.environ.get("RELAY_REDIS_URL", "redis://localhost:6380/0")
-    client = redis.from_url(url, decode_responses=True)
+    try:
+        client = redis.from_url(url, decode_responses=True)
+    except Exception:  # noqa: BLE001 boundary
+        return False
     try:
         await client.setex(key, ttl_seconds, value)
         return True
+    except (
+        redis.ConnectionError,
+        redis.TimeoutError,
+        redis.RedisError,
+        OSError,
+    ):
+        return False
     finally:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @mark_auto
