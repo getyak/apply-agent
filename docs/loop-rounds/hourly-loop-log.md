@@ -1,10 +1,7 @@
-# Hourly E2E Loop · Log
+# Hourly Loop Log
 
-One line per run: `<UTC timestamp> · <story slug> · <start-score> → <end-score> · <commit-sha-short>`
+One line per run. Newest at the bottom.
 
-Detail files live in `.loop-state/round-<ts>.md` (gitignored — preserved in
-the round's commit log message + the `git show` output of the round commits).
+Schema: `<UTC timestamp> · <story slug> · <start-score> → <end-score> · <commit-sha-short>`
 
----
-
-2026-06-30T01:47Z · tailor-resume-to-jd · 90 → 100 · 01a5e5b
+2026-06-30T02:03Z · tailor-resume-to-jd · 53 → 64 · 4f3bf25
