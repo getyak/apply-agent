@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { config } from "../config";
 import { query } from "../db";
 import { ConflictError, UpstreamError } from "../errors";
+import { resolveLocale } from "../locale";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
 import { rateLimit } from "../middleware/rate-limit";
@@ -99,6 +100,14 @@ app.post(
     // bind the same trace into its log / span tree.
     const traceId = c.get("traceId");
     const requestId = c.get("requestId");
+    // UI locale propagation: mirror /api/ask/stream's contract so the agent
+    // pins the assistant's reply language and any user-facing surfaces in
+    // the prepare saga (cover-letter outro, form-answer rephrasing) follow
+    // the user's UI locale. Artifact language still derives from the JD —
+    // see agents/harness/locale.py artifact_language_directive. Without
+    // this header the agent fell back to English regardless of the user's
+    // X-Relay-Locale, which is a real round-20 surface for our story.
+    const resolvedLocale = resolveLocale(c);
     const agentResp = await fetch(target, {
       method: "POST",
       headers: {
@@ -106,6 +115,7 @@ app.post(
         "x-relay-user-id": userId,
         ...(traceId ? { "X-Trace-Id": traceId } : {}),
         ...(requestId ? { "X-Request-Id": requestId } : {}),
+        "X-Relay-Locale": resolvedLocale,
       },
       body: JSON.stringify({
         jd_url: jdUrl,
