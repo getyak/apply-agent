@@ -92,6 +92,10 @@ class MockState(TypedDict, total=False):
     total_cost_cents: float
     total_tokens: int
     consecutive_errors: int
+    # Forwarded from the gateway (X-Relay-Locale) so translate_feedback can
+    # run a post-hoc reply-locale check on each piece of feedback text. None
+    # → no enforcement (legacy clients / direct test invocations).
+    ui_locale: str | None
 
 
 # ── Build-from-scratch resume workflow state ────────────────────────────
