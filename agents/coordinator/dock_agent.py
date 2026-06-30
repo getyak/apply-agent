@@ -106,6 +106,7 @@ _SYSTEM_TOOLS: frozenset[str] = frozenset(
 # the gateway's old _TOOL_AGENT_MAP.
 _TOOL_AGENT_MAP: dict[str, tuple[str, str]] = {
     "list_my_applications": ("applications", "list"),
+    "read_resume": ("resume_agent", "read"),
     "tailor_resume": ("resume_agent", "customize"),
     "polish_bullet": ("resume_agent", "polish_bullet"),
     "find_jobs": ("jobmatch_agent", "find_matches"),
@@ -165,7 +166,7 @@ async def run_dock_turn(
     trace_id: str | None = None,
     extra_system_blocks: list[str] | None = None,
     command: dict[str, Any] | None = None,
-    recursion_limit: int = 12,
+    recursion_limit: int = 24,
     tier: str = "general",
     graph_factory=None,
 ) -> AsyncIterator[str]:

@@ -33,6 +33,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const prepId = useVantage((s) => s.prepId);
   const resumeWorkspace = useVantage((s) => s.resumeWorkspace);
   const currentUser = useVantage((s) => s.currentUser);
+  // After we confirm auth (me() resolves), populate the store's `resumes`
+  // list so the persistent sidebar chip + dock résumé picker have data the
+  // moment the workspace renders. Without this, returning users would only
+  // see those surfaces after the first parse round-trip — defeating the
+  // "ambient résumé context" goal of the post-upload UX upgrade.
+  const loadResumes = useVantage((s) => s.loadResumes);
   const router = useRouter();
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
@@ -79,6 +85,36 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     };
   }, [currentUser?.id]);
 
+  // Hydrate the dock's STEP TIMELINE from the lifetime ask_vantage thread.
+  // The dock now lives on a single per-user thread (vantage-ui-mapping §1.2),
+  // so the persisted (user, assistant) turns belong on the timeline the
+  // moment the dock opens — not "after the next send". Without this hydrate
+  // every reload looked like a fresh window even though the server kept
+  // every prior turn. Backed by GET /api/ask/history.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+    askApi
+      .history(undefined, 50)
+      .then(async (res) => {
+        if (cancelled) return;
+        // Lazy-load to keep this layout chunk small — the step store pulls
+        // in the reducer + AG-UI schema, which the dock would download
+        // anyway but we don't need on /auth or pre-login renders.
+        const { hydrateFromHistory } = await import("@/lib/agent-events/store");
+        if (cancelled) return;
+        hydrateFromHistory(res.items);
+      })
+      .catch((err) => {
+        // History is best-effort: an empty timeline is still usable, and the
+        // dock will start fresh. Log so we notice in dev.
+        console.warn("[ask] history fetch failed:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
   // Mock live wants a quiet stage. Per vantage-ui-mapping.md §3.6 the dock
   // should collapse *when entering the live stage*, not on the whole mock
   // screen — the user still picks a mode and reads the intel brief with the
@@ -110,15 +146,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       current === "/app/applications" ||
       current === "/app/settings";
     if (!isNavRoute) return;
-    const target =
-      nav === "chat"
-        ? "/app/chat"
-        : nav === "today"
-          ? "/app/today"
-          : nav === "settings"
-            ? "/app/settings"
-            : "/app/applications";
-    if (current !== target) router.replace(target);
+    // URL is authoritative. If the visited path doesn't match `nav`, bring
+    // the store in line with the URL — NOT the other way. Earlier the
+    // store overrode the URL, which meant a direct visit to /app/today
+    // bounced back to /app/chat for any user whose store still held its
+    // default `nav: "chat"`.
+    const pathToNav: Record<string, "chat" | "today" | "apps" | "settings"> = {
+      "/app/chat": "chat",
+      "/app/today": "today",
+      "/app/applications": "apps",
+      "/app/settings": "settings",
+    };
+    const desiredNav = pathToNav[current];
+    if (desiredNav && desiredNav !== nav) {
+      useVantage.getState().setNav(desiredNav);
+    }
   }, [ready, screen, nav, router]);
 
   useEffect(() => {
@@ -154,6 +196,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           // Returning user without a résumé falls through to onboarding;
           // brand-new users land on the "Your job hunt, handled" screen.
         }
+        // Populate the store's `resumes` array so the sidebar chip + dock
+        // picker have data immediately. resumeWorkspace() above only sets
+        // `currentResumeId`; this fills in the *list*. Fire-and-forget —
+        // the loader swallows its own errors.
+        void loadResumes();
         if (!cancelled) setReady(true);
       })
       .catch(() => {
@@ -164,7 +211,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [router, resumeWorkspace]);
+  }, [router, resumeWorkspace, loadResumes]);
 
   if (!ready) {
     return <BrandLoader label="Preparing your workspace…" />;

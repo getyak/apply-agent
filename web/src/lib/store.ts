@@ -275,8 +275,21 @@ export interface ParsedResume {
     location?: { city?: string; region?: string };
   };
   skills?: { name?: string; level?: string }[];
-  work?: { name?: string; position?: string }[];
+  work?: { name?: string; position?: string; startDate?: string; endDate?: string }[];
   [key: string]: unknown;
+}
+
+// One row from GET /api/resumes — the user's résumé library, sorted newest
+// first. Drives the sidebar live-version chip and the dock résumé picker.
+export interface ResumeRow {
+  id: string;
+  version: number;
+  is_base: boolean;
+  track: "original" | "optimized" | "tailored";
+  derived_from: string | null;
+  tailored_for_job: string | null;
+  source_file_id: string | null;
+  created_at: string;
 }
 
 export interface ApiJob {
@@ -382,6 +395,11 @@ interface VantageState {
   apiAppsLoading: boolean;
   trendSnapshot: TrendSnapshot | null;
   currentResumeId: string | null;
+  // The user's résumé library, fetched on demand (after a parse finishes or
+  // when the workspace first hydrates a returning user). Newest first.
+  // Drives the sidebar version chip + the dock résumé picker — both treat
+  // an empty list as "user has not uploaded anything yet".
+  resumes: ResumeRow[];
   currentUser: CurrentUser | null;
   // P2.3-UI — per-tailored-version change_log map. The Resume Studio
   // panel reads this; the ask-stream artifact path (once wired) will
@@ -457,6 +475,15 @@ interface VantageState {
   createResume: (content: object) => Promise<void>;
   loadJobs: () => Promise<void>;
   loadApplications: () => Promise<void>;
+  // Re-fetch the user's résumé list. Called automatically when a parse
+  // finishes, on workspace mount, and after manual studio actions
+  // (publish / accept-suggestion / hand-edit). Failures are swallowed —
+  // the sidebar chip simply shows nothing rather than blocking work.
+  loadResumes: () => Promise<void>;
+  // Switch which résumé the dock/sidebar/studio anchor against. This is
+  // the persistent "active context" — the next "Tailor to a JD" or
+  // "Find roles" chip uses this id when sending to the agent.
+  setCurrentResume: (id: string) => void;
   // Optimistic PATCH for the Applications kanban. Updates the row in
   // memory first so the drag/drop and detail-drawer edits feel instant;
   // on a server error the previous row is restored and the caller can
@@ -524,6 +551,7 @@ export const useVantage = create<VantageState>((set, get) => ({
   apiAppsLoading: false,
   trendSnapshot: null,
   currentResumeId: null,
+  resumes: [],
   currentUser: null,
   tailoredChangeLogs: {},
 
@@ -659,6 +687,11 @@ export const useVantage = create<VantageState>((set, get) => ({
           });
           // Fallback for older job results that don't carry a resumeId.
           if (!result.resumeId) get().createResume(resume);
+          // Refresh the résumé library so the sidebar chip + dock picker
+          // pick up the row the worker just inserted. Fire-and-forget —
+          // the row id is already in currentResumeId, so chips work even
+          // if the list refresh fails.
+          void get().loadResumes();
           return;
         }
         if (job.status === "failed") {
@@ -705,6 +738,10 @@ export const useVantage = create<VantageState>((set, get) => ({
     get().loadJobs();
     get().loadTrends();
     get().loadCurrentUser();
+    // A returning user (auth-restore, page reload during workspace use) lands
+    // here without ever passing through parse — load their library now so the
+    // sidebar chip + dock picker hydrate without a second user action.
+    get().loadResumes();
     get().startTour();
     // Persist the REAL parsed resume if it's already in hand (sync path). On the
     // async path parsedResume is null here and gets persisted by pollParseJob
@@ -989,6 +1026,22 @@ export const useVantage = create<VantageState>((set, get) => ({
       set({ apiJobsLoading: false });
     }
   },
+
+  loadResumes: async () => {
+    try {
+      const res = await resumesApi.list();
+      // The route uses the same `{ data, page }` envelope as applications;
+      // sort newest first so the sidebar chip shows the user's most recent
+      // version without needing the consumer to re-sort.
+      const rows = (res as { data?: ResumeRow[] }).data ?? [];
+      rows.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+      set({ resumes: rows });
+    } catch {
+      // Empty list is fine — the sidebar chip falls back to "Résumé studio".
+    }
+  },
+
+  setCurrentResume: (id) => set({ currentResumeId: id }),
 
   loadApplications: async () => {
     set({ apiAppsLoading: true });

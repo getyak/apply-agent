@@ -119,6 +119,87 @@ export const useAgentStream = create<AgentStreamState>()(
   })),
 );
 
+// --------------------------------------------------------------- hydration
+
+/**
+ * One row returned by GET /api/ask/history. We mirror the wire shape here
+ * (rather than importing it from lib/api.ts) so the store stays UI-agnostic
+ * and easy to test.
+ */
+export interface HistoryRow {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+/**
+ * Replace the step graph with the persisted history of the lifetime thread.
+ *
+ * We do a *replace* (not append) because hydration is the first thing the
+ * dock does on mount — there's nothing to merge with. Each persisted row
+ * becomes a single done-status step:
+ *   - role=user      → kind="user" (renders the right-aligned bubble)
+ *   - role=assistant → kind="assistant_text" (renders the markdown card)
+ *   - role=tool/system → folded into assistant_text with a small prefix so
+ *     no message is silently dropped. Tool-call detail isn't persisted in
+ *     conversation_messages today (only the text reply is), so synthesising
+ *     a richer tool card here would lie about what the agent actually did.
+ *
+ * The rows arrive in chronological (ASC) order from /api/ask/history; we
+ * preserve that order so the timeline reads top-to-bottom like a chat.
+ */
+export function hydrateFromHistory(rows: HistoryRow[]): void {
+  // Tear down any half-finished turn before we overwrite — otherwise the
+  // abort handler would land on the new state and clear our hydrated graph.
+  const cur = useAgentStream.getState().abortController;
+  if (cur) cur.abort();
+
+  let state: ReducerState = emptyState();
+  for (const r of rows) {
+    state = upsertStep(state, rowToStep(r));
+  }
+  useAgentStream.setState({
+    steps: state.steps,
+    order: state.order,
+    rootStepId: state.rootStepId,
+    isStreaming: false,
+    errorMessage: null,
+    abortController: null,
+  });
+}
+
+function rowToStep(r: HistoryRow): Step {
+  const started = Date.parse(r.createdAt);
+  const startedAt = Number.isFinite(started) ? started : Date.now();
+  if (r.role === "user") {
+    return {
+      id: `history:${r.id}`,
+      run_id: "",
+      kind: "user" as RenderStepKind as StepKind,
+      status: "done",
+      title: "You",
+      started_at: startedAt,
+      text: r.content,
+      events: [],
+    };
+  }
+  // assistant / tool / system → render as an assistant_text bubble. Tool and
+  // system rows are rare in our schema (the dock writes only user+assistant)
+  // but we still surface them so audit trail is honest.
+  return {
+    id: `history:${r.id}`,
+    run_id: "",
+    kind: "assistant_text",
+    status: "done",
+    title: "Vantage",
+    started_at: startedAt,
+    text: r.content,
+    events: [],
+  };
+}
+
 // ---------------------------------------------------------------- selectors
 
 /** Subscribe to a single step by id — only re-renders when *that* step changes. */
@@ -186,9 +267,17 @@ function attachmentsFooter(atts: DockAttachmentLite[]): string {
 }
 
 /**
- * Drive one dock turn. Resets the step graph, injects the user's prompt as
- * a "user" step, then streams AG-UI events into the reducer. Mirrors the
+ * Drive one dock turn. Appends the user's prompt as a "user" step, then
+ * streams AG-UI events into the reducer alongside any pre-existing steps
+ * (either hydrated history or earlier turns this session). Mirrors the
  * streaming flag into the dock-chrome store so the composer disables.
+ *
+ * NB: we deliberately do NOT call `stream.reset()` here anymore. The dock
+ * lives on a single lifetime ask_vantage:{user_id} thread (vantage-ui-mapping
+ * §1.2). Resetting per-turn was the original cause of "every send feels like
+ * a fresh window" — prior turns vanished even though the server kept them.
+ * Cancellation of the previous in-flight stream is still required so a
+ * still-talking turn doesn't keep folding events into the next turn's graph.
  */
 export async function sendAsk(
   prompt: string,
@@ -200,9 +289,16 @@ export async function sendAsk(
   if (!prompt.trim() || !threadId) return;
 
   const stream = useAgentStream.getState();
-  // New turn replaces the old one (timeline is per-turn).
-  stream.reset();
+  // Cancel any in-flight turn — but keep the existing step graph so prior
+  // turns stay visible. The reducer's per-event upsert is keyed on stable
+  // ids (message_id / tool_call_id), so a fresh run never collides with old
+  // steps; we just gate against a still-streaming previous controller.
+  const inflight = stream.abortController;
+  if (inflight) inflight.abort();
   dock.cancelStream?.();
+  // Clear the per-run banner from the previous turn so a fresh run doesn't
+  // inherit a stale RUN_ERROR. Prior steps remain.
+  useAgentStream.setState({ errorMessage: null });
 
   const footer = attachmentsFooter(attachments);
   const wirePrompt = `${prompt}${footer}`;

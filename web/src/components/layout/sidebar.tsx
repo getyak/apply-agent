@@ -49,6 +49,17 @@ export function Sidebar() {
   const setScreen = useVantage((s) => s.setScreen);
   const currentUser = useVantage((s) => s.currentUser);
   const parsedResume = useVantage((s) => s.parsedResume);
+  // Live résumé state — drives the chip directly under "Résumé studio":
+  //  - parseJobStatus === "running"  → "Parsing <file>" with shimmer
+  //  - parseJobStatus === "failed"   → "Couldn't read" with retry hint
+  //  - resumes.length ≥ 1            → "<track> v<n>" + "<count> versions"
+  //  - none of the above             → no chip (cold workspace)
+  // The chip sits underneath the Résumé studio link, not in place of it,
+  // so the existing nav vocabulary is unchanged.
+  const parseJobStatus = useVantage((s) => s.parseJobStatus);
+  const parseFileName = useVantage((s) => s.parseFileName);
+  const resumes = useVantage((s) => s.resumes);
+  const currentResumeId = useVantage((s) => s.currentResumeId);
   const loadCurrentUser = useVantage((s) => s.loadCurrentUser);
   const signOut = useVantage((s) => s.signOut);
 
@@ -291,6 +302,86 @@ export function Sidebar() {
           <FileText data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
           {!collapsed && <span>{t("resumeStudio")}</span>}
         </Link>
+
+        {/* Live résumé chip — only visible in expanded mode and when the
+            workspace actually has something to say about the user's résumé.
+            See `parseJobStatus` / `resumes` selectors above for the four-way
+            state machine driving this. The chip is a real <Link> so clicking
+            it jumps into the studio; on a failed parse the body becomes a
+            "Try again" affordance that opens the same route (the studio's
+            empty-state already exposes the re-upload control).            */}
+        {!collapsed && (() => {
+          const running = parseJobStatus === "running";
+          const failed = parseJobStatus === "failed";
+          const hasResumes = resumes.length > 0;
+          if (!running && !failed && !hasResumes) return null;
+          const activeRow = resumes.find((r) => r.id === currentResumeId) ?? resumes[0] ?? null;
+          const trackLabel = activeRow
+            ? activeRow.track === "tailored"
+              ? t("resumeChip.trackTailored")
+              : activeRow.track === "optimized"
+                ? t("resumeChip.trackOptimized")
+                : t("resumeChip.trackMaster")
+            : "";
+          // Trim "cv_lixw_cn.pdf" → "cv_lixw_cn" for the running label so the
+          // 248px sidebar doesn't have to truncate every filename.
+          const displayName = (parseFileName || "résumé").replace(/\.[^.]+$/, "");
+          return (
+            <Link
+              href={ROUTES.builder}
+              onClick={() => onNavClick("builder")}
+              data-testid="sidebar-resume-chip"
+              data-state={running ? "running" : failed ? "failed" : "ready"}
+              className="ml-[28px] mt-[1px] mb-[2px] mr-[2px] flex items-start gap-[8px] rounded-[8px] px-[10px] py-[7px] text-[12px] leading-tight hover:bg-[#F8F5F0] transition-colors"
+              title={
+                running
+                  ? t("resumeChip.runningTitle", { file: parseFileName || t("resumeChip.fallbackFile") })
+                  : failed
+                    ? t("resumeChip.failedTitle")
+                    : t("resumeChip.readyTitle", { count: resumes.length })
+              }
+            >
+              <span
+                aria-hidden
+                className={`mt-[3px] inline-block h-[7px] w-[7px] shrink-0 rounded-full ${
+                  running ? "bg-amber animate-pulse" : failed ? "bg-red-500" : "bg-green"
+                }`}
+              />
+              <span className="flex-1 min-w-0">
+                {running ? (
+                  <>
+                    <span className="block font-mono text-[9.5px] tracking-[0.6px] uppercase text-amber">
+                      {t("resumeChip.parsingLabel")}
+                    </span>
+                    <span className="block font-body text-[12px] text-ink-light truncate">
+                      {displayName}
+                    </span>
+                  </>
+                ) : failed ? (
+                  <>
+                    <span className="block font-mono text-[9.5px] tracking-[0.6px] uppercase text-red-700">
+                      {t("resumeChip.failedLabel")}
+                    </span>
+                    <span className="block font-body text-[12px] text-ink-light truncate">
+                      {t("resumeChip.failedHint")}
+                    </span>
+                  </>
+                ) : activeRow ? (
+                  <>
+                    <span className="block font-mono text-[9.5px] tracking-[0.6px] uppercase text-brown">
+                      {trackLabel} · v{activeRow.version}
+                    </span>
+                    <span className="block font-body text-[12px] text-ink-light truncate">
+                      {resumes.length > 1
+                        ? t("resumeChip.versionsCount", { count: resumes.length })
+                        : t("resumeChip.singleVersionHint")}
+                    </span>
+                  </>
+                ) : null}
+              </span>
+            </Link>
+          );
+        })()}
         <Link
           href={ROUTES.mock}
           className={navItem(active("mock"))}

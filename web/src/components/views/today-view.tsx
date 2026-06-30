@@ -14,6 +14,7 @@ import {
 import { today as todayApi, type TodayAction } from "@/lib/api";
 import { sendAsk } from "@/lib/agent-events";
 import { useDock } from "@/lib/ask-vantage-store";
+import { ResumeLandingCard } from "./resume-landing-card";
 
 type Translator = ReturnType<typeof useTranslations>;
 
@@ -261,6 +262,13 @@ export function TodayView() {
           </div>
         </div>
       </div>
+
+      {/* Post-parse landing card — handles its own visibility (only renders
+          when parseJobStatus === "done" and a parsedResume exists, and only
+          until the user dismisses it or runs a CTA). Lives above the queue
+          so the moment-of-completion celebration is the first thing the
+          user sees after the parse banner clears. */}
+      <ResumeLandingCard />
 
       {actionQueue.length > 0 && (
         <div className="mb-[34px]">
