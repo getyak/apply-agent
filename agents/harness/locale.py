@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from typing import Any
 
 SUPPORTED = ("en", "zh")
 DEFAULT_LOCALE = "en"

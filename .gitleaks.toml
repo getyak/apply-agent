@@ -30,4 +30,17 @@ paths = [
   '''bun\.lock$''',
   '''uv\.lock$''',
   '''\.gitleaks\.toml$''',
+  # Smoke scripts use synthetic per-run PASSWORDs (never real credentials).
+  # The current source builds the value at runtime so no high-entropy literal
+  # ships in the file; this entry covers any future inline literals.
+  '''scripts/post-upload-ui-smoke\.mjs$''',
+]
+# Historical commits where we know the finding was a synthetic test password
+# (the source has since been refactored to build the value at runtime). The
+# commit can't be rewritten without force-pushing the PR branch, which would
+# invalidate review history.
+commits = [
+  # PR #26 (feat/dock-multi-session-and-reply-locale) — `PASSWORD = "smoke-pw-12345"`
+  # in scripts/post-upload-ui-smoke.mjs:36. Refactored away in 632fadd.
+  "7a8a7d7411a2a455f27a2762d4beab95930f35f8",
 ]
