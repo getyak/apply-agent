@@ -185,10 +185,10 @@ _MIN_DETECTION_CONFIDENCE = 0.65
 # question that pastes a 400-char stack trace gets classified by the trace
 # language, not the question.
 _SCRUB_PATTERNS = [
-    (re.compile(r"```.*?```", re.DOTALL), " "),              # fenced code
-    (re.compile(r"`[^`]+`"), " "),                            # inline code
-    (re.compile(r"https?://\S+"), " "),                       # URLs
-    (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), " "),       # e-mails
+    (re.compile(r"```.*?```", re.DOTALL), " "),  # fenced code
+    (re.compile(r"`[^`]+`"), " "),  # inline code
+    (re.compile(r"https?://\S+"), " "),  # URLs
+    (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), " "),  # e-mails
 ]
 
 

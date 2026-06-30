@@ -582,10 +582,7 @@ async def read_resume(scope: str = "summary") -> dict[str, Any]:
             projects = projects[:4]
         # Trim long markdown so the SSE frame stays well below the 8 KB cap.
         if markdown and len(markdown) > 3500:
-            markdown = (
-                markdown[:3500]
-                + "\n\n…[truncated; ask for `scope=full` to see the rest]"
-            )
+            markdown = markdown[:3500] + "\n\n…[truncated; ask for `scope=full` to see the rest]"
 
     return {
         "status": "ok",

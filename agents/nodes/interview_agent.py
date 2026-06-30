@@ -452,7 +452,11 @@ async def _enforce_reply_locale(
     # get the same shape.
     return cast(
         FeedbackTranslation,
-        {**feedback, **fixed, "stuck_replay": fixed.get("stuck_replay") or feedback.get("stuck_replay")},
+        {
+            **feedback,
+            **fixed,
+            "stuck_replay": fixed.get("stuck_replay") or feedback.get("stuck_replay"),
+        },
     )
 
 

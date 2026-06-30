@@ -191,6 +191,7 @@ async def _resume_section(user_id: UUID) -> str:
 # Résumé content helpers
 # ─────────────────────────────────────────────────────────────────────
 
+
 def _coerce_json_resume(raw: Any) -> dict[str, Any]:
     """Accept the two known shapes and return a plain JSON Resume dict.
 
@@ -283,7 +284,11 @@ def _format_education(content: dict[str, Any]) -> list[str]:
         end = _year(entry.get("endDate")) or "Present"
         dates = f"{start}–{end}" if start else end
         bits = [b for b in (study, area) if b]
-        head = f"- {institution} — {' '.join(bits)} ({dates})" if bits else f"- {institution} ({dates})"
+        head = (
+            f"- {institution} — {' '.join(bits)} ({dates})"
+            if bits
+            else f"- {institution} ({dates})"
+        )
         clipped = _clip(head)
         if clipped:
             out.append(clipped)
