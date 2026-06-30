@@ -162,4 +162,44 @@ describe("POST /api/applications/prepare-from-jd", () => {
     expect(res.status).toBe(401);
     expect(fetchCalls.length).toBe(0);
   });
+
+  // Locale propagation: rubric-10 case for the round-20 deep loop.
+  // Mirrors /api/ask/stream — agent reply language pinned by X-Relay-Locale.
+  it("forwards X-Relay-Locale from explicit header to the agent", async () => {
+    const res = await APP.request("/api/applications/prepare-from-jd", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await makeJwt(USER_A)}`,
+        "Content-Type": "application/json",
+        "X-Relay-Locale": "zh",
+      },
+      body: JSON.stringify({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" }),
+    });
+    expect(res.status).toBe(200);
+    expect(fetchCalls.length).toBe(1);
+    const headers = fetchCalls[0]!.init.headers as Record<string, string>;
+    expect(headers["X-Relay-Locale"]).toBe("zh");
+  });
+
+  it("falls back to Accept-Language when X-Relay-Locale is absent", async () => {
+    const res = await APP.request("/api/applications/prepare-from-jd", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await makeJwt(USER_A)}`,
+        "Content-Type": "application/json",
+        "Accept-Language": "zh-CN,en;q=0.7",
+      },
+      body: JSON.stringify({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" }),
+    });
+    expect(res.status).toBe(200);
+    const headers = fetchCalls[0]!.init.headers as Record<string, string>;
+    expect(headers["X-Relay-Locale"]).toBe("zh");
+  });
+
+  it("defaults to en when neither header is provided", async () => {
+    const res = await req({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" });
+    expect(res.status).toBe(200);
+    const headers = fetchCalls[0]!.init.headers as Record<string, string>;
+    expect(headers["X-Relay-Locale"]).toBe("en");
+  });
 });

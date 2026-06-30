@@ -559,11 +559,18 @@ async def run_prepare_application(
     base_resume_version: int,
     form_fields: list[dict[str, Any]] | None = None,
     application_id: UUID | None = None,
+    ui_locale: str | None = None,
 ) -> dict[str, Any]:
     """End-to-end driver — runs the graph wrapped in TTAR measurement.
 
     Returns the final state plus the persisted application_id (creating a
     row in application_drafts upfront so the TTAR write target exists).
+
+    ``ui_locale`` (X-Relay-Locale, normalized to "en" / "zh") is stashed
+    in the workflow state so future cover-letter / form-answer generators
+    can pin the assistant's surface language. Artifact language (résumé,
+    cover-letter body) still follows the JD per
+    ``agents/harness/locale.py`` ``artifact_language_directive``.
     """
     app_id = application_id or await _create_application_draft(
         user_id=user_id, base_resume_id=base_resume_id
@@ -580,6 +587,7 @@ async def run_prepare_application(
         "fabrication_attempts": 0,
         "stage_status": {},
         "_stage_timings": {},  # type: ignore[typeddict-unknown-key]
+        "ui_locale": ui_locale,  # type: ignore[typeddict-unknown-key]
     }
 
     graph = build_prepare_application_graph()

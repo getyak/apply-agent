@@ -1134,16 +1134,27 @@ class PrepareApplicationPayload(BaseModel):
 
 @app.post("/applications/prepare")
 async def applications_prepare(
-    payload: PrepareApplicationPayload, user_id: UserDep
+    payload: PrepareApplicationPayload,
+    user_id: UserDep,
+    x_relay_locale: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     """Run the full delivery-loop saga and return everything the UI needs.
 
     Drives TTAR (delivery-loop-plan.md § 1). Stage-level fallbacks live in
     workflows.run_prepare_application — this endpoint just shapes the
     response and surfaces the TTAR-relevant fields.
+
+    Locale: ``X-Relay-Locale`` (forwarded by the gateway from the user's
+    UI cookie) is normalized and threaded into the workflow state so
+    downstream cover-letter / form-answer generators can pin assistant
+    language. The artifact language (résumé, cover letter body) still
+    follows the JD's language — see ``agents/harness/locale.py``
+    ``artifact_language_directive``.
     """
     from agents.coordinator.workflows import run_prepare_application
+    from agents.harness.locale import normalize_locale
 
+    ui_locale = normalize_locale(x_relay_locale)
     return await run_prepare_application(
         user_id=user_id,
         jd_url=payload.jd_url,
@@ -1152,6 +1163,7 @@ async def applications_prepare(
         base_resume_version=payload.base_resume_version,
         form_fields=payload.form_fields,
         application_id=payload.application_id,
+        ui_locale=ui_locale,
     )
 
 
