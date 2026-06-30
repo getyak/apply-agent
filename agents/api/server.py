@@ -61,6 +61,7 @@ from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
 from agents.api.deps import UserDep  # noqa: E402
+from agents.api.errors import classify_upstream_exception  # noqa: E402
 from agents.coordinator.router import (  # noqa: E402
     cheap_intent_classifier,
     classify_intent,
@@ -243,6 +244,18 @@ def _error_envelope(
             "messageKey": "errors.llm.budgetExhausted",
             "action": {"kind": "contact", "channel": "in-app"},
         }
+    upstream = classify_upstream_exception(exc)
+    if upstream is not None:
+        envelope = {
+            **base,
+            "code": upstream["code"],
+            "message": upstream["message"],
+            "messageKey": upstream["messageKey"],
+            "action": upstream["action"],
+        }
+        if upstream.get("details"):
+            envelope["details"] = upstream["details"]
+        return envelope
     if isinstance(exc, HTTPException):
         detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
         code = _http_status_code(exc.status_code)
@@ -336,7 +349,11 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
         error=redact_exception_text(str(exc)),
         kind=type(exc).__name__,
     )
-    status = 402 if isinstance(exc, BudgetExhausted) else 500
+    if isinstance(exc, BudgetExhausted):
+        status = 402
+    else:
+        upstream = classify_upstream_exception(exc)
+        status = upstream["status"] if upstream is not None else 500
     return JSONResponse(
         status_code=status,
         content={"error": _error_envelope(exc, trace_id, request_id)},
