@@ -24,12 +24,20 @@ const TOKEN_COOKIE = "vantage_token";
 const APP_PREFIX = "/app";
 const AUTH_PATH = "/auth";
 
+// True for the workspace root (/app) and any nested route (/app/today, …),
+// but NOT for sibling routes that happen to start with the same characters
+// like /apple-icon or /apps-marketing. startsWith("/app") would catch those
+// and 307 them to /?source=app_redirect, breaking SEO + favicon fetches.
+function isAppRoute(pathname: string): boolean {
+  return pathname === APP_PREFIX || pathname.startsWith(`${APP_PREFIX}/`);
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const hasToken = Boolean(request.cookies.get(TOKEN_COOKIE)?.value);
 
   // Guard 1: guest visiting /app/* → punt to landing with a hint.
-  if (!hasToken && pathname.startsWith(APP_PREFIX)) {
+  if (!hasToken && isAppRoute(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     url.search = "";

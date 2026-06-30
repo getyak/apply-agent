@@ -107,6 +107,32 @@ body {
   transition: box-shadow var(--dur-fast) var(--ease-out);
 }
 
+/* a11y: visually-hidden skip-link that slides in on Tab focus. Sits before
+   any decorative nav so keyboard + screen-reader users jump straight to the
+   main landmark. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1000;
+  padding: 10px 14px;
+  background: #3D2A14;
+  color: #FAF8F6;
+  border-radius: 8px;
+  font-family: var(--font-body, system-ui), sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  box-shadow: 0 8px 20px -8px rgba(61, 42, 20, 0.5);
+  transform: translateY(-200%);
+  transition: transform 160ms var(--ease-out, ease-out);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline-offset: 4px;
+}
+
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(16px); filter: blur(4px); }
   to { opacity: 1; transform: none; filter: blur(0); }
