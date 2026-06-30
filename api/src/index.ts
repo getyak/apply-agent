@@ -24,6 +24,7 @@ import fileRoutes from "./routes/files";
 import healthRoutes from "./routes/health";
 import userRoutes from "./routes/users";
 import askRoutes from "./routes/ask";
+import slashRoutes from "./routes/slash";
 import todayRoutes from "./routes/today";
 
 const app = new Hono<AppEnv>();
@@ -62,6 +63,9 @@ app.route("/api/users", userRoutes);
 // see routes/ask.ts for the protocol-bridge between FastAPI SSE and
 // the dock's NDJSON stream.
 app.route("/api/ask", askRoutes);
+// Slash-command catalog (read-only): backs the dock's "/" palette which
+// lists skills / prompts / memory / agent teams. See routes/slash.ts.
+app.route("/api/slash", slashRoutes);
 // Health/readiness routes mounted at /api so liveness/readiness probes hit the
 // same prefix as the rest of the surface. See routes/health.ts for the split
 // between always-200 liveness and dependency-checking readiness.
