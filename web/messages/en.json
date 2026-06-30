@@ -542,6 +542,37 @@
       "security": "Security",
       "docs": "Docs"
     },
+    "faq": {
+      "eyebrow": "Common questions",
+      "title": "What people ask before they try Vantage",
+      "items": [
+        {
+          "q": "Will Vantage get my LinkedIn or job-board account banned?",
+          "a": "No. Every submission happens inside your own browser, signed in as you, from your IP — the same way you'd apply by hand. We never store platform passwords and never operate your accounts from a server."
+        },
+        {
+          "q": "Does Vantage fabricate experience to make my résumé look better?",
+          "a": "No. Our fabrication guard rejects any draft that introduces a company, role, year, or quantified claim that isn't in your source résumé. AI rephrases — it doesn't invent."
+        },
+        {
+          "q": "Which platforms work with autofill?",
+          "a": "Greenhouse, Lever, Ashby, Workday, and Workable are first-class today. For unfamiliar ATSes the agents fall back to a smart field-mapper, with a manual checklist when even that doesn't fit."
+        },
+        {
+          "q": "Where does my data live?",
+          "a": "Source résumés and applications stay encrypted in your account; sensitive details like passwords never leave your device. You can export or delete everything at any time."
+        },
+        {
+          "q": "Do I have to approve every submission?",
+          "a": "Yes — by design. The agents prepare the package and queue it; you review and click submit. High-risk actions (sending email, deleting data, submitting forms) always go through a human-in-the-loop approval."
+        },
+        {
+          "q": "How is this different from autofill extensions like Simplify?",
+          "a": "Autofill is the on-ramp; the agents are the road. Vantage tailors résumés per JD, drafts open-ended answers, preps interviews from real recruiter intel, and remembers everything for next time — autofill alone doesn't do any of that."
+        }
+      ]
+    },
+    "skipToContent": "Skip to content",
     "finalCta": {
       "headlinePre": "Hand the busywork to the",
       "headlineHighlight": "agents",

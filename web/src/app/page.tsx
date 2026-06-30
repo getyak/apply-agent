@@ -22,6 +22,7 @@ import LandingMotion from "@/components/landing-motion";
 import PointerFX from "@/components/pointer-fx";
 import { LandingAccountChip } from "@/components/landing-account-chip";
 import { LanguageSwitcher } from "@/components/i18n/language-switcher";
+import { SITE_NAME, SITE_TAGLINE, SITE_URL, SOCIAL_LINKS } from "@/lib/site";
 
 // Shared with web/src/lib/api.ts (TOKEN_COOKIE) and web/src/proxy.ts.
 // The cookie is non-httpOnly and mirrored from localStorage on login, which
@@ -74,6 +75,47 @@ export default async function HomePage({
   const steps = (t.raw("steps.items") as { title: string; body: string }[]).map(
     (s, i) => ({ ...s, no: STEP_NUMBERS[i], icon: STEP_ICONS[i] }),
   );
+  const faqItems = t.raw("faq.items") as { q: string; a: string }[];
+  // Structured data — surfaces Vantage as an Organization + SoftwareApplication
+  // in Google's Knowledge Graph and turns the FAQ section into rich results.
+  // All copy is pulled from the same i18n keys the visible UI renders, so
+  // crawlers and humans see the same words (no "cloaking" risk).
+  const jsonLd = [
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: SITE_NAME,
+      url: SITE_URL,
+      logo: `${SITE_URL}/icon.svg`,
+      description: t("hero.subhead"),
+      sameAs: SOCIAL_LINKS,
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: SITE_NAME,
+      url: SITE_URL,
+      inLanguage: ["en", "zh-CN"],
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: SITE_NAME,
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web, Chrome Extension",
+      description: SITE_TAGLINE,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: faqItems.map((item) => ({
+        "@type": "Question",
+        name: item.q,
+        acceptedAnswer: { "@type": "Answer", text: item.a },
+      })),
+    },
+  ];
   // The middleware bounces unauthenticated visits to /app/* back here with
   // ?source=app_redirect so we can explain the redirect instead of leaving
   // the user wondering why they landed on marketing.
@@ -90,6 +132,23 @@ export default async function HomePage({
   const showRedirectNotice = !isSignedIn && params.source === "app_redirect";
   return (
     <div className="min-h-screen">
+      {/* a11y: keyboard users hit Tab on page load and get a real skip-link
+          before any decorative motion / nav links. The .skip-link class lives
+          in globals.css and is visually hidden until :focus. */}
+      <a href="#main" className="skip-link">
+        {t("skipToContent")}
+      </a>
+      {/* Structured data — one script per @type keeps Google's Rich Results
+          test from choking on monolithic arrays, and lets us future-add types
+          (e.g. BreadcrumbList) without rewriting the existing blocks. */}
+      {jsonLd.map((node, i) => (
+        <script
+          key={`ld-${i}`}
+          type="application/ld+json"
+          // JSON.stringify with no replacer; safe — no untrusted strings here.
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(node) }}
+        />
+      ))}
       <LandingMotion />
       <PointerFX />
       {showRedirectNotice && (
@@ -124,8 +183,9 @@ export default async function HomePage({
             <a href="#chat" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 2 } as CSSProperties}>{t("nav.theAgents")}</a>
             <a href="#features" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 3 } as CSSProperties}>{t("nav.features")}</a>
             <a href="#pricing" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 4 } as CSSProperties}>{t("nav.pricing")}</a>
+            <a href="#faq" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 5 } as CSSProperties}>{t("faq.eyebrow")}</a>
           </nav>
-          <div className="nav-assemble ml-auto flex items-center gap-4" style={{ "--ni": 5 } as CSSProperties}>
+          <div className="nav-assemble ml-auto flex items-center gap-4" style={{ "--ni": 6 } as CSSProperties}>
             <LanguageSwitcher variant="inline" />
             {isSignedIn ? (
               // Avatar chip (name + initials) so the signed-in state is
@@ -141,7 +201,8 @@ export default async function HomePage({
         </div>
       </header>
 
-      {/* HERO */}
+      {/* HERO — `main` landmark + #main anchor for the skip-link above. */}
+      <main id="main" role="main">
       <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
         {/* Film grain (v10) — a sub-perceptual tactile veil so the warm paper
             field under the hero reads as material, not flat fill. Behind all
@@ -466,6 +527,44 @@ export default async function HomePage({
       {/* PRICING */}
       <PricingSection />
 
+      {/* FAQ — visible content mirrors the FAQPage JSON-LD above 1:1 so
+          search-engine rich results match what the user reads. <details> is
+          the lowest-friction expand/collapse that needs no JS and stays
+          fully keyboard-accessible. */}
+      <section id="faq" className="bg-white border-y border-border">
+        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
+          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
+            <span className="eyebrow-dot" aria-hidden />{t("faq.eyebrow")}<span className="eyebrow-rule" aria-hidden />
+          </div>
+          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-10 max-w-[640px]">
+            {t("faq.title")}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {faqItems.map((item, i) => (
+              <details
+                key={item.q}
+                data-reveal
+                style={{ "--reveal-delay": `${(i % 2) * 80}ms` } as CSSProperties}
+                className="group bg-paper border border-border rounded-[14px] p-5 open:border-border-dark transition-colors"
+              >
+                <summary className="cursor-pointer list-none flex items-start justify-between gap-3 font-body font-semibold text-[15.5px] text-ink select-none">
+                  <span>{item.q}</span>
+                  <span
+                    aria-hidden
+                    className="mt-1 inline-block w-4 h-4 shrink-0 text-brown transition-transform duration-200 group-open:rotate-45"
+                  >
+                    +
+                  </span>
+                </summary>
+                <p className="mt-3 font-body text-[14.5px] leading-[1.6] text-ink-light">
+                  {item.a}
+                </p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* CTA */}
       <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
         <div data-reveal className="reveal-scale group grad-border edge-light relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
@@ -492,6 +591,8 @@ export default async function HomePage({
         </div>
       </section>
 
+      </main>
+
       {/* FOOTER */}
       <footer className="hearth-host edge-light relative overflow-hidden border-t border-border bg-white">
         {/* v39 — Banked hearth. The page opens carrying a lamp; here it sets the
@@ -516,6 +617,21 @@ export default async function HomePage({
             <a href="/legal/privacy" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">{t("footer.privacy")}</a>
             <a href="/legal/security" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">{t("footer.security")}</a>
             <a href="/legal/docs" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">{t("footer.docs")}</a>
+            {/* External brand profiles — rel="me" lets indieweb identity
+                verifiers (and some social platforms) confirm we own the
+                opposite end, and the visible link gives crawlers a path to
+                Organization.sameAs without relying only on JSON-LD. */}
+            {SOCIAL_LINKS.map((href) => (
+              <a
+                key={href}
+                href={href}
+                rel="me noopener"
+                target="_blank"
+                className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors"
+              >
+                {new URL(href).hostname.replace(/^www\./, "")}
+              </a>
+            ))}
             <span className="font-mono text-[11px] tracking-[0.4px] text-ink-muted">
               © 2026
             </span>
