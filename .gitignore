@@ -118,3 +118,6 @@ TODO.md
 !.env.example
 !.env.example.*
 api/scratch/
+
+# Hourly /loop session state — round-<ts>.md transcripts live here
+.loop-state/
