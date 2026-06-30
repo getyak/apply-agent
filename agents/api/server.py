@@ -56,6 +56,7 @@ if not os.environ.get("OPENROUTER_PROXY"):
 
 import structlog  # noqa: E402
 from fastapi import FastAPI, Header, HTTPException, Request  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
@@ -402,6 +403,54 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONR
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": _error_envelope(exc, trace_id, request_id)},
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _request_validation_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Map FastAPI's default 422 body shape into the unified v2 envelope.
+
+    Without this handler, Pydantic body/query/header validation failures
+    surface as bare ``{"detail": [...]}`` — bypassing the envelope shape
+    that error-handling.md §2.1 mandates (code/traceId/traceCode/action).
+    Closes the G6 gap for the agents layer (the api gateway side is
+    handled by Hono onError).
+    """
+    trace_id = _trace_for(request)
+    request_id = _request_id_for(request)
+    # Lift the per-field errors into the unified ``action: fix-input`` shape
+    # so the UI can render inline field hints without parsing FastAPI's
+    # internal loc/type/msg vocabulary.
+    fields: list[dict[str, str]] = []
+    for err in exc.errors():
+        loc = err.get("loc") or ()
+        # Strip the leading "body"/"query"/"header" hop — keep only the
+        # caller-visible field path so UI inline hints render cleanly.
+        if loc and loc[0] in {"body", "query", "header", "path"}:
+            loc = loc[1:]
+        name = ".".join(str(p) for p in loc) if loc else "(payload)"
+        msg = str(err.get("msg") or "Invalid input")
+        fields.append({"name": name, "msg": msg})
+    envelope = _error_envelope(
+        HTTPException(status_code=422, detail="Validation failed."),
+        trace_id,
+        request_id,
+    )
+    envelope["code"] = "VALIDATION_FAILED"
+    envelope["messageKey"] = "errors.validation.failed"
+    envelope["action"] = {"kind": "fix-input", "fields": fields}
+    envelope["details"] = {"fields": fields}
+    log.warning(
+        "validation_error",
+        trace_id=trace_id,
+        field_count=len(fields),
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"error": envelope},
         headers={"X-Trace-Id": trace_id},
     )
 
