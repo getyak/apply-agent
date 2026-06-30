@@ -49,9 +49,11 @@ describe("toErrorResponse", () => {
     expect(status).toBe(400);
     expect(body.error.code).toBe("VALIDATION_FAILED");
     expect(body.error.details).toEqual([{ field: "x" }]);
-    // legacy throws don't set messageKey — that's fine, web layer falls
-    // back to message.
-    expect(body.error.messageKey).toBeUndefined();
+    // Round-20: legacy throws now inherit code-keyed defaults from
+    // DEFAULT_ENVELOPE_BY_CODE so every envelope satisfies error-handling.md
+    // §4 (P4) even without migrating to the Errors.* factories.
+    expect(body.error.messageKey).toBe("errors.validation.failed");
+    expect(body.error.action).toEqual({ kind: "none" });
   });
 
   test("maps NotFoundError to 404 without details key when none given", () => {
@@ -285,5 +287,60 @@ describe("AppError shape", () => {
     expect(e).toBeInstanceOf(AppError);
     expect(e.code).toBe("AUTH_INVALID_CREDENTIALS");
     expect(e.status).toBe(401);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Round-20 regression: direct AppError subclass constructions (e.g.
+// `throw new UpstreamError("Resume optimization failed", err.message)`
+// in routes/resumes.ts) used to ship envelopes with no messageKey / no
+// action. error-handling.md §4 (P4) requires every emitted envelope to
+// carry both so the web error-router can render a real CTA. The
+// DEFAULT_ENVELOPE_BY_CODE fallback closes that gap.
+// ─────────────────────────────────────────────────────────────────────────
+
+// UpstreamError is already in the module-level import above; pull in just
+// the additional subclasses needed for these regression tests.
+import { LlmUnavailableError, UpstreamTimeoutError } from "./errors";
+
+describe("round-20 envelope defaults by code", () => {
+  test("UpstreamError direct ctor gets default action + messageKey", () => {
+    const { body, status } = toErrorResponse(
+      new UpstreamError("agent down", "raw cause"),
+    );
+    expect(status).toBe(502);
+    expect(body.error.code).toBe("UPSTREAM_UNAVAILABLE");
+    expect(body.error.messageKey).toBe("errors.upstream.unavailable");
+    expect(body.error.action).toEqual({ kind: "retry", after: 5 });
+    expect(body.error.details).toBe("raw cause");
+  });
+
+  test("UpstreamTimeoutError direct ctor gets default retry action", () => {
+    const { body, status } = toErrorResponse(
+      new UpstreamTimeoutError("slow"),
+    );
+    expect(status).toBe(504);
+    expect(body.error.messageKey).toBe("errors.upstream.timeout");
+    expect(body.error.action).toEqual({ kind: "retry", after: 5 });
+  });
+
+  test("LlmUnavailableError direct ctor gets retry-after-10 default", () => {
+    const { body, status } = toErrorResponse(
+      new LlmUnavailableError("dead"),
+    );
+    expect(status).toBe(503);
+    expect(body.error.messageKey).toBe("errors.llm.unavailable");
+    expect(body.error.action).toEqual({ kind: "retry", after: 10 });
+  });
+
+  test("explicit messageKey/action override the defaults", () => {
+    const { body } = toErrorResponse(
+      new UpstreamError("agent down", {
+        messageKey: "errors.custom.special",
+        action: { kind: "none" },
+      }),
+    );
+    expect(body.error.messageKey).toBe("errors.custom.special");
+    expect(body.error.action).toEqual({ kind: "none" });
   });
 });

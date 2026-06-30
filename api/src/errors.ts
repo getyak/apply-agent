@@ -589,6 +589,175 @@ export interface ToErrorResponseOptions {
   requestId?: string;
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Code-keyed envelope defaults
+//
+// error-handling.md §4 (P4 "able-to-recover > able-to-explain") requires
+// every emitted envelope to carry a `messageKey` and an `action` — the
+// web error-router (`web/src/lib/errors/resolve.ts`) reads `action.kind`
+// to render the right CTA. Throw sites that construct an AppError
+// subclass directly (`throw new UpstreamError("…", err.message)`) skip
+// the `Errors.*` factories and therefore never set those fields, which
+// silently degrades the user-facing toast back to "Something went
+// wrong" copy with no Retry button.
+//
+// To make the contract hold without forcing every throw site to migrate
+// to the factory, `toErrorResponse` consults this table and fills in
+// sensible defaults whenever the AppError omits them. The factory still
+// wins (it can override per-call), and throw sites that genuinely want a
+// silent action can pass `{ action: { kind: "none" } }` explicitly.
+// ──────────────────────────────────────────────────────────────────────
+const DEFAULT_ENVELOPE_BY_CODE: Partial<
+  Record<ErrorCode, { messageKey?: string; action?: ErrorAction }>
+> = {
+  // input
+  VALIDATION_FAILED: {
+    messageKey: "errors.validation.failed",
+    action: { kind: "none" },
+  },
+  INPUT_FORMAT_UNSUPPORTED: {
+    messageKey: "errors.input.formatUnsupported",
+    action: { kind: "none" },
+  },
+  // auth
+  AUTH_REQUIRED: {
+    messageKey: "errors.auth.required",
+    action: { kind: "reauth", redirect: "/auth" },
+  },
+  AUTH_INVALID_CREDENTIALS: {
+    messageKey: "errors.auth.invalidCredentials",
+    action: { kind: "none" },
+  },
+  AUTH_SESSION_EXPIRED: {
+    messageKey: "errors.auth.sessionExpired",
+    action: { kind: "reauth", redirect: "/auth" },
+  },
+  AUTH_FORBIDDEN: {
+    messageKey: "errors.auth.forbidden",
+    action: { kind: "none" },
+  },
+  AUTH_EMAIL_NOT_VERIFIED: {
+    messageKey: "errors.auth.emailNotVerified",
+    action: { kind: "contact", channel: "email" },
+  },
+  // resource
+  RESOURCE_NOT_FOUND: {
+    messageKey: "errors.resource.notFound",
+    action: { kind: "none" },
+  },
+  RESOURCE_CONFLICT: {
+    messageKey: "errors.resource.conflict",
+    action: { kind: "retry", after: 1 },
+  },
+  RESOURCE_GONE: {
+    messageKey: "errors.resource.gone",
+    action: { kind: "none" },
+  },
+  // throttling
+  RATE_LIMITED: {
+    messageKey: "errors.rate.limited",
+    action: { kind: "retry", after: 10 },
+  },
+  QUOTA_EXCEEDED: {
+    messageKey: "errors.throttling.quotaExceeded",
+    action: { kind: "contact", channel: "in-app" },
+  },
+  // upstream / infra
+  UPSTREAM_UNAVAILABLE: {
+    messageKey: "errors.upstream.unavailable",
+    action: { kind: "retry", after: 5 },
+  },
+  UPSTREAM_TIMEOUT: {
+    messageKey: "errors.upstream.timeout",
+    action: { kind: "retry", after: 5 },
+  },
+  DB_UNAVAILABLE: {
+    messageKey: "errors.system.dbUnavailable",
+    action: { kind: "retry", after: 5 },
+  },
+  CACHE_UNAVAILABLE: {
+    messageKey: "errors.system.cacheUnavailable",
+    action: { kind: "retry", after: 5 },
+  },
+  LLM_UNAVAILABLE: {
+    messageKey: "errors.llm.unavailable",
+    action: { kind: "retry", after: 10 },
+  },
+  LLM_BUDGET_EXHAUSTED: {
+    messageKey: "errors.llm.budgetExhausted",
+    action: { kind: "contact", channel: "in-app" },
+  },
+  LLM_CONTENT_REFUSED: {
+    messageKey: "errors.llm.contentRefused",
+    action: { kind: "none" },
+  },
+  LLM_FABRICATION_BLOCKED: {
+    messageKey: "errors.llm.fabricationBlocked",
+    action: { kind: "none" },
+  },
+  // agent
+  AGENT_TIMEOUT: {
+    messageKey: "errors.agent.timeout",
+    action: { kind: "retry", after: 5 },
+  },
+  AGENT_INTERRUPT_PENDING: {
+    messageKey: "errors.agent.interruptPending",
+    action: { kind: "none" },
+  },
+  AGENT_TASK_FAILED: {
+    messageKey: "errors.agent.taskFailed",
+    action: { kind: "retry", after: 5 },
+  },
+  // client / network — these are usually emitted client-side but defaults
+  // help when a route surfaces them too.
+  NETWORK_BLOCKED: {
+    messageKey: "errors.network.blocked",
+    action: { kind: "none" },
+  },
+  CLIENT_VERSION_STALE: {
+    messageKey: "errors.client.versionStale",
+    action: { kind: "none" },
+  },
+  // generic
+  INTERNAL: {
+    messageKey: "errors.system.internal",
+    action: { kind: "retry", after: 5 },
+  },
+  // legacy aliases — fall through to the equivalent modern code's default
+  // (kept inline so the table stays the single source of truth).
+  VALIDATION: {
+    messageKey: "errors.validation.failed",
+    action: { kind: "none" },
+  },
+  NOT_FOUND: {
+    messageKey: "errors.resource.notFound",
+    action: { kind: "none" },
+  },
+  CONFLICT: {
+    messageKey: "errors.resource.conflict",
+    action: { kind: "retry", after: 1 },
+  },
+  UNAUTHORIZED: {
+    messageKey: "errors.auth.required",
+    action: { kind: "reauth", redirect: "/auth" },
+  },
+  FORBIDDEN: {
+    messageKey: "errors.auth.forbidden",
+    action: { kind: "none" },
+  },
+  UPSTREAM: {
+    messageKey: "errors.upstream.unavailable",
+    action: { kind: "retry", after: 5 },
+  },
+};
+
+function defaultsForCode(code: ErrorCode): {
+  messageKey?: string;
+  action?: ErrorAction;
+} {
+  return DEFAULT_ENVELOPE_BY_CODE[code] ?? {};
+}
+
 /**
  * Map any thrown value to a typed error envelope + HTTP status.
  *
@@ -614,6 +783,13 @@ export function toErrorResponse(
   const traceId = opts.traceId ?? crypto.randomUUID();
   const traceCode = traceCodeFromTraceId(traceId);
 
+  // Fill missing messageKey/action with code-keyed defaults so every emitted
+  // envelope satisfies error-handling.md §4 (P4). Throw sites that genuinely
+  // want neither can override via `{ action: { kind: "none" } }`.
+  const defaults = defaultsForCode(appError.code);
+  const messageKey = appError.messageKey ?? defaults.messageKey;
+  const action = appError.action ?? defaults.action;
+
   return {
     status: appError.status,
     appError,
@@ -621,7 +797,7 @@ export function toErrorResponse(
       error: {
         code: appError.code,
         message: appError.message,
-        ...(appError.messageKey ? { messageKey: appError.messageKey } : {}),
+        ...(messageKey ? { messageKey } : {}),
         traceId,
         traceCode,
         ...(opts.requestId ? { requestId: opts.requestId } : {}),
@@ -629,7 +805,7 @@ export function toErrorResponse(
         ...(appError.details !== undefined
           ? { details: appError.details }
           : {}),
-        ...(appError.action ? { action: appError.action } : {}),
+        ...(action ? { action } : {}),
         ...(appError.causeHint ? { cause: appError.causeHint } : {}),
       },
     },
