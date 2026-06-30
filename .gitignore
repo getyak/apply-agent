@@ -118,3 +118,6 @@ TODO.md
 !.env.example
 !.env.example.*
 api/scratch/
+
+# hourly E2E loop scratch state — round files committed selectively
+.loop-state/
