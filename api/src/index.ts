@@ -4,6 +4,7 @@ import { config } from "./config";
 import { installDbShutdownHandlers, pingDbAtBoot } from "./db";
 import { installRedisShutdownHandlers, pingRedisAtBoot } from "./redis";
 import { errorHandler } from "./errors";
+import { locale } from "./middleware/locale";
 import { requestId, requestLogger } from "./middleware/observability";
 import { traceId } from "./middleware/trace-id";
 import {
@@ -34,6 +35,11 @@ const app = new Hono<AppEnv>();
 app.use("*", traceId);
 app.use("*", requestId);
 app.use("*", requestLogger);
+// Resolve UI locale once + echo X-Relay-Locale back on every response. Keep
+// this AFTER traceId/requestId/requestLogger so the log line sees the trace
+// + request ids, and BEFORE routes so handlers can `c.get("locale")`
+// without re-resolving headers.
+app.use("*", locale);
 app.use("*", securityHeaders);
 app.use("*", bodySizeLimit);
 app.use(

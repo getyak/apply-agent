@@ -13,5 +13,13 @@ export type AppEnv = {
     validatedBody: unknown;
     validatedQuery: unknown;
     validatedParam: unknown;
+    /**
+     * Resolved UI locale ("en" | "zh"), set by `middleware/locale.ts` from
+     * X-Relay-Locale → Accept-Language → DEFAULT. Routes that need to
+     * forward to agents read this from context instead of re-resolving
+     * the request headers; the same value is echoed on the response as
+     * X-Relay-Locale so the web layer can confirm.
+     */
+    locale: "en" | "zh";
   };
 };
