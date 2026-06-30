@@ -93,7 +93,14 @@ jobs:
         run: |
           set -e
           for f in $(echo "${{ steps.detect.outputs.files }}" | tac); do
-            DOWN="${f%.sql}.down.sql"
+            # Project convention (011+):   <base>.up.sql + <base>.down.sql
+            # Legacy convention (001-010): <base>.sql    + <base>.down.sql
+            # Map either form to the matching `.down.sql` sibling.
+            if [[ "$f" == *.up.sql ]]; then
+              DOWN="${f%.up.sql}.down.sql"
+            else
+              DOWN="${f%.sql}.down.sql"
+            fi
             if [[ ! -f "$DOWN" ]]; then
               echo "::error::Missing rollback file $DOWN for $f"
               exit 1

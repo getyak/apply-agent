@@ -180,6 +180,8 @@ jobs:
       - name: Apply migrations
         run: |
           for f in infra/postgres/migrations/*.sql; do
+            # Skip rollback scripts — only forward migrations run in CI bootstrap.
+            [[ "$f" == *.down.sql ]] && continue
             PGPASSWORD=relay psql -h localhost -p 5433 -U relay -d relay_test -f "$f"
           done
 

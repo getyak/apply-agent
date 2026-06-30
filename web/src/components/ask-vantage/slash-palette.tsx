@@ -69,7 +69,31 @@ export function SlashPalette({
   const t = useTranslations("dock.slash");
   const [catalog, setCatalog] = useState<SlashCatalog>(EMPTY_CATALOG);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
+  // activeIndex must reset to 0 whenever (open, query) changes. Instead of
+  // doing it via `useEffect(() => setActiveIndex(0), [query, open])` —
+  // which React 19's `react-hooks/set-state-in-effect` rule rightly flags —
+  // we render-derive it: hold (resetKey, index) in one state, and when the
+  // incoming key differs we re-init synchronously during render (the
+  // official "adjusting state when a prop changes" pattern from
+  // https://react.dev/learn/you-might-not-need-an-effect).
+  const resetKey = `${open ? "1" : "0"}:${query}`;
+  const [navState, setNavState] = useState<{ key: string; index: number }>({
+    key: resetKey,
+    index: 0,
+  });
+  if (navState.key !== resetKey) {
+    setNavState({ key: resetKey, index: 0 });
+  }
+  const activeIndex = navState.key === resetKey ? navState.index : 0;
+  const setActiveIndex = useCallback(
+    (next: number | ((prev: number) => number)) => {
+      setNavState((prev) => {
+        const idx = typeof next === "function" ? next(prev.index) : next;
+        return { key: prev.key, index: idx };
+      });
+    },
+    [],
+  );
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // The query may carry trailing args (`/search react server actions`).
@@ -175,9 +199,8 @@ export function SlashPalette({
     [rows],
   );
 
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query, open]);
+  // (activeIndex reset moved to render-derived navState above — see comment
+  // near the `navState` declaration. No effect needed here.)
 
   const insertForEntry = useCallback((entry: SlashEntry): string => {
     if (entry.category === "memory") return `[[${entry.slug.replace(/^\//, "")}]] `;
@@ -209,7 +232,17 @@ export function SlashPalette({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, pickables, activeIndex, insertForEntry, onPick, onCommand, onClose, queryArgs]);
+  }, [
+    open,
+    pickables,
+    activeIndex,
+    insertForEntry,
+    onPick,
+    onCommand,
+    onClose,
+    queryArgs,
+    setActiveIndex,
+  ]);
 
   useEffect(() => {
     const root = listRef.current;
