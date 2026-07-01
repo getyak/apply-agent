@@ -11,7 +11,8 @@
     "typecheck": "bunx tsc --noEmit",
     "smoke:hydration": "node ../scripts/web-hydration-smoke.mjs",
     "smoke:route": "node ../scripts/web-route-smoke.mjs",
-    "smoke:seo": "node ../scripts/seo-validate.mjs"
+    "smoke:seo": "node ../scripts/seo-validate.mjs",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@ag-ui/client": "^0.0.57",
@@ -28,6 +29,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

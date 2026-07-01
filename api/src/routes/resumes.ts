@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { query } from "../db";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
@@ -904,11 +904,51 @@ app.post("/:id/bullet-edit", async (c) => {
   return c.json(await resp.json());
 });
 
-// POST /suggestions/:sid/decision — accept or reject one suggestion. Proxies to
-// the agent layer, which (on accept) materializes it into a new optimized
-// version under the fabrication guard. Kept thin: the agent owns the write.
-app.post("/suggestions/:sid/decision", async (c) => {
+// Shared proxy for a single-suggestion accept/reject. The agent layer owns the
+// atomic state-machine claim (proposed → decided, one-winner) and — on accept —
+// materializes the change into a new optimized version under the fabrication
+// guard. The gateway stays thin: validate, forward trace headers, translate the
+// agent's status codes into the unified error envelope.
+async function proxySuggestionDecision(
+  c: Context<AppEnv>,
+  sid: string,
+  decision: "accept" | "reject",
+  decidedVia: string,
+): Promise<Response> {
   const userId = c.get("userId");
+  const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/suggestions/${sid}/decision`;
+  const traceId = c.get("traceId");
+  const requestId = c.get("requestId");
+  const resp = await fetch(target, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-relay-user-id": userId,
+      // W4.1: forward trace headers so the agent's structlog binding shares the
+      // gateway's id — the same trace flows web → api → agents.
+      ...(traceId ? { "X-Trace-Id": traceId } : {}),
+      ...(requestId ? { "X-Request-Id": requestId } : {}),
+    },
+    body: JSON.stringify({ decision, decided_via: decidedVia }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    if (resp.status === 404) throw new NotFoundError("Suggestion not found");
+    // 409 = the row was already decided by a concurrent request (one-winner).
+    if (resp.status === 409) {
+      throw new ConflictError("Suggestion already decided");
+    }
+    throw new UpstreamError(
+      `agent suggestion decision returned ${resp.status}`,
+      text.slice(0, 500),
+    );
+  }
+  return c.json(await resp.json());
+}
+
+// POST /suggestions/:sid/decision — legacy body-driven entry ({decision}).
+// Kept for the dock's existing decideSuggestion() caller.
+app.post("/suggestions/:sid/decision", async (c) => {
   const sid = c.req.param("sid");
   const body = (await c.req.json().catch(() => ({}))) as {
     decision?: string;
@@ -917,32 +957,22 @@ app.post("/suggestions/:sid/decision", async (c) => {
   if (body.decision !== "accept" && body.decision !== "reject") {
     throw new ConflictError("decision must be 'accept' or 'reject'");
   }
-  const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/resume/suggestions/${sid}/decision`;
-  const decTraceId = c.get("traceId");
-  const decRequestId = c.get("requestId");
-  const resp = await fetch(target, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-relay-user-id": userId,
-      // W4.1: forward trace headers.
-      ...(decTraceId ? { "X-Trace-Id": decTraceId } : {}),
-      ...(decRequestId ? { "X-Request-Id": decRequestId } : {}),
-    },
-    body: JSON.stringify({
-      decision: body.decision,
-      decided_via: body.decidedVia ?? "dock_inline",
-    }),
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    if (resp.status === 404) throw new NotFoundError("Suggestion not found");
-    throw new UpstreamError(
-      `agent suggestion decision returned ${resp.status}`,
-      text.slice(0, 500),
-    );
-  }
-  return c.json(await resp.json());
+  return proxySuggestionDecision(c, sid, body.decision, body.decidedVia ?? "dock_inline");
+});
+
+// POST /suggestions/:sid/accept — explicit REST verb (design §6.3 accept card).
+// state → accepted, applies to the optimized track.
+app.post("/suggestions/:sid/accept", async (c) => {
+  const sid = c.req.param("sid");
+  const body = (await c.req.json().catch(() => ({}))) as { decidedVia?: string };
+  return proxySuggestionDecision(c, sid, "accept", body.decidedVia ?? "studio_panel");
+});
+
+// POST /suggestions/:sid/reject — explicit REST verb. state → rejected.
+app.post("/suggestions/:sid/reject", async (c) => {
+  const sid = c.req.param("sid");
+  const body = (await c.req.json().catch(() => ({}))) as { decidedVia?: string };
+  return proxySuggestionDecision(c, sid, "reject", body.decidedVia ?? "studio_panel");
 });
 
 export default app;

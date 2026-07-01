@@ -1,0 +1,5 @@
+{
+  "title": "高级后端工程师",
+  "company": { "name": "云帆科技" },
+  "content": "<p>云帆科技正在招聘一名<strong>高级后端工程师</strong>，负责核心交易系统的设计与开发。本岗位要求 5 年以上后端开发经验，属于资深（senior）级别。</p><h3>岗位职责</h3><ul><li>使用 <strong>Java</strong> 和 <strong>Go</strong> 构建高并发分布式服务</li><li>负责 MySQL 和 Redis 的数据一致性与性能优化</li><li>参与微服务架构设计与技术选型</li></ul><h3>任职要求</h3><ul><li>5 年以上后端开发经验</li><li>精通 Java 或 Go，熟悉分布式系统</li><li>熟悉 MySQL、Redis、Kafka</li><li>具备扎实的算法与数据结构基础</li></ul><h3>加分项</h3><ul><li>有金融或支付系统经验</li><li>了解 Kubernetes 与云原生技术</li></ul><h3>薪资与地点</h3><p>薪资范围为每年 60 万至 90 万人民币（CNY）。工作地点为<strong>北京</strong>，支持<strong>混合办公</strong>（hybrid）。</p>"
+}

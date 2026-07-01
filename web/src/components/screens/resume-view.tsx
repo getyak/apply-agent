@@ -24,6 +24,7 @@ import { useVantage } from "@/lib/store";
 import { ResumeChangeLogPanel } from "@/components/studio/resume-change-log-panel";
 import { ResumeMarkdown } from "@/components/studio/resume-markdown";
 import { EditableDocumentPane } from "@/components/studio/editable-document-pane";
+import { ResumeDualTrack } from "@/components/screens/resume-dual-track";
 
 type ResumeTrack = "original" | "optimized" | "tailored";
 
@@ -202,9 +203,9 @@ export function ResumeView() {
   //                 compareOn path, which we still wire below).
   // The old "Extracted" tab (LLM raw text) is now an advanced toggle inside
   // Compare; it was never a first-class user surface.
-  const [presentation, setPresentation] = useState<"optimized" | "original" | "compare">(
-    "optimized",
-  );
+  const [presentation, setPresentation] = useState<
+    "optimized" | "original" | "compare" | "tracks"
+  >("optimized");
   // Diff base: the master résumé content. We lazy-load it on first
   // compare-mode entry against a tailored variant; the master itself
   // has nothing to diff against, so we leave this null otherwise.
@@ -756,7 +757,32 @@ export function ResumeView() {
             ─ original  → single-pane OriginalPane (PDF iframe / DOCX preview).
             ─ compare   → side-by-side Original ↔ Derived with diff highlights,
               the historical §5.1 dual layout, preserved verbatim. */}
-        {presentation === "original" ? (
+        {presentation === "tracks" ? (
+          // Dual-track overview (migration 017): the three rails + suggestion
+          // stack as one accessible surface. Reuses the same selection and
+          // decide handlers the single-pane paths use, so switching tabs never
+          // loses the user's place or their pending decisions.
+          <ResumeDualTrack
+            originals={originalVersions}
+            optimized={optimizedVersions}
+            tailored={tailoredVersions}
+            selectedId={selectedId}
+            onSelect={(id) => setSelectedId(id)}
+            suggestions={suggestions.map((s) => ({
+              id: s.id,
+              bullet_stable_id: s.bullet_stable_id,
+              section: s.section,
+              change_type: s.change_type,
+              before_text: s.before_text,
+              after_text: s.after_text,
+              rationale: s.rationale,
+              risk_level: s.risk_level,
+              status: s.status,
+              proposed_by: s.proposed_by,
+            }))}
+            onDecide={decideSuggestion}
+          />
+        ) : presentation === "original" ? (
           <OriginalPane
             original={originalVersion}
             originalDoc={originalVersion?.id === selectedId ? doc : baseDoc}
@@ -2395,8 +2421,8 @@ function PresentationTabs({
   compareDisabledHint,
   t,
 }: {
-  value: "optimized" | "original" | "compare";
-  onChange: (v: "optimized" | "original" | "compare") => void;
+  value: "optimized" | "original" | "compare" | "tracks";
+  onChange: (v: "optimized" | "original" | "compare" | "tracks") => void;
   compareDisabled?: boolean;
   compareDisabledHint?: string;
   t: Translate;
@@ -2409,10 +2435,16 @@ function PresentationTabs({
   // against (e.g. an isolated original) — keeping the affordance visible but
   // un-clickable explains *why* it's not available without hiding the
   // capability altogether.
-  const modes: Array<{ key: "optimized" | "original" | "compare"; labelKey: string }> = [
+  const modes: Array<{
+    key: "optimized" | "original" | "compare" | "tracks";
+    labelKey: string;
+  }> = [
     { key: "optimized", labelKey: "presentation.optimized" },
     { key: "original", labelKey: "presentation.original" },
     { key: "compare", labelKey: "presentation.compare" },
+    // Dual-track overview (migration 017): original / optimized / tailored
+    // rails side-by-side + the accept/reject suggestion stack.
+    { key: "tracks", labelKey: "presentation.tracks" },
   ];
   return (
     <div

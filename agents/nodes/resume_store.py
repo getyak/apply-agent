@@ -242,17 +242,32 @@ async def list_suggestions(
 
 
 async def set_suggestion_status(
-    suggestion_id: UUID, user_id: UUID, status: str, decided_via: str | None = None
+    suggestion_id: UUID,
+    user_id: UUID,
+    status: str,
+    decided_via: str | None = None,
+    expected_from: str | None = None,
 ) -> bool:
-    """Mark a suggestion accepted / rejected / superseded. Owner-scoped."""
+    """Mark a suggestion accepted / rejected / superseded. Owner-scoped.
+
+    When ``expected_from`` is given the UPDATE is conditional on the row still
+    being in that status — this is the atomic state-machine guard the decision
+    endpoint relies on for one-winner concurrency (two simultaneous accepts
+    both read status='proposed', but only one UPDATE ... WHERE status='proposed'
+    flips the row; the loser sees rowcount 0). Returns True iff a row moved.
+    """
     sql = """
         UPDATE resume_suggestions
            SET status = %s, decided_at = now(), decided_via = %s
          WHERE id = %s AND user_id = %s
     """
+    params: list[Any] = [status, decided_via, str(suggestion_id), str(user_id)]
+    if expected_from is not None:
+        sql += " AND status = %s"
+        params.append(expected_from)
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         async with conn.cursor() as cur:
-            await cur.execute(sql, (status, decided_via, str(suggestion_id), str(user_id)))
+            await cur.execute(sql, tuple(params))
             updated = cur.rowcount
         await conn.commit()
     return updated > 0

@@ -1,0 +1,19 @@
+{
+  "text": "Frontend Engineer",
+  "categories": { "team": "Vantage Labs", "location": "New York, NY" },
+  "description": "<p>We are hiring a <strong>mid-level Frontend Engineer</strong> (3-5 years of experience) to build our customer-facing web application. This role is <strong>onsite in our New York, NY office</strong> — it is not a remote position.</p>",
+  "lists": [
+    {
+      "text": "Requirements",
+      "content": "<ul><li>3-5 years building production web apps with React and TypeScript</li><li>Strong CSS and accessibility (WCAG) fundamentals</li><li>Experience with Next.js and modern build tooling</li><li>Must be able to work onsite in New York, NY</li></ul>"
+    },
+    {
+      "text": "Nice to have",
+      "content": "<ul><li>Design systems experience</li><li>GraphQL</li></ul>"
+    },
+    {
+      "text": "Compensation",
+      "content": "<p>Base salary range: $140,000 - $180,000 USD.</p>"
+    }
+  ]
+}

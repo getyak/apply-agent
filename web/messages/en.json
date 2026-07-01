@@ -720,11 +720,26 @@
       "loadFailed": "Couldn't load slash commands.",
       "actionBadge": "ACTION",
       "commands": {
-        "new": { "title": "New session", "description": "Start a fresh Ask Vantage thread" },
-        "clear": { "title": "Clear timeline", "description": "Hide steps in this view (server history kept)" },
-        "search": { "title": "Deep search…", "description": "/search <query> — agent runs a research pass" },
-        "help": { "title": "How does this dock work?", "description": "Open the Ask Vantage usage guide" },
-        "focus": { "title": "Focus mode", "description": "Expand the dock to fullscreen" }
+        "new": {
+          "title": "New session",
+          "description": "Start a fresh Ask Vantage thread"
+        },
+        "clear": {
+          "title": "Clear timeline",
+          "description": "Hide steps in this view (server history kept)"
+        },
+        "search": {
+          "title": "Deep search…",
+          "description": "/search <query> — agent runs a research pass"
+        },
+        "help": {
+          "title": "How does this dock work?",
+          "description": "Open the Ask Vantage usage guide"
+        },
+        "focus": {
+          "title": "Focus mode",
+          "description": "Expand the dock to fullscreen"
+        }
       }
     },
     "fullscreen": {
@@ -961,7 +976,8 @@
       "optimized": "Optimized",
       "original": "Original",
       "compare": "Compare",
-      "compareDisabledHint": "Pick an optimized or tailored version on the left to compare it with the original."
+      "compareDisabledHint": "Pick an optimized or tailored version on the left to compare it with the original.",
+      "tracks": "Tracks"
     },
     "editor": {
       "dirtyCount": "{n, plural, one {# unsaved edit} other {# unsaved edits}}",
@@ -1128,6 +1144,21 @@
         "title": "Print",
         "cta": "Open print dialog"
       }
+    },
+    "dualTrack": {
+      "regionAria": "Résumé dual-track view",
+      "columnsAria": "Résumé tracks: original, optimized, tailored",
+      "originalColAria": "Original track — your immutable uploads",
+      "optimizedColAria": "Optimized track — AI-improved siblings",
+      "tailoredColAria": "Tailored track — per-role branches",
+      "suggestionsAria": "AI suggestion stack — accept or reject each proposal",
+      "acceptAria": "Accept suggestion: {change}",
+      "rejectAria": "Reject suggestion: {change}",
+      "selectAria": "Select {track} version {v}",
+      "immutableBadge": "Immutable",
+      "emptyColumn": "None yet",
+      "beforeLabel": "Before",
+      "afterLabel": "After"
     }
   },
   "today": {
