@@ -41,6 +41,19 @@ export interface RecentAnchor {
   createdAt: string; // ISO from PG
 }
 
+// Multi-session entry — surfaced in the dock header's SessionSwitcher.
+// Mirrors api.ts AskSession (see web/src/lib/api.ts) so consumers can pass
+// fetched rows straight into setSessions without an adapter step.
+export interface DockSession {
+  id: string;
+  threadId: string;
+  label: string;
+  preview: string | null;
+  messageCount: number;
+  lastActiveAt: string;
+  createdAt: string;
+}
+
 interface DockStateShape {
   state: DockState;
   mode: DockMode;
@@ -52,6 +65,12 @@ interface DockStateShape {
   streaming: boolean;
   abortController: AbortController | null;
   recentAnchors: RecentAnchor[];
+  // Multi-session (PR2). `sessions` is the dock's local mirror of
+  // /api/ask/sessions; `activeSessionId` indexes into it. Empty array means
+  // we haven't fetched yet (or the user has no rows yet — first send
+  // creates one server-side via persist_turn).
+  sessions: DockSession[];
+  activeSessionId: string | null;
 
   open: () => void;
   close: () => void;
@@ -69,6 +88,10 @@ interface DockStateShape {
   setStreaming: (v: boolean) => void;
   setRecentAnchors: (items: RecentAnchor[]) => void;
   prependRecentAnchor: (a: RecentAnchor) => void;
+  setSessions: (rows: DockSession[]) => void;
+  upsertSession: (row: DockSession) => void;
+  removeSession: (id: string) => void;
+  setActiveSession: (id: string | null) => void;
   reset: () => void;
 }
 
@@ -106,6 +129,8 @@ export const useDock = create<DockStateShape>((set, get) => ({
   streaming: false,
   abortController: null,
   recentAnchors: [],
+  sessions: [],
+  activeSessionId: null,
 
   open: () => {
     if (typeof window !== "undefined")
@@ -160,6 +185,20 @@ export const useDock = create<DockStateShape>((set, get) => ({
       // unboundedly. The server query also caps; this is belt and braces.
       recentAnchors: [a, ...s.recentAnchors].slice(0, 20),
     })),
+  setSessions: (rows) => set({ sessions: rows }),
+  upsertSession: (row) =>
+    set((s) => {
+      const filtered = s.sessions.filter((x) => x.id !== row.id);
+      // Newest activity first (the gateway's list is already sorted but
+      // local mutations need to keep that invariant).
+      return { sessions: [row, ...filtered] };
+    }),
+  removeSession: (id) =>
+    set((s) => ({
+      sessions: s.sessions.filter((x) => x.id !== id),
+      activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
+    })),
+  setActiveSession: (id) => set({ activeSessionId: id }),
   reset: () =>
     set({
       input: "",

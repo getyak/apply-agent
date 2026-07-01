@@ -46,6 +46,12 @@ dependencies = [
     # (agents/harness/screenshot_store.py). Mirrors the TS StorageClient in
     # api/src/storage.ts; same S3_* env vars (infra/.env.example).
     "minio>=7.2.0",
+    # Language detection for reply_locale (agents/harness/locale.py
+    # detect_reply_locale). Picked lingua-language-detector over langdetect
+    # because it's pure-Python, ships a calibrated short-text mode, and
+    # beats langdetect by ~30% on <60-char Chinese/English mix — exactly the
+    # range a dock prompt lives in.
+    "lingua-language-detector>=2.0.2",
 ]
 
 [project.optional-dependencies]

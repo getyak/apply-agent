@@ -45,6 +45,20 @@
     "aiStudio": "AI 工作室",
     "account": "账户",
     "resumeStudio": "简历工作室",
+    "resumeChip": {
+      "parsingLabel": "读取中",
+      "fallbackFile": "你的简历",
+      "runningTitle": "正在读取 {file} — 通常只需几秒。",
+      "failedLabel": "未能读取",
+      "failedHint": "打开工作室 · 换个文件试试",
+      "failedTitle": "解析失败 — 打开工作室换个文件再试。",
+      "trackMaster": "主版本",
+      "trackOptimized": "优化版",
+      "trackTailored": "定制版",
+      "readyTitle": "{count} 个版本 · 打开工作室",
+      "versionsCount": "已存 {count} 个版本",
+      "singleVersionHint": "打开查看或定制"
+    },
     "autoApplies": "自动投递额度",
     "resetsIn": "{days} 天后重置",
     "upgrade": "升级"
@@ -606,6 +620,14 @@
       "parseRunning": "正在后台解析你的简历——你先忙别的，准备好后我会第一时间给出薄弱点和匹配的岗位。",
       "parseFailed": "这次解析没能完成——重新上传或直接粘贴文本，我再试一次。",
       "parseIdle": "今天想从哪里入手？点一张卡片即可立即发送，也可以自己写。",
+      "readSummary": "我读完了 — 最近 {role}，核心 {skills}。选一张卡，或者直接说想做什么。",
+      "resumeOnFile": "已经存有 {count} 份简历 — 选一张卡，或直接说想做什么。",
+      "fallbackRole": "你最近的岗位",
+      "skillsUnknown": "正在整理",
+      "resumePickerLabel": "你的简历 · 点击切换上下文",
+      "resumeTrackMaster": "主版本",
+      "resumeTrackOptimized": "优化版",
+      "resumeTrackTailored": "定制版",
       "timeOfDay": {
         "morning": "早上好",
         "afternoon": "下午好",
@@ -615,6 +637,7 @@
     "groups": {
       "thisResume": "这份简历",
       "thisResumeScope": "仅作用于当前版本",
+      "yourResumeScope": "基于你最新的简历",
       "explore": "探索"
     },
     "chips": {
@@ -664,6 +687,50 @@
       "minutesAgo": "{count} 分钟前",
       "hoursAgo": "{count} 小时前",
       "daysAgo": "{count} 天前"
+    },
+    "session": {
+      "lifetime": "长期会话",
+      "switchTitle": "切换会话",
+      "newTitle": "新建会话",
+      "newButton": "+ 新会话",
+      "popoverLabel": "Ask Vantage 会话列表",
+      "popoverHint": "你的会话 · 最近活跃在前",
+      "emptyHint": "暂无保存的会话。点 + 新会话开启一个干净的线程。",
+      "noPreview": "空会话 — 打个招呼开始吧",
+      "rename": "重命名",
+      "delete": "删除",
+      "cancel": "取消",
+      "confirmDelete": "确认删除",
+      "renamePlaceholder": "为这个会话取个名字",
+      "errorCreate": "新建会话失败 — 请重试。",
+      "errorRename": "重命名失败。",
+      "errorDelete": "删除失败。"
+    },
+    "slash": {
+      "placeholder": "搜索技能、提示词、记忆…",
+      "label": "斜杠命令",
+      "hint": "/ 唤起技能 · @ 提及 agent",
+      "categoryCommands": "命令",
+      "categorySkills": "技能",
+      "categoryPrompts": "提示词",
+      "categoryMemory": "记忆",
+      "categoryAgents": "AGENT 团队",
+      "emptyResult": "未找到匹配的命令。",
+      "selectHint": "↑↓ 浏览 · ↵ 插入 · esc 关闭",
+      "loadFailed": "斜杠命令加载失败。",
+      "actionBadge": "操作",
+      "commands": {
+        "new": { "title": "新建会话", "description": "开启一个全新的 Ask Vantage 线程" },
+        "clear": { "title": "清空视图", "description": "隐藏当前视图中的步骤（服务器历史保留）" },
+        "search": { "title": "深度搜索…", "description": "/search <关键词> — agent 会执行一次研究式检索" },
+        "help": { "title": "Dock 怎么用？", "description": "打开 Ask Vantage 使用指南" },
+        "focus": { "title": "专注模式", "description": "把 dock 切到全屏" }
+      }
+    },
+    "fullscreen": {
+      "exit": "退出全屏",
+      "exitHint": "Esc",
+      "enter": "进入全屏"
     },
     "agentCard": {
       "collapse": "收起思考过程",
@@ -1064,6 +1131,25 @@
     }
   },
   "today": {
+    "resumeLanding": {
+      "eyebrow": "简历已就绪",
+      "titleNamed": "我刚读完了 {name} 的简历。",
+      "titleAnonymous": "我刚读完了你的简历。",
+      "latestRoleWithCompany": "最近 · {position} @ {company}",
+      "latestRoleSolo": "最近 · {position}",
+      "yearsExperience": "{count, plural, =0 {初入职场} other {约 # 年经验}}",
+      "topSkills": "核心技能 · {list}",
+      "ctaHeading": "希望 Vantage 从哪里开始",
+      "ctaWeakTitle": "找出 3 个最薄弱处",
+      "ctaWeakHint": "直白点评 · 打开对话",
+      "ctaTailorTitle": "针对 JD 定制",
+      "ctaTailorHint": "稍后粘 JD · 打开对话",
+      "ctaRolesTitle": "推荐匹配的岗位",
+      "ctaRolesHint": "5 个候选 + 一句话原因",
+      "openStudioLink": "在简历工作室打开",
+      "hintLine": "选一个，或直接在对话里说",
+      "dismiss": "隐藏这张卡"
+    },
     "remote": "远程",
     "notScored": "未评分",
     "percentMatch": "匹配度 {pct}%",
@@ -1186,6 +1272,8 @@
   "chat": {
     "loadingConversation": "正在加载你的对话…",
     "intro": "我们来做点什么？随便问 — 或者发起一个任务，我来调度各个 agent。",
+    "newSession": "新建会话",
+    "exit": "返回工作区",
     "thinking": "思考中...",
     "composerPlaceholder": "随便问，或发起一个任务…",
     "uploading": "上传中…",

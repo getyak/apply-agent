@@ -476,6 +476,138 @@ async def list_my_applications(limit: int = 25) -> dict[str, Any]:
 
 
 @tool
+async def read_resume(scope: str = "summary") -> dict[str, Any]:
+    """Load the user's *current* résumé and return its structured content.
+
+    Call this when the user asks to **see / view / open / list / read /
+    inspect / 查看 / 看一下 / 介绍** their résumé — i.e. they want the
+    *content* of the document surfaced into the dock conversation, not a
+    download link or a "tailor" / "polish" / "find jobs" side-effect.
+
+    The user_brief already carries a compact summary, but it is intentionally
+    truncated; this tool exposes the un-truncated body when the user
+    explicitly asks to see it.
+
+    Args:
+      scope: ``"summary"`` (default) returns basics + headline + an outline
+        of work / education / skills / projects, suitable for a single
+        dock message. ``"full"`` returns the same structure without
+        truncation caps — use only when the user asks for the complete
+        résumé and rendering a long card is acceptable.
+
+    Returns:
+      ``{status, agent, action, resume_id, version, track, content, markdown}``
+      where ``content`` is JSON-Resume-shaped (``basics``, ``work``,
+      ``education``, ``skills``, ``projects``). ``markdown`` (when
+      available from the parser output) is a pre-rendered fallback the
+      dock can paste back into the reply if structural rendering is
+      overkill.
+
+      Returns ``{status: "empty"}`` when the user has no résumé on file
+      yet — the LLM should suggest uploading or building one in that case
+      (NOT pivot to find_jobs).
+    """
+    from agents.coordinator.user_brief import _coerce_json_resume
+    from agents.tools.auto import pg_query
+
+    user_id = _require_user()
+    requested_scope = (scope or "summary").strip().lower()
+    if requested_scope not in {"summary", "full"}:
+        requested_scope = "summary"
+
+    try:
+        rows = await pg_query(
+            """
+            SELECT id, version, content, track, is_base, created_at
+            FROM resumes
+            WHERE user_id = %s
+            ORDER BY
+                CASE WHEN track = 'original' THEN 0
+                     WHEN is_base THEN 1
+                     ELSE 2 END,
+                created_at DESC
+            LIMIT 1
+            """,
+            (str(user_id),),
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade gracefully
+        log.warning("dock_tools.read_resume.pg_failed", error=str(exc))
+        return {
+            "status": "error",
+            "agent": "resume_agent",
+            "action": "read",
+            "summary": "Couldn't load the résumé right now — database is unreachable.",
+        }
+
+    if not rows:
+        return {
+            "status": "empty",
+            "agent": "resume_agent",
+            "action": "read",
+            "summary": "No résumé on file yet. Suggest uploading one or starting from scratch.",
+        }
+
+    row = rows[0]
+    content = _coerce_json_resume(row.get("content"))
+    track = row.get("track") or ("base" if row.get("is_base") else "tailored")
+
+    basics = content.get("basics", {}) if isinstance(content, dict) else {}
+    work = content.get("work") if isinstance(content, dict) else None
+    education = content.get("education") if isinstance(content, dict) else None
+    skills = content.get("skills") if isinstance(content, dict) else None
+    projects = content.get("projects") if isinstance(content, dict) else None
+
+    # The raw uploader payload stashes a rendered markdown alongside `parsed`.
+    # When it's available it's the cheapest way for the dock to give the user
+    # a "looks like a résumé" reply. We still always return the structured
+    # form so the LLM can do narrative summarisation when that's a better fit.
+    raw_content = row.get("content")
+    markdown: str | None = None
+    if isinstance(raw_content, dict):
+        md = raw_content.get("markdown")
+        if isinstance(md, str) and md.strip():
+            markdown = md.strip()
+
+    # Caps protect the dock SSE frame from a 50-row work history. We never
+    # apply them in "full" scope — the caller has explicitly asked for the
+    # whole document and is going to render it carefully.
+    if requested_scope == "summary":
+        if isinstance(work, list):
+            work = work[:6]
+        if isinstance(education, list):
+            education = education[:4]
+        if isinstance(skills, list):
+            skills = skills[:20]
+        if isinstance(projects, list):
+            projects = projects[:4]
+        # Trim long markdown so the SSE frame stays well below the 8 KB cap.
+        if markdown and len(markdown) > 3500:
+            markdown = markdown[:3500] + "\n\n…[truncated; ask for `scope=full` to see the rest]"
+
+    return {
+        "status": "ok",
+        "agent": "resume_agent",
+        "action": "read",
+        "resume_id": str(row.get("id")) if row.get("id") else None,
+        "version": row.get("version"),
+        "track": track,
+        "scope": requested_scope,
+        "content": {
+            "basics": basics,
+            "work": work if isinstance(work, list) else [],
+            "education": education if isinstance(education, list) else [],
+            "skills": skills if isinstance(skills, list) else [],
+            "projects": projects if isinstance(projects, list) else [],
+        },
+        "markdown": markdown,
+        "summary": (
+            f"Loaded résumé v{row.get('version')} (track={track}). "
+            "Use the structured content to answer naturally — do NOT just dump the JSON."
+        ),
+    }
+
+
+@tool
 async def build_resume_from_scratch() -> dict[str, Any]:
     """Boot the guided "build a résumé from scratch" workflow.
 
@@ -886,6 +1018,7 @@ DOCK_TOOLS = [
     recall_past_applications,
     recall_weak_points,
     list_my_applications,
+    read_resume,
     tailor_resume,
     polish_bullet,
     find_jobs,

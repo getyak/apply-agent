@@ -45,6 +45,20 @@
     "aiStudio": "AI Studio",
     "account": "Account",
     "resumeStudio": "Résumé studio",
+    "resumeChip": {
+      "parsingLabel": "READING",
+      "fallbackFile": "your résumé",
+      "runningTitle": "Reading {file} — usually takes a few seconds.",
+      "failedLabel": "COULDN'T READ",
+      "failedHint": "Open studio · try another file",
+      "failedTitle": "Parsing failed — open the studio to try a fresh file.",
+      "trackMaster": "Master",
+      "trackOptimized": "Optimized",
+      "trackTailored": "Tailored",
+      "readyTitle": "{count, plural, one {# version} other {# versions}} · open studio",
+      "versionsCount": "{count, plural, one {# version on file} other {# versions on file}}",
+      "singleVersionHint": "Open to review or tailor"
+    },
     "autoApplies": "Auto-applies",
     "resetsIn": "Resets in {days} days",
     "upgrade": "Upgrade"
@@ -606,6 +620,14 @@
       "parseRunning": "Reading your résumé in the background — keep going, I'll surface weak spots and matches as soon as it's ready.",
       "parseFailed": "That parse didn't finish — re-upload or paste the text and I'll try again.",
       "parseIdle": "What should we work on? Tap a card to send it instantly — or write your own.",
+      "readSummary": "I read it — latest role {role}, top skills {skills}. Pick a card or just type what you want next.",
+      "resumeOnFile": "{count, plural, one {Your résumé is on file} other {You have # résumés on file}} — pick a card or just say what you want next.",
+      "fallbackRole": "your last position",
+      "skillsUnknown": "still cataloguing",
+      "resumePickerLabel": "YOUR RÉSUMÉS · TAP TO SWITCH CONTEXT",
+      "resumeTrackMaster": "Master",
+      "resumeTrackOptimized": "Optimized",
+      "resumeTrackTailored": "Tailored",
       "timeOfDay": {
         "morning": "Good morning",
         "afternoon": "Good afternoon",
@@ -615,6 +637,7 @@
     "groups": {
       "thisResume": "This résumé",
       "thisResumeScope": "Scoped to your current version",
+      "yourResumeScope": "Uses your latest résumé",
       "explore": "Explore"
     },
     "chips": {
@@ -664,6 +687,50 @@
       "minutesAgo": "{count}m ago",
       "hoursAgo": "{count}h ago",
       "daysAgo": "{count}d ago"
+    },
+    "session": {
+      "lifetime": "Lifetime thread",
+      "switchTitle": "Switch session",
+      "newTitle": "New session",
+      "newButton": "+ New session",
+      "popoverLabel": "Ask Vantage sessions",
+      "popoverHint": "YOUR SESSIONS · NEWEST FIRST",
+      "emptyHint": "No saved sessions yet. + New session to start a fresh thread.",
+      "noPreview": "Empty thread — say hi to begin",
+      "rename": "Rename",
+      "delete": "Delete",
+      "cancel": "Cancel",
+      "confirmDelete": "Confirm delete",
+      "renamePlaceholder": "Name this session",
+      "errorCreate": "Couldn't create a new session — try again.",
+      "errorRename": "Couldn't rename that session.",
+      "errorDelete": "Couldn't delete that session."
+    },
+    "slash": {
+      "placeholder": "Search skills, prompts, memory…",
+      "label": "Slash commands",
+      "hint": "/ to invoke a skill · @ to mention an agent",
+      "categoryCommands": "COMMANDS",
+      "categorySkills": "SKILLS",
+      "categoryPrompts": "PROMPTS",
+      "categoryMemory": "MEMORY",
+      "categoryAgents": "AGENT TEAMS",
+      "emptyResult": "Nothing matches that command.",
+      "selectHint": "↑↓ navigate · ↵ insert · esc close",
+      "loadFailed": "Couldn't load slash commands.",
+      "actionBadge": "ACTION",
+      "commands": {
+        "new": { "title": "New session", "description": "Start a fresh Ask Vantage thread" },
+        "clear": { "title": "Clear timeline", "description": "Hide steps in this view (server history kept)" },
+        "search": { "title": "Deep search…", "description": "/search <query> — agent runs a research pass" },
+        "help": { "title": "How does this dock work?", "description": "Open the Ask Vantage usage guide" },
+        "focus": { "title": "Focus mode", "description": "Expand the dock to fullscreen" }
+      }
+    },
+    "fullscreen": {
+      "exit": "Exit fullscreen",
+      "exitHint": "Esc",
+      "enter": "Enter fullscreen"
     },
     "agentCard": {
       "collapse": "Collapse thinking",
@@ -1064,6 +1131,25 @@
     }
   },
   "today": {
+    "resumeLanding": {
+      "eyebrow": "YOUR RÉSUMÉ JUST LANDED",
+      "titleNamed": "I just read {name}'s résumé.",
+      "titleAnonymous": "I just read your résumé.",
+      "latestRoleWithCompany": "Latest · {position} at {company}",
+      "latestRoleSolo": "Latest · {position}",
+      "yearsExperience": "{count, plural, =0 {New to the workforce} one {# year of experience} other {~# years of experience}}",
+      "topSkills": "Top skills · {list}",
+      "ctaHeading": "WHERE DO YOU WANT VANTAGE TO START",
+      "ctaWeakTitle": "Find my 3 weakest spots",
+      "ctaWeakHint": "Honest critique · open dock",
+      "ctaTailorTitle": "Tailor it to a JD",
+      "ctaTailorHint": "Paste a JD next · open dock",
+      "ctaRolesTitle": "Surface matching roles",
+      "ctaRolesHint": "5 picks with 1-line why · open dock",
+      "openStudioLink": "Open in Résumé studio",
+      "hintLine": "Pick one or chat freely in the dock",
+      "dismiss": "Hide this card"
+    },
     "remote": "Remote",
     "notScored": "Not scored",
     "percentMatch": "{pct}% match",
@@ -1186,6 +1272,8 @@
   "chat": {
     "loadingConversation": "Loading your conversation…",
     "intro": "What should we work on? Ask anything — or launch a task and I'll run the agents.",
+    "newSession": "New session",
+    "exit": "Back to workspace",
     "thinking": "Thinking...",
     "composerPlaceholder": "Ask anything, or launch a task…",
     "uploading": "Uploading…",

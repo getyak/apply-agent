@@ -26,6 +26,7 @@ brief if RELAY_PG_DSN is absent, so unit tests stay hermetic.
 from __future__ import annotations
 
 import json
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -37,6 +38,20 @@ _RESUME_HEADLINE_CHARS = 200
 _APP_ROWS = 3
 _WEAK_POINTS = 5
 _PREFERENCES_CHARS = 400
+
+# Résumé-body cap (D2): we now embed the top of the user's actual résumé
+# (work + education + skills + projects) into the brief so the dock LLM can
+# answer "看一下我的简历 / introduce me / analyze my résumé" directly,
+# without needing a tool call. The cap keeps a typical résumé at ~1.5 KB of
+# additional system context — heavy enough to be useful, light enough that
+# the brief stays well under the dock model's 8K input budget.
+_RESUME_BODY_BUDGET_CHARS = 1800
+_RESUME_WORK_ENTRIES = 5
+_RESUME_WORK_HIGHLIGHTS = 3
+_RESUME_EDUCATION_ENTRIES = 3
+_RESUME_SKILL_NAMES = 16
+_RESUME_PROJECT_ENTRIES = 3
+_RESUME_LINE_CHARS = 160
 
 
 async def build_user_brief(user_id: UUID) -> str:
@@ -103,12 +118,7 @@ async def _resume_section(user_id: UUID) -> str:
     if not rows:
         return ""
     r = rows[0]
-    content = r.get("content") or {}
-    if isinstance(content, str):
-        try:
-            content = json.loads(content)
-        except (ValueError, TypeError):
-            content = {}
+    content = _coerce_json_resume(r.get("content"))
 
     basics = content.get("basics", {}) if isinstance(content, dict) else {}
     label = basics.get("label") or basics.get("name") or "(unnamed candidate)"
@@ -117,10 +127,206 @@ async def _resume_section(user_id: UUID) -> str:
 
     track = r.get("track") or ("base" if r.get("is_base") else "tailored")
     version = r.get("version")
-    line = f"- Active résumé: {label} (v{version}, track={track})"
+
+    lines: list[str] = ["### Résumé"]
+    lines.append(f"- Active résumé: {label} (v{version}, track={track})")
     if summary:
-        line += f"\n  Summary: {summary}"
-    return "### Résumé\n" + line
+        lines.append(f"  Summary: {summary}")
+
+    # Body sections (D2): work / education / skills / projects. Each section
+    # is appended only if the total brief résumé block is still under
+    # _RESUME_BODY_BUDGET_CHARS — we stop adding lines (not whole sections)
+    # the moment we'd blow the cap, so the agent always gets *something*
+    # rather than going over budget. The exact ordering reflects what a
+    # human reader cares about most when answering "show me my résumé":
+    # what jobs they've held, then where they studied, then concrete skills,
+    # then projects.
+    used = sum(len(line) for line in lines)
+
+    def remaining() -> int:
+        return _RESUME_BODY_BUDGET_CHARS - used
+
+    def push(text: str) -> bool:
+        nonlocal used
+        if not text:
+            return True
+        if len(text) + 1 > remaining():
+            return False
+        lines.append(text)
+        used += len(text) + 1
+        return True
+
+    work_lines = _format_work(content)
+    if work_lines:
+        if not push("**Experience**"):
+            return "\n".join(lines)
+        for ln in work_lines:
+            if not push(ln):
+                break
+
+    edu_lines = _format_education(content)
+    if edu_lines:
+        if not push("**Education**"):
+            return "\n".join(lines)
+        for ln in edu_lines:
+            if not push(ln):
+                break
+
+    skill_line = _format_skills(content)
+    if skill_line:
+        push(f"**Skills**: {skill_line}")
+
+    project_lines = _format_projects(content)
+    if project_lines:
+        if not push("**Projects**"):
+            return "\n".join(lines)
+        for ln in project_lines:
+            if not push(ln):
+                break
+
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Résumé content helpers
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _coerce_json_resume(raw: Any) -> dict[str, Any]:
+    """Accept the two known shapes and return a plain JSON Resume dict.
+
+    Storage in ``resumes.content`` is heterogeneous:
+      - new uploads: ``{raw, parsed: <JSON Resume>, markdown, parsedAt, warnings}``
+      - synthesised / tailored: plain JSON Resume at the root
+      - legacy / fixtures: occasionally a JSON-encoded string of either of
+        the above.
+    We always work in the "plain" shape downstream, so unwrap once here.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    # ``parsed`` wrapper from the uploader. Prefer the parsed payload when
+    # both ``parsed`` and ``basics`` are present (the parser always promotes
+    # basics under parsed; a root-level basics is the plain shape).
+    parsed = raw.get("parsed")
+    if isinstance(parsed, dict) and "basics" not in raw:
+        return parsed
+    return raw
+
+
+def _clip(text: Any, cap: int = _RESUME_LINE_CHARS) -> str:
+    s = (str(text) if text is not None else "").strip()
+    if not s:
+        return ""
+    s = " ".join(s.split())
+    return s[: cap - 1] + "…" if len(s) > cap else s
+
+
+def _year(iso_date: Any) -> str:
+    """Take an ISO date / year and return just the year. ``"Present"`` passes through."""
+    if not iso_date:
+        return ""
+    s = str(iso_date).strip()
+    if not s:
+        return ""
+    if s.lower() in {"present", "current", "now"}:
+        return "Present"
+    return s[:4]
+
+
+def _format_work(content: dict[str, Any]) -> list[str]:
+    work = content.get("work") if isinstance(content, dict) else None
+    if not isinstance(work, list):
+        return []
+    out: list[str] = []
+    for entry in work[:_RESUME_WORK_ENTRIES]:
+        if not isinstance(entry, dict):
+            continue
+        # JSON Resume's `name` is the company; some uploaders use `company`.
+        company = entry.get("name") or entry.get("company") or "(unknown)"
+        position = entry.get("position") or entry.get("title") or "(role)"
+        start = _year(entry.get("startDate"))
+        end = _year(entry.get("endDate")) or "Present"
+        dates = f"{start}–{end}" if start else end
+        head = _clip(f"- {position} @ {company} ({dates})")
+        if head:
+            out.append(head)
+        highlights = entry.get("highlights")
+        if isinstance(highlights, list):
+            for h in highlights[:_RESUME_WORK_HIGHLIGHTS]:
+                bullet = _clip(h)
+                if bullet:
+                    out.append(f"    • {bullet}")
+        elif isinstance(entry.get("summary"), str):
+            bullet = _clip(entry["summary"])
+            if bullet:
+                out.append(f"    • {bullet}")
+    return out
+
+
+def _format_education(content: dict[str, Any]) -> list[str]:
+    edu = content.get("education") if isinstance(content, dict) else None
+    if not isinstance(edu, list):
+        return []
+    out: list[str] = []
+    for entry in edu[:_RESUME_EDUCATION_ENTRIES]:
+        if not isinstance(entry, dict):
+            continue
+        institution = entry.get("institution") or entry.get("school") or "(unknown)"
+        # JSON Resume calls this `studyType` (BS/MS), `area` is the major.
+        study = entry.get("studyType") or entry.get("degree") or ""
+        area = entry.get("area") or entry.get("major") or ""
+        start = _year(entry.get("startDate"))
+        end = _year(entry.get("endDate")) or "Present"
+        dates = f"{start}–{end}" if start else end
+        bits = [b for b in (study, area) if b]
+        head = (
+            f"- {institution} — {' '.join(bits)} ({dates})"
+            if bits
+            else f"- {institution} ({dates})"
+        )
+        clipped = _clip(head)
+        if clipped:
+            out.append(clipped)
+    return out
+
+
+def _format_skills(content: dict[str, Any]) -> str:
+    skills = content.get("skills") if isinstance(content, dict) else None
+    if not isinstance(skills, list):
+        return ""
+    names: list[str] = []
+    for s in skills:
+        if isinstance(s, dict):
+            n = s.get("name")
+        else:
+            n = s
+        if isinstance(n, str) and n.strip():
+            names.append(n.strip())
+        if len(names) >= _RESUME_SKILL_NAMES:
+            break
+    return ", ".join(names)
+
+
+def _format_projects(content: dict[str, Any]) -> list[str]:
+    projects = content.get("projects") if isinstance(content, dict) else None
+    if not isinstance(projects, list):
+        return []
+    out: list[str] = []
+    for p in projects[:_RESUME_PROJECT_ENTRIES]:
+        if not isinstance(p, dict):
+            continue
+        name = p.get("name") or "(unnamed project)"
+        desc = p.get("description") or p.get("summary") or ""
+        head = f"- {name}" + (f" — {desc}" if desc else "")
+        clipped = _clip(head)
+        if clipped:
+            out.append(clipped)
+    return out
 
 
 async def _apps_section(user_id: UUID) -> str:

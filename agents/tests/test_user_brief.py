@@ -215,3 +215,161 @@ async def test_weak_points_skips_malformed_entries(user_id):
     assert "Real one" in out
     assert "alt key" in out
     assert "not a dict" not in out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# D2: Résumé body sections (Experience / Education / Skills / Projects)
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def test_resume_section_includes_work_history(user_id):
+    """D2: work entries surface so the LLM can answer 'show me my résumé'."""
+    rows = {
+        "FROM resumes": [
+            {
+                "id": uuid4(),
+                "version": 8,
+                "content": {
+                    "basics": {"label": "Senior Backend Engineer"},
+                    "work": [
+                        {
+                            "name": "Acme Corp",
+                            "position": "Senior Backend Engineer",
+                            "startDate": "2023-01-01",
+                            "endDate": None,
+                            "highlights": [
+                                "Led the migration of monolith to micro-services",
+                                "Cut p99 latency from 1.4 s to 280 ms",
+                            ],
+                        },
+                        {
+                            "name": "Prior Co",
+                            "position": "Backend Engineer",
+                            "startDate": "2020-06-01",
+                            "endDate": "2022-12-31",
+                            "summary": "Built event-streaming pipeline.",
+                        },
+                    ],
+                    "education": [
+                        {
+                            "institution": "Some University",
+                            "studyType": "BS",
+                            "area": "Computer Science",
+                            "startDate": "2016",
+                            "endDate": "2020",
+                        }
+                    ],
+                    "skills": [
+                        {"name": "Python"},
+                        {"name": "Go"},
+                        {"name": "Kubernetes"},
+                    ],
+                    "projects": [
+                        {
+                            "name": "Open-source CLI",
+                            "description": "Job-search copilot",
+                        }
+                    ],
+                },
+                "track": "base",
+                "is_base": True,
+                "updated_at": None,
+            }
+        ]
+    }
+    with _patch_pg(rows):
+        out = await build_user_brief(user_id)
+
+    # Headline still present.
+    assert "Senior Backend Engineer" in out
+    # Work section is rendered with dates + highlights.
+    assert "**Experience**" in out
+    assert "Acme Corp" in out
+    assert "Senior Backend Engineer @ Acme Corp" in out
+    assert "2023–Present" in out
+    assert "Prior Co" in out
+    assert "2020–2022" in out
+    assert "monolith to micro-services" in out
+    # Education / Skills / Projects sections.
+    assert "**Education**" in out
+    assert "Some University" in out
+    assert "BS Computer Science" in out
+    assert "**Skills**" in out
+    assert "Python" in out and "Kubernetes" in out
+    assert "**Projects**" in out
+    assert "Open-source CLI" in out
+
+
+async def test_resume_section_accepts_uploader_parsed_wrapper(user_id):
+    """The uploader stores ``{raw, parsed: <JSON Resume>, markdown, ...}``.
+
+    _coerce_json_resume must unwrap so the body sections render.
+    """
+    rows = {
+        "FROM resumes": [
+            {
+                "id": uuid4(),
+                "version": 1,
+                "content": {
+                    "raw": "",
+                    "parsed": {
+                        "basics": {"name": "Wrapped User"},
+                        "work": [
+                            {
+                                "name": "InnerCo",
+                                "position": "Engineer",
+                                "startDate": "2022-01-01",
+                            }
+                        ],
+                        "skills": [{"name": "TypeScript"}],
+                    },
+                    "markdown": "# Wrapped User",
+                },
+                "track": "original",
+                "is_base": True,
+                "updated_at": None,
+            }
+        ]
+    }
+    with _patch_pg(rows):
+        out = await build_user_brief(user_id)
+    assert "Wrapped User" in out
+    assert "InnerCo" in out
+    assert "TypeScript" in out
+
+
+async def test_resume_section_respects_body_cap(user_id):
+    """D2 cap (_RESUME_BODY_BUDGET_CHARS) must prevent unbounded growth."""
+    work = [
+        {
+            "name": f"Company {i}",
+            "position": f"Role {i} with a deliberately long title to eat budget",
+            "startDate": f"{2010 + i}-01-01",
+            "endDate": f"{2011 + i}-01-01",
+            "highlights": [
+                "A long highlight line " * 6,
+                "Another long highlight " * 6,
+                "Yet another one " * 6,
+            ],
+        }
+        for i in range(20)
+    ]
+    rows = {
+        "FROM resumes": [
+            {
+                "id": uuid4(),
+                "version": 1,
+                "content": {"basics": {"name": "Heavy User"}, "work": work},
+                "track": "base",
+                "is_base": True,
+                "updated_at": None,
+            }
+        ]
+    }
+    with _patch_pg(rows):
+        out = await build_user_brief(user_id)
+    start = out.index("### Résumé")
+    next_section = out.find("###", start + 5)
+    resume_block = out[start:] if next_section == -1 else out[start:next_section]
+    # Hard cap (_RESUME_BODY_BUDGET_CHARS=1800) + small header overhead.
+    assert len(resume_block) < 2200, f"résumé section grew to {len(resume_block)} chars"

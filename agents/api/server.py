@@ -75,8 +75,15 @@ from agents.coordinator.workflows import build_from_scratch_graph  # noqa: E402
 # set, the LLM-fallback branch of /ask/stream is delegated to the new Dock
 # ReAct agent (P0-A). The regex fast path stays as-is so confident command-
 # like prompts ("list applications", "mock me on Stripe") never pay the
-# main-loop LLM tax. Default OFF so the rollout is opt-in until we're happy.
-_DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "0") == "1"
+# main-loop LLM tax.
+#
+# Default is now ON. The legacy path emits `event: thinking/intent/result/done`
+# SSE frames that the AG-UI consumer (web/src/lib/agent-events/consumer.ts,
+# transformHttpEventStream) cannot parse — they are silently dropped and the
+# dock UI renders nothing for agent reasoning/tool/narrator/plan. Setting
+# RELAY_DOCK_REACT=0 explicitly restores the legacy vocabulary for tests that
+# still rely on it.
+_DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "1") == "1"
 # Threshold for skipping the dock and going straight to dispatch on a cheap
 # regex hit.
 #
@@ -808,16 +815,31 @@ async def _stream_dock_turn(
     from agents.coordinator import dock_agent, dock_tools
     from agents.coordinator.user_brief import build_user_brief
     from agents.harness.events import RelayEmitter
-    from agents.harness.locale import language_directive
+    from agents.harness.locale import (
+        detect_reply_locale,
+        language_directive,
+        reply_language_directive,
+    )
 
     assistant_buf: list[str] = []
 
     tokens = dock_tools.set_dock_context(user_id=user_id, thread_id=thread_id, surface=surface)
-    # Pin the dock's reply language to the user's UI locale (X-Relay-Locale).
-    # Passed as an extra system block so the persistent graph prompt stays
-    # cacheable. Falls back to charset detection of the message when locale
-    # is absent (older clients).
+    # Two language pins, in order of precedence in the system message stack:
+    #   1. UI-locale directive (legacy) — the global preference the user set.
+    #   2. reply_locale directive (new) — the language of THIS user message.
+    # The model sees both, but #2 sits right next to the user turn so it
+    # wins ties when a user with a Chinese UI asks an English question.
+    # detect_reply_locale falls back to `locale` on short / ambiguous text.
     lang_block = language_directive(locale, message)
+    reply_locale = detect_reply_locale(message, locale)
+    reply_block = reply_language_directive(reply_locale)
+    log.info(
+        "ask_stream.reply_locale",
+        trace_id=trace_id,
+        ui_locale=locale,
+        reply_locale=reply_locale,
+        message_chars=len(message or ""),
+    )
     # P1-2: per-turn user context (active résumé, recent applications, last
     # interview weak points, preferences). Empty string when there's nothing
     # to say or PG is offline — the SystemMessage filter drops it.
@@ -836,7 +858,11 @@ async def _stream_dock_turn(
                 message=message,
                 thread_id=thread_id,
                 trace_id=trace_id,
-                extra_system_blocks=[lang_block, user_brief_block],
+                # reply_block is appended LAST so it sits closest to the
+                # user turn — recency bias makes it the strongest signal
+                # for the model when the UI locale and the message
+                # language disagree.
+                extra_system_blocks=[lang_block, user_brief_block, reply_block],
                 command=command,
             ):
                 _accumulate_assistant_text(frame, assistant_buf)

@@ -23,7 +23,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from agents.harness.audit import redact_exception_text
 from agents.harness.llm import pick_model
-from agents.harness.locale import language_directive as build_language_directive
+from agents.harness.locale import (
+    detect_reply_locale,
+    reply_language_directive,
+)
+from agents.harness.locale import (
+    language_directive as build_language_directive,
+)
 
 log = structlog.get_logger("agents.coordinator.router")
 
@@ -141,18 +147,37 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     (re.compile(r"\b(market|trend|what'?s)\s+(trending|hot)\b", re.I), "trends_today", 0.85),
     (re.compile(r"\b(build|create|start)\s+(a\s+)?r[eé]sum[eé]\b", re.I), "build_resume", 0.85),
     (re.compile(r"\bi\s+don[\'']?t\s+have\s+a\s+r[eé]sum[eé]\b", re.I), "build_resume", 0.95),
-    # Read-only "show me my résumé history". Must come BEFORE the
-    # update_resume rule so "show / list" never accidentally lands on the
-    # write path. Bilingual coverage (zh + en) because the dock greets in
-    # the user's language and we want regex to win Layer 1 instead of
-    # paying for a Layer 2 LLM call.
+    # Read-only "show me my résumé VERSION HISTORY". Must come BEFORE the
+    # update_resume rule so "list" never lands on the write path.
+    #
+    # Round-21 split: two distinct surfaces share these verbs, so we route
+    # them apart with a qualifier.
+    #
+    #   (a) "查看 / 看一下 / 看看 / 显示 + 简历 + (版本|历史|记录|列表)"
+    #       → the user wants the *version timeline* → list_resume_versions.
+    #   (b) "查看 / 看 + 简历" without a qualifier
+    #       → the user wants the *content* of the document. We deliberately
+    #         skip Layer 1 so the dock LLM picks it up and calls the
+    #         ``read_resume`` tool (see prompts/coordinator/dock_agent.v1.md
+    #         "Viewing / showing the résumé"). The earlier broad regex
+    #         matched plain "查看我的简历" and collapsed both intents into
+    #         the version-list reply, which confused users.
+    #
+    # The unambiguous list verbs ("列出 / 列表") stay as an unconditional
+    # list match: those carry an explicit "list" semantic and are not the
+    # source of the ambiguity.
     (
         re.compile(
-            r"(查看|查一下|看一下|看看|列出|显示|列表)\s*(我的)?\s*(简历|履历)\s*(版本|历史|记录|列表)?",
+            r"(查看|查一下|看一下|看看|显示)\s*(我的)?\s*(简历|履历)\s*(版本|历史|记录|列表)",
             re.I,
         ),
         "list_resume_versions",
         0.92,
+    ),
+    (
+        re.compile(r"(列出|列表)\s*(我的)?\s*(简历|履历)", re.I),
+        "list_resume_versions",
+        0.90,
     ),
     (
         re.compile(
@@ -163,7 +188,8 @@ _REGEX_RULES: list[tuple[re.Pattern[str], str, float]] = [
     ),
     (
         re.compile(
-            r"\b(show|list|view|see)\s+(me\s+)?(my\s+|all\s+)?r[eé]sum[eé]s?(\s*versions?)?\b", re.I
+            r"\b(show|list|view|see)\s+(me\s+)?(my\s+|all\s+)?r[eé]sum[eé]s?\s+versions?\b",
+            re.I,
         ),
         "list_resume_versions",
         0.92,
@@ -659,13 +685,14 @@ async def _smalltalk_reply(
             )
             resume_block = None
 
-    # Language fidelity: the chat history shipped Chinese user turns next to
-    # English agent turns — see the QA pass UX notes. The fix is small but
-    # uncompromising: pin the reply language for the whole response from the
-    # user's explicit UI locale (X-Relay-Locale, forwarded by the gateway).
-    # When locale is absent (older clients / raw curl) build_language_directive
-    # falls back to detecting the message's script — same behaviour as before.
+    # Two language pins (see api/server.py ask_stream for the same posture):
+    #   1. UI-locale directive — global preference (X-Relay-Locale)
+    #   2. reply_locale directive — language of THIS user message
+    # We add #2 LAST so it sits adjacent to the user turn; recency makes it
+    # the strongest signal when UI and message languages disagree.
     language_directive = build_language_directive(locale, message)
+    reply_locale = detect_reply_locale(message, locale)
+    reply_directive = reply_language_directive(reply_locale)
 
     system_parts = [
         "You are Vantage, an AI job-search copilot. Reply briefly and "
@@ -683,6 +710,15 @@ async def _smalltalk_reply(
             "the person, summarise from the résumé itself.\n\n"
             f"<active_resume>\n{resume_block}\n</active_resume>"
         )
+    # Append the reply-locale directive LAST so it lands closest to the user
+    # turn in the system block stack (recency wins ties for most models).
+    system_parts.append(reply_directive)
+    log.info(
+        "router.smalltalk_reply_locale",
+        ui_locale=locale,
+        reply_locale=reply_locale,
+        message_chars=len(message or ""),
+    )
 
     import asyncio as _asyncio  # local import — see DISP5 note at top of file
 
@@ -1137,29 +1173,45 @@ async def persist_turn(
 
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
-                # One session row per lifetime thread, identified by title.
+                # One session row per lifetime / secondary dock thread.
+                #
+                # Migration 019 added a dedicated `thread_id` column so the
+                # multi-session UI can list / rename / delete sessions without
+                # overloading `title` (which now carries the user-facing
+                # label). For backward-compat with rows persisted before 019
+                # we look up by either column.
                 await cur.execute(
-                    "SELECT id FROM conversation_sessions WHERE title = %s LIMIT 1",
+                    "SELECT id FROM conversation_sessions "
+                    "WHERE COALESCE(thread_id, title) = %s LIMIT 1",
                     (thread_id,),
                 )
                 row = await cur.fetchone()
+                preview = _truncate_for_history(user_message, max_chars=160)
                 if row:
                     session_id = row[0]
                     await cur.execute(
                         "UPDATE conversation_sessions "
-                        "SET last_active_at = now(), message_count = message_count + 2 "
+                        "SET last_active_at = now(), "
+                        "    message_count = message_count + 2, "
+                        "    last_preview = %s, "
+                        "    thread_id = COALESCE(thread_id, %s) "
                         "WHERE id = %s",
-                        (session_id,),
+                        (preview, thread_id, session_id),
                     )
                 else:
+                    # New rows write the dedicated thread_id column AND keep
+                    # title NULL — the UI derives a friendly label
+                    # ("Conversation · MMM d") until the user renames it.
                     await cur.execute(
                         """
                         INSERT INTO conversation_sessions
-                            (user_id, session_type, agent_type, title, message_count)
-                        VALUES (%s, 'general', 'coordinator', %s, 2)
+                            (user_id, session_type, agent_type,
+                             title, thread_id, last_preview, message_count)
+                        VALUES (%s, 'ask_vantage', 'coordinator',
+                                NULL, %s, %s, 2)
                         RETURNING id
                         """,
-                        (str(user_id), thread_id),
+                        (str(user_id), thread_id, preview),
                     )
                     session_id = (await cur.fetchone())[0]  # type: ignore[index]
 

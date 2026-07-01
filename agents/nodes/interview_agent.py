@@ -36,6 +36,7 @@ from agents.events.bus import publish
 from agents.harness.audit import audit
 from agents.harness.checkpointer import get_checkpointer
 from agents.harness.llm import cost_cents, pick_model
+from agents.harness.locale import detect_reply_locale
 from agents.harness.permissions import mark_auto, mark_notify
 from agents.harness.state import (
     FeedbackTranslation,
@@ -376,13 +377,102 @@ def _last_question_text(state: MockState) -> str | None:
 # ───────────────────────────────────────────────────────────────────────
 
 
+# Minimum chars of feedback text we'll bother to enforce locale on. Below
+# this even a wrong-language fragment isn't worth a cheap translate round-trip.
+_LOCALE_ENFORCE_MIN_CHARS = 40
+
+
+async def _translate_to(text: str, target_locale: str) -> str:
+    """Cheap V4 Flash translation. Returns the original on failure so a
+    locale mismatch never blocks the feedback render."""
+    if not text or len(text.strip()) < _LOCALE_ENFORCE_MIN_CHARS:
+        return text
+    try:
+        model = pick_model("fast", temperature=0.2, max_tokens=600)
+        lang_name = "Chinese (Simplified, 简体中文)" if target_locale == "zh" else "English"
+        resp = await model.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        f"Translate the following interview-feedback fragment into {lang_name}. "
+                        "Preserve meaning exactly. Keep code, proper nouns, and product names "
+                        "(Stripe, TypeScript, Greenhouse, etc.) in their original form. "
+                        "Output ONLY the translation — no preamble, no quotes."
+                    )
+                ),
+                HumanMessage(content=text),
+            ]
+        )
+        return str(resp.content).strip() or text
+    except Exception as exc:  # noqa: BLE001 — never block feedback
+        log.warning("interview.locale_translate_failed", error=str(exc)[:200])
+        return text
+
+
+async def _enforce_reply_locale(
+    feedback: FeedbackTranslation,
+    *,
+    user_answer: str,
+    ui_locale: str | None,
+) -> FeedbackTranslation:
+    """Post-hoc reply-locale guard for mock interview feedback.
+
+    Detects the user's answer language and re-language each long-enough
+    field of the feedback if the model drifted. Cheap V4 Flash translate
+    pass; the field is left untouched on detect-undecided or translate
+    failure. Logged so we can track drift in production.
+    """
+    target = detect_reply_locale(user_answer, ui_locale)
+    fields = {
+        "interviewer_heard": feedback.get("interviewer_heard", ""),
+        "suggested_rephrase": feedback.get("suggested_rephrase", ""),
+        "stuck_replay": feedback.get("stuck_replay") or "",
+    }
+    mismatches: dict[str, str] = {}
+    for name, text in fields.items():
+        if not text or len(text.strip()) < _LOCALE_ENFORCE_MIN_CHARS:
+            continue
+        detected = detect_reply_locale(text, target)
+        # When the detector is undecided (returns target by fallback) we leave
+        # the field alone — we only act on a CONFIRMED mismatch with a
+        # different language than what we asked for.
+        if detected != target:
+            mismatches[name] = text
+    if not mismatches:
+        return feedback
+    log.info(
+        "interview.feedback_locale_mismatch",
+        target=target,
+        fields=list(mismatches.keys()),
+    )
+    fixed: dict[str, str] = {}
+    for name, text in mismatches.items():
+        fixed[name] = await _translate_to(text, target)
+    # FeedbackTranslation is a TypedDict — return a merged dict so callers
+    # get the same shape.
+    return cast(
+        FeedbackTranslation,
+        {
+            **feedback,
+            **fixed,
+            "stuck_replay": fixed.get("stuck_replay") or feedback.get("stuck_replay"),
+        },
+    )
+
+
 @mark_auto
 async def translate_feedback(
     answer: str,
     question_text: str,
     mode: InterviewMode,
+    ui_locale: str | None = None,
 ) -> FeedbackTranslation:
-    """Three-perspective translation OR rating, depending on mode.feedback_style."""
+    """Three-perspective translation OR rating, depending on mode.feedback_style.
+
+    ``ui_locale`` is the UI locale the dock forwarded (X-Relay-Locale). When
+    set, we run a post-hoc reply-locale check on the model's output and
+    cheap-translate any field that drifted to the wrong language.
+    """
     style = mode["feedback_style"]
     pressure = mode["pressure_level"]
 
@@ -401,12 +491,13 @@ async def translate_feedback(
                 HumanMessage(content=f"Q: {question_text}\nA: {answer}"),
             ]
         )
-        return FeedbackTranslation(
+        feedback = FeedbackTranslation(
             you_said=answer[:200],
             interviewer_heard=str(resp.content),
             suggested_rephrase="",
             stuck_replay=None,
         )
+        return await _enforce_reply_locale(feedback, user_answer=answer, ui_locale=ui_locale)
 
     if style == "rating_1to5":
         # Compatibility mode (real_prep). Heavy model for accuracy.
@@ -431,12 +522,13 @@ async def translate_feedback(
         ]
     )
     parsed = _safe_json(resp.content)
-    return FeedbackTranslation(
+    feedback = FeedbackTranslation(
         you_said=parsed.get("you_said", answer[:200]),
         interviewer_heard=parsed.get("interviewer_heard", ""),
         suggested_rephrase=parsed.get("suggested_rephrase", ""),
         stuck_replay=parsed.get("stuck_replay") if is_pressure or stalled else None,
     )
+    return await _enforce_reply_locale(feedback, user_answer=answer, ui_locale=ui_locale)
 
 
 async def _rating_feedback(answer: str, q: str) -> FeedbackTranslation:
@@ -622,6 +714,7 @@ async def translate_feedback_node(state: MockState) -> dict[str, Any]:
             answer=state.get("last_answer") or "",
             question_text=pending.get("text", ""),
             mode=state["mode"],
+            ui_locale=state.get("ui_locale"),
         )
         # Bank the completed (question, answer, feedback) triple into a buffer
         # for save_to_card to consume at debrief.

@@ -26,9 +26,11 @@ import {
   useAgentStream,
 } from "@/lib/agent-events";
 import { useVantage } from "@/lib/store";
-import { files as filesApi } from "@/lib/api";
+import { files as filesApi, ask } from "@/lib/api";
 import { greetingFor } from "@/lib/dates";
 import { StepTimeline } from "./step-timeline";
+import { SessionSwitcher } from "./session-switcher";
+import { SlashPalette, type SlashCommandId } from "./slash-palette";
 
 // A single chip carries two strings: `display` is the short English line on
 // the card; `prompt` is the verbose instruction we actually send to the
@@ -89,6 +91,13 @@ const CHIPS_THIS_RESUME: SuggestionChip[] = [
 
 function chipGroupsForPath(
   pathname: string | null,
+  // Once the user has at least one résumé on file, the This-résumé group
+  // becomes available from ANY page so the dock never goes silent on
+  // résumé-related actions. Inside /app/studio/resume the group is scoped
+  // to the current row (via resumeStudioThread); outside the studio the
+  // prompts route against the lifetime ask_vantage thread, but the
+  // fabrication-guard wording is unchanged.
+  hasResume: boolean,
 ): { meta: SuggestionGroup; chips: SuggestionChip[] }[] {
   if (pathname?.startsWith("/app/studio/resume")) {
     return [
@@ -103,6 +112,22 @@ function chipGroupsForPath(
       {
         meta: { id: "explore", labelKey: "groups.explore" },
         chips: CHIPS_EXPLORE_RESUME_STUDIO,
+      },
+    ];
+  }
+  if (hasResume) {
+    return [
+      {
+        meta: {
+          id: "this_resume",
+          labelKey: "groups.thisResume",
+          scopeHintKey: "groups.yourResumeScope",
+        },
+        chips: CHIPS_THIS_RESUME,
+      },
+      {
+        meta: { id: "explore", labelKey: "groups.explore" },
+        chips: CHIPS_EXPLORE_DEFAULT,
       },
     ];
   }
@@ -329,12 +354,18 @@ export function AskVantageDock() {
   const hasSteps = useHasSteps();
 
   const pathname = usePathname();
-  const chipGroups = useMemo(() => chipGroupsForPath(pathname), [pathname]);
 
   const currentUser = useVantage((s) => s.currentUser);
   const currentResumeId = useVantage((s) => s.currentResumeId);
   const parsedResume = useVantage((s) => s.parsedResume);
   const parseJobStatus = useVantage((s) => s.parseJobStatus);
+  const resumes = useVantage((s) => s.resumes);
+  const setCurrentResume = useVantage((s) => s.setCurrentResume);
+
+  const chipGroups = useMemo(
+    () => chipGroupsForPath(pathname, resumes.length > 0),
+    [pathname, resumes.length],
+  );
 
   const firstName = useMemo(() => {
     const resumeName = parsedResume?.basics?.name?.trim() ?? "";
@@ -360,9 +391,13 @@ export function AskVantageDock() {
     }
   }, [hintedCollapse, state]);
 
-  // Reset the live timeline when the effective thread changes (lifetime
-  // ask_vantage vs a per-résumé resume_studio thread) so each thread starts
-  // visually clean. recentAnchors live on the dock store and survive.
+  // Swap the live timeline when the effective thread changes (lifetime
+  // ask_vantage vs a per-résumé resume_studio thread). Earlier we just blew
+  // the step graph away with reset() — that made every thread feel like a
+  // fresh window even on threads with persisted history. Now we re-hydrate
+  // from the server for the new thread; if the fetch fails we degrade to
+  // an empty timeline so we never leave stale resume_studio bubbles on top
+  // of the ask_vantage thread.
   const effectiveThread = useMemo(() => {
     return pathname?.startsWith("/app/studio/resume") && resumeStudioThread
       ? resumeStudioThread
@@ -370,10 +405,30 @@ export function AskVantageDock() {
   }, [pathname, resumeStudioThread]);
   const prevEffectiveThread = useRef<string>(effectiveThread);
   useEffect(() => {
-    if (prevEffectiveThread.current !== effectiveThread) {
-      prevEffectiveThread.current = effectiveThread;
-      useAgentStream.getState().reset();
-    }
+    if (prevEffectiveThread.current === effectiveThread) return;
+    prevEffectiveThread.current = effectiveThread;
+    let cancelled = false;
+    // Determine the wire-side threadId. For the lifetime thread we let
+    // /history default to ask_vantage:{userId}; for resume_studio we have
+    // the full thread name already.
+    const wireThreadId =
+      effectiveThread === "ask_vantage" ? undefined : effectiveThread;
+    (async () => {
+      try {
+        const { ask: askApi } = await import("@/lib/api");
+        const { hydrateFromHistory } = await import("@/lib/agent-events/store");
+        const res = await askApi.history(wireThreadId, 50);
+        if (cancelled) return;
+        hydrateFromHistory(res.items);
+      } catch {
+        if (cancelled) return;
+        // Empty timeline is preferable to stale cross-thread state.
+        useAgentStream.getState().reset();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [effectiveThread]);
 
   // Unmount-time stream cleanup. The dock is re-mounted by AppLayout on every
@@ -385,6 +440,22 @@ export function AskVantageDock() {
       if (dock.streaming || dock.abortController) dock.cancelStream();
     };
   }, []);
+
+  // Esc collapses the fullscreen dock back to docked. We deliberately do NOT
+  // bind Esc when the dock is just `docked` — that would steal Escape from
+  // textarea-level dismissals (mention popover, slash palette, modals).
+  useEffect(() => {
+    if (state !== "full") return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      // Don't fight the slash palette or other inner popovers — they call
+      // stopPropagation in their own Esc handlers, so by the time the event
+      // bubbles here, those layers have closed first.
+      useDock.setState({ state: "docked" });
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state]);
 
   // Auto-scroll to bottom as steps stream in.
   const stepCount = useAgentStream((s) => s.order.length);
@@ -590,14 +661,65 @@ export function AskVantageDock() {
               {t("subtitleResume")}
             </div>
           ) : (
-            <div className="ds-mono-9">{t("subtitleDefault")}</div>
+            // Multi-session: subtitle is now the SessionSwitcher trigger.
+            // The "+ New session" affordance lives inside the switcher
+            // (next to the active-session chip and inside the popover).
+            <SessionSwitcher variant="compact" />
           )}
         </div>
+        {/* Standalone "+ New session" affordance — sits in the header so
+            users notice it even before opening the SessionSwitcher popover.
+            Triggers the same Bun /api/ask/sessions POST as the slash
+            /new command and the popover's own "+ New session" button. */}
+        <button
+          onClick={async () => {
+            try {
+              const res = await ask.sessions.create();
+              useDock.getState().upsertSession({
+                id: res.session.id,
+                threadId: res.session.threadId,
+                label: res.session.label,
+                preview: res.session.preview,
+                messageCount: res.session.messageCount,
+                lastActiveAt: res.session.lastActiveAt,
+                createdAt: res.session.createdAt,
+              });
+              useDock.getState().setActiveSession(res.session.id);
+              useDock.getState().setThreadId(res.session.threadId);
+              useDock.getState().setInput("");
+              useAgentStream.getState().reset();
+            } catch {
+              /* swallow — UI silently keeps current thread */
+            }
+          }}
+          title={t("session.newButton")}
+          aria-label={t("session.newButton")}
+          style={{
+            ...iconBtnStyle(),
+            background: "#5D3000",
+            color: "#FAF8F6",
+            width: 30,
+            height: 30,
+            borderRadius: 999,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "#3F1F00";
+            e.currentTarget.style.transform = "translateY(-1px)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "#5D3000";
+            e.currentTarget.style.transform = "translateY(0)";
+          }}
+        >
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
         <button
           onClick={toggleFull}
-          title={isFull ? t("dockButton") : t("expandButton")}
+          title={isFull ? t("fullscreen.exit") : t("fullscreen.enter")}
           style={iconBtnStyle()}
-          aria-label={isFull ? t("dockButton") : t("expandButton")}
+          aria-label={isFull ? t("fullscreen.exit") : t("fullscreen.enter")}
         >
           {isFull ? (
             <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
@@ -609,16 +731,70 @@ export function AskVantageDock() {
             </svg>
           )}
         </button>
-        <button
-          onClick={toggleDock}
-          title={t("collapse")}
-          style={iconBtnStyle()}
-          aria-label={t("collapse")}
-        >
-          <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 17l5-5-5-5M6 17l5-5-5-5" />
-          </svg>
-        </button>
+        {/* When the dock is fullscreen, swap the chevron-collapse for a
+            labelled pill that says "Exit fullscreen · Esc" so the user
+            can't miss the way out. Outside fullscreen this stays the
+            terse collapse chevron. */}
+        {isFull ? (
+          <button
+            onClick={() => useDock.setState({ state: "docked" })}
+            title={t("fullscreen.exit")}
+            aria-label={t("fullscreen.exit")}
+            style={{
+              cursor: "pointer",
+              border: "1px solid #EDE8DF",
+              background: "#FFFFFF",
+              borderRadius: 999,
+              padding: "6px 12px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              color: "#5D3000",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12.5,
+              fontWeight: 500,
+              transition: "background .14s, border-color .14s, transform .14s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#FBF8F3";
+              e.currentTarget.style.borderColor = "#5D3000";
+              e.currentTarget.style.transform = "translateY(-1px)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "#FFFFFF";
+              e.currentTarget.style.borderColor = "#EDE8DF";
+              e.currentTarget.style.transform = "translateY(0)";
+            }}
+          >
+            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+            {t("fullscreen.exit")}
+            <span
+              className="ds-mono-9"
+              style={{
+                padding: "1px 5px",
+                border: "1px solid #E8DCCA",
+                borderRadius: 4,
+                color: "#A39F99",
+                background: "#FBF8F3",
+              }}
+            >
+              {t("fullscreen.exitHint")}
+            </span>
+          </button>
+        ) : (
+          <button
+            onClick={toggleDock}
+            title={t("collapse")}
+            style={iconBtnStyle()}
+            aria-label={t("collapse")}
+          >
+            <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 17l5-5-5-5M6 17l5-5-5-5" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
@@ -672,6 +848,11 @@ export function AskVantageDock() {
                 chipGroups={chipGroups}
                 resumeStudioThread={resumeStudioThread}
                 parseJobStatus={parseJobStatus}
+                parsedResume={parsedResume}
+                resumes={resumes}
+                currentResumeId={currentResumeId}
+                setCurrentResume={setCurrentResume}
+                inStudio={pathname?.startsWith("/app/studio/resume") ?? false}
               />
             ) : (
               <StepTimeline scrollRef={scrollRef} />
@@ -696,12 +877,28 @@ function Greeting({
   chipGroups,
   resumeStudioThread,
   parseJobStatus,
+  parsedResume,
+  resumes,
+  currentResumeId,
+  setCurrentResume,
+  inStudio,
 }: {
   firstName: string;
   streaming: boolean;
   chipGroups: { meta: SuggestionGroup; chips: SuggestionChip[] }[];
   resumeStudioThread: string | null;
   parseJobStatus: "idle" | "running" | "done" | "failed";
+  // Once a parse has succeeded these power the two new always-on greeting
+  // blocks: "I read your résumé" (a single-sentence quick-read line) and
+  // "Your résumés" (a version picker that mutates currentResumeId).
+  parsedResume: import("@/lib/store").ParsedResume | null;
+  resumes: import("@/lib/store").ResumeRow[];
+  currentResumeId: string | null;
+  setCurrentResume: (id: string) => void;
+  // Path-derived: true on /app/studio/resume. The Résumé studio has its
+  // own version timeline as the canonical picker; the dock's picker only
+  // appears outside the studio so the two surfaces don't fight.
+  inStudio: boolean;
 }) {
   const t = useTranslations("dock");
   const today = useMemo(() => {
@@ -731,15 +928,104 @@ function Greeting({
         <p className="ds-body-sm" style={{ color: "#A66A00", margin: "0 0 20px" }}>
           {t("greeting.parseFailed")}
         </p>
+      ) : parsedResume || resumes.length > 0 ? (
+        // Quick-read summary line — replaces the generic "what can I do for
+        // you" copy with a sentence anchored on the user's résumé. We prefer
+        // the in-memory parsedResume (set by the parse-async pipeline), but
+        // a returning user who simply has rows in /api/resumes also gets a
+        // friendly "your résumé is on file" line so the dock acknowledges
+        // their context instead of greeting them like a first-timer.
+        (() => {
+          const topSkills = (parsedResume?.skills ?? [])
+            .map((s) => s.name?.trim())
+            .filter((n): n is string => Boolean(n))
+            .slice(0, 3);
+          const role = parsedResume?.work?.[0]?.position?.trim() ?? "";
+          const fallbackSummary = parsedResume?.basics?.summary?.trim() ?? "";
+          const summaryLine =
+            topSkills.length > 0 || role
+              ? t("greeting.readSummary", {
+                  role: role || t("greeting.fallbackRole"),
+                  skills: topSkills.length ? topSkills.join(" · ") : t("greeting.skillsUnknown"),
+                })
+              : fallbackSummary
+                ? fallbackSummary
+                : t("greeting.resumeOnFile", { count: resumes.length });
+          return (
+            <p
+              className="ds-body-sm"
+              data-testid="dock-read-summary"
+              style={{ color: "#6B6560", margin: "0 0 20px" }}
+            >
+              {summaryLine}
+            </p>
+          );
+        })()
       ) : (
         <p className="ds-body-sm" style={{ color: "#6B6560", margin: "0 0 20px" }}>
           {t("greeting.parseIdle")}
         </p>
       )}
 
+      {/* Your-résumés picker — only renders when the user has at least one
+          row on file. Clicking a chip swaps which résumé subsequent This-
+          résumé chips and the studio anchor against (via setCurrentResume).
+          We deliberately don't show this in /app/studio/resume because the
+          studio's own timeline is the canonical version picker there. */}
+      {resumes.length > 0 && !inStudio ? (
+        <div
+          data-testid="dock-resume-picker"
+          style={{ marginBottom: 18 }}
+        >
+          <div className="ds-mono-10" style={{ marginBottom: 8, color: "#A39F99" }}>
+            {t("greeting.resumePickerLabel")}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {resumes.slice(0, 6).map((r) => {
+              const active =
+                r.id === currentResumeId || (!currentResumeId && r === resumes[0]);
+              const trackKey =
+                r.track === "tailored"
+                  ? "greeting.resumeTrackTailored"
+                  : r.track === "optimized"
+                    ? "greeting.resumeTrackOptimized"
+                    : "greeting.resumeTrackMaster";
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setCurrentResume(r.id)}
+                  disabled={streaming}
+                  style={{
+                    cursor: streaming ? "not-allowed" : "pointer",
+                    border: active ? "1px solid #5D3000" : "1px solid #EDE8DF",
+                    background: active ? "#5D3000" : "#FFFFFF",
+                    color: active ? "#FAF8F6" : "#5D3000",
+                    borderRadius: 999,
+                    padding: "5px 11px",
+                    fontFamily: "JetBrains Mono, ui-monospace, monospace",
+                    fontSize: 11,
+                    letterSpacing: 0.3,
+                    opacity: streaming ? 0.6 : 1,
+                    transition: "background .14s, border-color .14s",
+                  }}
+                  title={t(trackKey)}
+                >
+                  {t(trackKey)} · v{r.version}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {chipGroups.map((group, gi) => {
         const isScoped = group.meta.id === "this_resume";
-        const scopedDisabled = isScoped && resumeStudioThread == null;
+        // A This-résumé chip is "disabled" only when we have no résumé at
+        // all. When we have a résumé but no resumeStudioThread (the common
+        // case on /app/today after parse), the chip still fires — just
+        // against the lifetime ask_vantage thread instead of the scoped one.
+        const scopedDisabled = isScoped && resumes.length === 0;
         return (
           <div key={group.meta.id} style={{ marginTop: gi === 0 ? 0 : 22 }}>
             {chipGroups.length > 1 ? (
@@ -902,6 +1188,12 @@ function Composer({
   const [listening, setListening] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  // The composer keeps the `/...` trigger range so a palette pick can
+  // splice the chosen slug into the same character span. Stored on the
+  // ref (not state) because we read it inside the synchronous insert path.
+  const slashRangeRef = useRef<{ start: number; end: number } | null>(null);
   const [focused, setFocused] = useState(false);
 
   useEffect(() => {
@@ -984,12 +1276,113 @@ function Composer({
     setInput(v);
     const caret = e.target.selectionStart ?? v.length;
     const upto = v.slice(0, caret);
-    const m = /(^|\s)@([A-Za-z]*)$/.exec(upto);
-    if (m) {
+    const mentionMatch = /(^|\s)@([A-Za-z]*)$/.exec(upto);
+    if (mentionMatch) {
       setMentionOpen(true);
-      setMentionQuery(m[2].toLowerCase());
+      setMentionQuery(mentionMatch[2].toLowerCase());
     } else {
       setMentionOpen(false);
+    }
+    // Slash trigger: `/` at line-start or after whitespace, followed by an
+    // alnum/dash/colon/slash run (the slug character set we serve from
+    // /api/slash/catalog). Storing the start/end on the ref lets the
+    // palette splice over the trigger range in a single replace.
+    const slashMatch = /(^|\s)(\/[A-Za-z0-9_\-:/]*)$/.exec(upto);
+    if (slashMatch) {
+      const triggerStart = caret - slashMatch[2].length;
+      slashRangeRef.current = { start: triggerStart, end: caret };
+      setSlashOpen(true);
+      setSlashQuery(slashMatch[2].slice(1));
+    } else {
+      setSlashOpen(false);
+      slashRangeRef.current = null;
+    }
+  }
+
+  function handleSlashPick(insertion: string) {
+    const el = textareaRef.current;
+    const range = slashRangeRef.current;
+    if (!el || !range) return;
+    const next = `${input.slice(0, range.start)}${insertion}${input.slice(range.end)}`;
+    setInput(next);
+    setSlashOpen(false);
+    slashRangeRef.current = null;
+    setTimeout(() => {
+      el.focus();
+      const pos = range.start + insertion.length;
+      el.setSelectionRange(pos, pos);
+    }, 0);
+  }
+
+  async function handleSlashCommand(id: SlashCommandId, args: string) {
+    // Trim the trigger `/...` token out of the composer first so the
+    // command doesn't leave behind a half-typed slug.
+    const range = slashRangeRef.current;
+    const cleared = range
+      ? `${input.slice(0, range.start)}${input.slice(range.end)}`
+      : input;
+    setSlashOpen(false);
+    slashRangeRef.current = null;
+
+    switch (id) {
+      case "new": {
+        try {
+          const res = await ask.sessions.create();
+          const row = {
+            id: res.session.id,
+            threadId: res.session.threadId,
+            label: res.session.label,
+            preview: res.session.preview,
+            messageCount: res.session.messageCount,
+            lastActiveAt: res.session.lastActiveAt,
+            createdAt: res.session.createdAt,
+          };
+          useDock.getState().upsertSession(row);
+          useDock.getState().setActiveSession(row.id);
+          useDock.getState().setThreadId(row.threadId);
+          setInput("");
+          useAgentStream.getState().reset();
+        } catch {
+          /* gateway logs the failure; UI silently keeps the lifetime thread */
+        }
+        return;
+      }
+      case "clear": {
+        // Wipes the local step graph but does NOT touch persisted history.
+        useAgentStream.getState().reset();
+        setInput(cleared);
+        return;
+      }
+      case "search": {
+        // Deep-research prompt: agent goes wider/deeper than a normal turn.
+        const query = args.trim();
+        if (!query) {
+          // No args yet — leave the slug in place so the user can type one
+          // and re-run /search.
+          setInput("/search ");
+          setTimeout(() => textareaRef.current?.focus(), 0);
+          return;
+        }
+        const prompt =
+          `[deep-research] Investigate the following thoroughly. Search the web, read the top sources, ` +
+          `cross-check claims, then return a synthesised brief with linked references:\n\n${query}`;
+        setInput("");
+        void sendAsk(prompt, []);
+        return;
+      }
+      case "help": {
+        const prompt =
+          "How does the Ask Vantage dock work? Explain sessions, the / command palette, " +
+          "@ mentions, file attachments, and how the lifetime thread differs from a fresh session.";
+        setInput("");
+        void sendAsk(prompt, []);
+        return;
+      }
+      case "focus": {
+        useDock.setState({ state: "full" });
+        setInput(cleared);
+        return;
+      }
     }
   }
 
@@ -1084,6 +1477,18 @@ function Composer({
           )}
         </div>
       )}
+
+      <SlashPalette
+        open={slashOpen}
+        query={slashQuery}
+        onClose={() => {
+          setSlashOpen(false);
+          slashRangeRef.current = null;
+        }}
+        onPick={handleSlashPick}
+        onCommand={handleSlashCommand}
+        variant="compact"
+      />
 
       {mentionOpen && filteredMentions.length > 0 && (
         <div

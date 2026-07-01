@@ -44,16 +44,14 @@ from agents.coordinator.router import (
     "message",
     [
         "查看一下简历版本",
-        "查看我的简历",
         "看一下简历版本",
         "看看简历历史",
         "列出我的简历",
+        "列表我的简历",
         "显示简历版本列表",
         "我有几版简历",
         "我一共存了多少份简历",
-        "show me my résumés",
         "show my resume versions",
-        "list my résumés",
         "view all resume versions",
         "what résumé versions do I have",
         "which resume versions do I have",
@@ -62,13 +60,51 @@ from agents.coordinator.router import (
     ],
 )
 def test_read_phrasing_lands_on_list_intent(message: str) -> None:
-    """Regex Layer 1 must catch these — no Layer 2 LLM call needed."""
+    """Regex Layer 1 must catch these — no Layer 2 LLM call needed.
+
+    Each phrasing either contains an unambiguous "list" verb (列出 / 列表)
+    or an explicit "version / history / timeline / 版本 / 历史 / 记录 /
+    列表" qualifier — without one, the user is asking to view the résumé
+    CONTENT (which the dock LLM handles via the ``read_resume`` tool),
+    not the version list.
+    """
     result = cheap_intent_classifier(message)
     assert result is not None, f"regex missed: {message!r}"
     assert result.intent == "list_resume_versions", (
         f"{message!r} routed to {result.intent!r}, expected list_resume_versions"
     )
     assert result.confidence >= 0.85, result.confidence
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # "view résumé" *without* a "version/history" qualifier is the
+        # user asking to see the *content*, not the version list. We
+        # leave these for the dock LLM (read_resume tool, prompts/
+        # coordinator/dock_agent.v1.md "Viewing / showing the résumé").
+        "查看我的简历",
+        "看一下我的简历",
+        "看看我的简历",
+        "show me my résumé",
+        "view my resume",
+        "你能查看我的简历吗",
+    ],
+)
+def test_view_content_phrasing_does_not_collapse_to_list(message: str) -> None:
+    """Round-21 fix: 'show my résumé' (no 'versions' qualifier) must NOT
+    fast-path into list_resume_versions — otherwise the user asking to see
+    the document content gets a "you have 1 version" reply instead of the
+    actual content.
+
+    Either Layer 1 returns None (we fall through to the dock LLM, which
+    calls ``read_resume``), or it returns a different intent — anything but
+    the version-list shortcut.
+    """
+    result = cheap_intent_classifier(message)
+    assert result is None or result.intent != "list_resume_versions", (
+        f"{message!r} unexpectedly fast-pathed to list_resume_versions"
+    )
 
 
 @pytest.mark.parametrize(

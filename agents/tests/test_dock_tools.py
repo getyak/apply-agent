@@ -213,6 +213,7 @@ def test_dock_tools_registry_shape():
         "recall_past_applications",
         "recall_weak_points",
         "list_my_applications",
+        "read_resume",
         "tailor_resume",
         "find_jobs",
         "start_mock_interview",
@@ -221,6 +222,138 @@ def test_dock_tools_registry_shape():
         "trends_today",
     }
     assert required.issubset(names), f"missing tools: {required - names}"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# D1a: read_resume tool
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_resume_returns_empty_when_no_resume(bound_user):
+    """No résumé row → status: empty; the LLM must NOT pivot to find_jobs."""
+    with patch("agents.tools.auto.pg_query", new=AsyncMock(return_value=[])):
+        out = await dock_tools.read_resume.ainvoke({"scope": "summary"})
+    assert out["status"] == "empty"
+    assert out["agent"] == "resume_agent"
+    assert out["action"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_read_resume_returns_structured_content(bound_user):
+    """Successful PG hit → structured content the LLM can narrate over."""
+    row = {
+        "id": uuid4(),
+        "version": 3,
+        "content": {
+            "basics": {"name": "Test User", "label": "Senior Engineer"},
+            "work": [
+                {
+                    "name": "Acme",
+                    "position": "Eng",
+                    "startDate": "2022-01",
+                    "highlights": ["shipped feature X"],
+                }
+            ],
+            "education": [{"institution": "Some Uni", "studyType": "BS"}],
+            "skills": [{"name": "Python"}, {"name": "Go"}],
+            "projects": [{"name": "Side Project"}],
+        },
+        "track": "base",
+        "is_base": True,
+        "created_at": None,
+    }
+    with patch("agents.tools.auto.pg_query", new=AsyncMock(return_value=[row])):
+        out = await dock_tools.read_resume.ainvoke({"scope": "summary"})
+    assert out["status"] == "ok"
+    assert out["agent"] == "resume_agent"
+    assert out["action"] == "read"
+    assert out["track"] == "base"
+    assert out["version"] == 3
+    # Structured passthrough — the LLM uses these to compose a reply.
+    assert out["content"]["basics"]["name"] == "Test User"
+    assert out["content"]["work"][0]["name"] == "Acme"
+    assert out["content"]["education"][0]["institution"] == "Some Uni"
+    assert {"Python", "Go"}.issubset({s["name"] for s in out["content"]["skills"]})
+
+
+@pytest.mark.asyncio
+async def test_read_resume_unwraps_uploader_parsed_wrapper(bound_user):
+    """Uploader stores ``{raw, parsed: <JSON Resume>, markdown}``; tool must unwrap."""
+    row = {
+        "id": uuid4(),
+        "version": 1,
+        "content": {
+            "raw": "",
+            "parsed": {
+                "basics": {"name": "Wrapped"},
+                "work": [{"name": "InnerCo", "position": "Eng"}],
+                "skills": [{"name": "TypeScript"}],
+            },
+            "markdown": "# Wrapped\n_Eng_\n",
+        },
+        "track": "original",
+        "is_base": True,
+        "created_at": None,
+    }
+    with patch("agents.tools.auto.pg_query", new=AsyncMock(return_value=[row])):
+        out = await dock_tools.read_resume.ainvoke({"scope": "summary"})
+    assert out["status"] == "ok"
+    assert out["content"]["basics"]["name"] == "Wrapped"
+    assert out["content"]["work"][0]["name"] == "InnerCo"
+    # markdown passthrough fall-back for the LLM if it wants to quote.
+    assert "Wrapped" in (out["markdown"] or "")
+
+
+@pytest.mark.asyncio
+async def test_read_resume_summary_truncates_long_payloads(bound_user):
+    """scope=summary caps work/skills counts so the SSE frame stays small."""
+    big_work = [{"name": f"Co{i}", "position": "Eng"} for i in range(30)]
+    big_skills = [{"name": f"skill_{i}"} for i in range(40)]
+    row = {
+        "id": uuid4(),
+        "version": 1,
+        "content": {"basics": {"name": "Bulky"}, "work": big_work, "skills": big_skills},
+        "track": "base",
+        "is_base": True,
+        "created_at": None,
+    }
+    with patch("agents.tools.auto.pg_query", new=AsyncMock(return_value=[row])):
+        out_summary = await dock_tools.read_resume.ainvoke({"scope": "summary"})
+        out_full = await dock_tools.read_resume.ainvoke({"scope": "full"})
+    assert len(out_summary["content"]["work"]) == 6
+    assert len(out_summary["content"]["skills"]) == 20
+    # full scope must NOT cap.
+    assert len(out_full["content"]["work"]) == 30
+    assert len(out_full["content"]["skills"]) == 40
+
+
+@pytest.mark.asyncio
+async def test_read_resume_invalid_scope_defaults_to_summary(bound_user):
+    row = {
+        "id": uuid4(),
+        "version": 1,
+        "content": {"basics": {"name": "X"}, "work": [{"name": f"C{i}"} for i in range(20)]},
+        "track": "base",
+        "is_base": True,
+        "created_at": None,
+    }
+    with patch("agents.tools.auto.pg_query", new=AsyncMock(return_value=[row])):
+        out = await dock_tools.read_resume.ainvoke({"scope": "garbage"})
+    assert out["scope"] == "summary"
+    assert len(out["content"]["work"]) == 6  # summary cap applied
+
+
+@pytest.mark.asyncio
+async def test_read_resume_degrades_on_pg_failure(bound_user):
+    with patch(
+        "agents.tools.auto.pg_query",
+        new=AsyncMock(side_effect=RuntimeError("connection refused")),
+    ):
+        out = await dock_tools.read_resume.ainvoke({"scope": "summary"})
+    assert out["status"] == "error"
+    # No content payload on the error path.
+    assert "content" not in out
 
 
 def test_dock_context_isolation():
