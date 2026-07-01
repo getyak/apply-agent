@@ -257,6 +257,31 @@ describe("POST /api/ask/stream — pass-through", () => {
     const res = await streamReq({ message: "hi" }, { "X-Relay-Thread-Id": "ask_vantage:other" });
     expect(res.status).toBe(403);
   });
+
+  // D4 (stream-resume-plan): Last-Event-ID must reach the agents host so
+  // its resume branch can hand back events past the client's cursor.
+  it("forwards the Last-Event-ID request header to the agent host", async () => {
+    await streamReq({ message: "" }, { "Last-Event-ID": "42" });
+    const headers = fetchCalls[0]!.init.headers as Record<string, string>;
+    expect(headers["Last-Event-ID"]).toBe("42");
+  });
+
+  // D3 (stream-resume-plan): the agents host advertises resume via
+  // X-Relay-Resume: 1 on the SSE response. Pass it through so the web
+  // client can tell resume responses apart from fresh turns.
+  it("passes X-Relay-Resume through when the agent host sets it", async () => {
+    agentResponder = () =>
+      new Response(CANNED_SSE, {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "x-trace-id": "trace-from-agent",
+          "x-relay-resume": "1",
+        },
+      });
+    const res = await streamReq({ message: "", last_event_id: 3 });
+    expect(res.headers.get("x-relay-resume")).toBe("1");
+  });
 });
 
 describe("GET /api/ask/recent", () => {

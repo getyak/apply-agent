@@ -59,6 +59,12 @@ routes.post("/stream", async (c) => {
   const surface = c.req.header("x-relay-surface") ?? undefined;
   const requestId = c.get("requestId");
   const traceId = c.get("traceId");
+  // Stream resume-by-cursor (D4 of stream-resume-plan): forward the
+  // SSE-standard Last-Event-ID header so the agents host can hand back
+  // events past the client's cursor. The body field is also honoured
+  // downstream; this header path is what an EventSource-based client
+  // would use in the future.
+  const lastEventId = c.req.header("last-event-id") ?? undefined;
 
   // Raw body pass-through: read once as text and forward verbatim. The agents
   // host validates the JSON (message / command / etc.).
@@ -80,6 +86,7 @@ routes.post("/stream", async (c) => {
         "X-Relay-Locale": resolvedLocale,
         ...(requestId ? { "X-Request-Id": requestId } : {}),
         ...(traceId ? { "X-Trace-Id": traceId } : {}),
+        ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
       },
       body: rawBody,
     });
@@ -118,14 +125,19 @@ routes.post("/stream", async (c) => {
 
   // Pure pass-through: hand the upstream SSE body straight back, preserving the
   // trace id for support correlation. No parsing, no translation.
+  // ``X-Relay-Resume`` (from the agents host's resume branch) lets the web
+  // client tell resume responses apart from fresh turns.
+  const responseHeaders: Record<string, string> = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+    "X-Trace-Id": upstream.headers.get("X-Trace-Id") ?? traceId ?? "",
+  };
+  const resumeMarker = upstream.headers.get("X-Relay-Resume");
+  if (resumeMarker) responseHeaders["X-Relay-Resume"] = resumeMarker;
   return new Response(upstream.body, {
     status: 200,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
-      "X-Trace-Id": upstream.headers.get("X-Trace-Id") ?? traceId ?? "",
-    },
+    headers: responseHeaders,
   });
 });
 

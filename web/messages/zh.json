@@ -775,7 +775,13 @@
     },
     "message": {
       "thinking": "思考中",
-      "streamError": "流被中断：{message}"
+      "streamError": "流被中断：{message}",
+      "reconnecting": "正在重新连接… ({attempt}/3)",
+      "streamExpired": {
+        "title": "流已过期",
+        "body": "我们无法接续上一次的对话。开启新一轮继续。",
+        "cta": "重新开始"
+      }
     },
     "artifact": {
       "confident": "{pct}% 把握",

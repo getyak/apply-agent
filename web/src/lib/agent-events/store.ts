@@ -50,6 +50,14 @@ interface AgentStreamState {
   isStreaming: boolean;
   /** Set on RUN_ERROR / transport failure so the timeline can show a footer. */
   errorMessage: string | null;
+  /**
+   * Reconnect state (D4 of stream-resume-plan). Zero = live; >0 = the
+   * consumer is retrying after a transport failure (attempt N of 3);
+   * <0 = retry budget exhausted, an onError will follow.
+   */
+  reconnectAttempt: number;
+  /** ``true`` once the server surfaced ``event: stream_expired`` — UI shows Start over. */
+  streamExpired: boolean;
   abortController: AbortController | null;
 
   pushEvent: (e: AgentEvent) => void;
@@ -57,6 +65,8 @@ interface AgentStreamState {
   setStreaming: (v: boolean) => void;
   setError: (msg: string | null) => void;
   setAbort: (c: AbortController | null) => void;
+  setReconnectAttempt: (n: number) => void;
+  setStreamExpired: (v: boolean) => void;
   reset: () => void;
 }
 
@@ -73,6 +83,8 @@ export const useAgentStream = create<AgentStreamState>()(
     rootStepId: null,
     isStreaming: false,
     errorMessage: null,
+    reconnectAttempt: 0,
+    streamExpired: false,
     abortController: null,
 
     pushEvent: (e) => {
@@ -102,6 +114,8 @@ export const useAgentStream = create<AgentStreamState>()(
     setStreaming: (v) => set({ isStreaming: v }),
     setError: (msg) => set({ errorMessage: msg }),
     setAbort: (c) => set({ abortController: c }),
+    setReconnectAttempt: (n) => set({ reconnectAttempt: n }),
+    setStreamExpired: (v) => set({ streamExpired: v }),
 
     reset: () => {
       const cur = get().abortController;
@@ -113,6 +127,8 @@ export const useAgentStream = create<AgentStreamState>()(
         rootStepId: fresh.rootStepId,
         isStreaming: false,
         errorMessage: null,
+        reconnectAttempt: 0,
+        streamExpired: false,
         abortController: null,
       });
     },
@@ -235,6 +251,20 @@ export function useStreamError(): string | null {
   return useAgentStream((s) => s.errorMessage);
 }
 
+/**
+ * Reconnect state selector (D4 of stream-resume-plan).
+ *   0  → live, no retries in flight
+ *   >0 → retrying, N of MAX (matches "Reconnecting…" affordance)
+ *   <0 → retries exhausted, an error footer follows
+ */
+export function useReconnectAttempt(): number {
+  return useAgentStream((s) => s.reconnectAttempt);
+}
+
+export function useStreamExpired(): boolean {
+  return useAgentStream((s) => s.streamExpired);
+}
+
 /** True when there is at least one rendered step (drives greeting vs timeline). */
 export function useHasSteps(): boolean {
   return useAgentStream((s) =>
@@ -297,8 +327,14 @@ export async function sendAsk(
   if (inflight) inflight.abort();
   dock.cancelStream?.();
   // Clear the per-run banner from the previous turn so a fresh run doesn't
-  // inherit a stale RUN_ERROR. Prior steps remain.
-  useAgentStream.setState({ errorMessage: null });
+  // inherit a stale RUN_ERROR. Prior steps remain. Also reset the D4
+  // reconnect/expired flags — a fresh turn should never inherit a
+  // stream_expired badge from the last one.
+  useAgentStream.setState({
+    errorMessage: null,
+    reconnectAttempt: 0,
+    streamExpired: false,
+  });
 
   const footer = attachmentsFooter(attachments);
   const wirePrompt = `${prompt}${footer}`;
@@ -386,6 +422,18 @@ function makeStreamCallbacks(controller: AbortController) {
     },
     onDone: () => {
       clearOwned();
+    },
+    // D4 wiring: mirror the consumer's reconnect signal into the store so
+    // dock chrome can render the inline "Reconnecting…" affordance. On
+    // successful reconnect the consumer fires attempt=0; the badge clears.
+    onReconnect: (info: { attempt: number; nextDelayMs?: number }) => {
+      useAgentStream.setState({ reconnectAttempt: info.attempt });
+    },
+    // D4 wiring: server ran out of buffered events for our cursor. The
+    // UI should stop pretending the stream can resume and offer a
+    // "Start over" affordance instead. See dock.tsx footer.
+    onStreamExpired: (_info: { traceId?: string; reason?: string }) => {
+      useAgentStream.setState({ streamExpired: true, reconnectAttempt: 0 });
     },
   };
 }

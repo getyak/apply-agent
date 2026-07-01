@@ -775,7 +775,13 @@
     },
     "message": {
       "thinking": "Thinking",
-      "streamError": "Something interrupted the stream: {message}"
+      "streamError": "Something interrupted the stream: {message}",
+      "reconnecting": "Reconnecting… ({attempt}/3)",
+      "streamExpired": {
+        "title": "Stream expired",
+        "body": "We couldn't pick up where we left off. Start a fresh turn to continue.",
+        "cta": "Start over"
+      }
     },
     "artifact": {
       "confident": "{pct}% CONFIDENT",

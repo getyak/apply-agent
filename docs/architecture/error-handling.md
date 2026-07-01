@@ -633,3 +633,162 @@ PG 恢复后(`docker start relay-postgres`),同一个 endpoint 立即返回 401 
 - agents/tests/test_redaction.py: 10 个 case 全过(API key / DSN / 路径 / 多行 trace 全擦除)
 - agents 314 tests 0 fail(1 预存在 SOCKS 环境失败,与本改造无关)
 - web typecheck 全程绿
+
+---
+
+## 14. Stream resume · SSE 断点续跑（D1–D5, 2026-07）
+
+> **背景（用户投诉原文）**：Ask Vantage dock 里发一个稍长的问题，中途出现 `流被中断：Something went wrong on our side. We've logged this — please retry shortly.`。原因是浏览器 tab throttled / 代理抖动 / agents 重启，前端只能全量重跑一次 turn；LangGraph 生成到一半的结果就此丢失。这是 Claude Code / Manus 级 UX 的正解题：**resume by cursor**。
+>
+> 该系统由 5 步（D1 摸底 → D2 存储层 → D3 resume 分支 → D4 前端消费 → D5 E2E + 文档）落地。以下是最终约定，任何后续改动必须先读本节。
+
+### 14.1 端到端拓扑
+
+```
+[web dock] ──POST /api/ask/stream─▶ [Bun gateway] ──POST /ask/stream──▶ [FastAPI agents]
+   │ track lastSeq                    │ pass-through                     │ ↕ persist_stream
+   │ auto-retry 3x on drop            │ + forward Last-Event-ID          │      │
+   │ Reconnecting… pill               │ + forward X-Relay-Resume         │  ┌───┴───┐
+   │ Stream expired ▷ Start over      │                                  │  │  PG   │  ← ask_stream_events
+   ▼                                  ▼                                  │  │       │      (24h / 1000 rows/thread)
+   consumer.ts                        api/src/routes/ask.ts              │  │ Redis │  ← ask_stream:{thread_id}
+                                                                         │  └───┬───┘      (Pub/Sub live tail)
+                                                                         ▼      │
+                                                                     resume    │
+                                                                     branch    │
+                                                                     replay ───┘
+                                                                     + live tail
+```
+
+### 14.2 分层职责
+
+**Storage** — `infra/postgres/migrations/021_ask_stream_events.up.sql`
+- 表 `ask_stream_events(thread_id, sequence PK, event_id, run_id, trace_id, frame BYTEA, event_name, created_at)`
+- `sequence` 是 per-thread 单调递增(不是 per-run,才能跨 run 续跑)
+- UNIQUE `(thread_id, event_id)` 让 retry 幂等
+- BRIN(created_at) 供 prune
+
+**Writer** — `agents/harness/stream_events.py::StreamPersistence.persist()`
+- pg_advisory_xact_lock 保证多写者时 sequence 单调
+- `ON CONFLICT (thread_id, event_id) DO NOTHING` — 重发同一 event 返回 seq=None,caller 跳过 cursor 前进
+- 成功写 PG 后 `PUBLISH ask_stream:{thread_id}` 到 Redis(fail-open,断了 caller 不 crash)
+
+**Wrapper** — `agents/harness/stream_events.py::persist_stream(source, thread_id=...)`
+- 包每个 SSE frame:先 persist → 得到 seq → 在 frame 上加两处 cursor:
+  - **SSE 层:** `id: <seq>\n` 前缀(EventSource 原生 Last-Event-ID 语义)
+  - **JSON 层:** 把 `rawEvent.stream_seq = seq` 塞进 payload(fetch-based 客户端读)
+- persist 失败(dup / PG down)只丢 `id:` 但仍 yield frame,不阻断直播
+
+**Resume branch** — `agents/api/server.py::_resume_stream()`
+- 触发条件:`Last-Event-ID` header 或 body `last_event_id > 0`
+- 先跑 `replay_frames(after_seq=cursor)`:
+  - 有 frames > cursor → 按 seq 顺序全 yield(带 `id:` 行原样)
+  - `expired=True`(buffer 全空 + cursor > 0) → 发一帧 `event: stream_expired\ndata: {"reason":"buffer_evicted","traceId":...}\n\n` 结束
+- 再跑 `live_frames(after_seq=latest)`:订阅 Redis Pub/Sub,`RELAY_STREAM_RESUME_IDLE_S`(默认 30s,测试 0)后自动收尾
+- 响应头 `X-Relay-Resume: 1` 标记该次是 resume(测试 + 前端可断言)
+
+**Detached run** — `agents/api/server.py::_detached_run()`
+- 直播路径包 `_detached_run(persist_stream(_with_heartbeat(gen())))`
+- 客户端 fetch 断了 → 后台 drainer **不取消**,LangGraph 继续跑,frame 继续写 PG + Redis
+- 断了的客户端下次 resume 时看到全部 missed frames
+
+**Gateway** — `api/src/routes/ask.ts`
+- 保持纯 pass-through,新增两条:
+  - request:透传 `Last-Event-ID` header 到 agents 上游
+  - response:透传 `X-Relay-Resume` 从 agents 下游到 web
+
+**Web consumer** — `web/src/lib/agent-events/consumer.ts`
+- 每个入手事件读 `event.rawEvent.stream_seq` → 更新 `lastSeq`
+- 传输失败(非 AbortError,非 stream_expired) → 指数退避(500ms → 1500ms → 3500ms)重试 3 次,POST body 加 `last_event_id: lastSeq`,header 加 `Last-Event-ID`
+- 成功重连 → `onReconnect({attempt: 0})` 清空 UI
+- 3 次都失败 → `onReconnect({attempt: -N})` + `onError(err)`
+- 收到 `event: stream_expired` → `onStreamExpired({traceId, reason})` 立刻停(不再 retry)
+
+**Web store** — `web/src/lib/agent-events/store.ts`
+- 新状态 `reconnectAttempt: number`(0/正/负 三态) + `streamExpired: boolean`
+- `sendAsk` / `reset` 都清零
+- 选择器 `useReconnectAttempt()` / `useStreamExpired()` 让 UI 只订阅需要的字段
+
+**Web UI** — `web/src/components/ask-vantage/step-timeline.tsx`
+- 三档 footer,优先级 `streamExpired > reconnecting > error`
+  - `<ReconnectingFooter attempt={N} />`:黄色 pill "正在重新连接… (N/3)",aria-live=polite
+  - `<StreamExpiredFooter />`:米黄卡片,"流已过期" + "重新开始" 按钮清 flag(不自动重发,让用户重新点)
+- i18n keys: `dock.message.reconnecting` / `dock.message.streamExpired.{title,body,cta}`,en + zh 都补齐
+
+### 14.3 retention / prune
+
+- 24h TTL + 每 thread 1000 行封顶,常量 `RETENTION_HOURS` / `PER_THREAD_MAX_ROWS`,与 migration docstring 同源
+- FastAPI lifespan 里挂 `_prune_loop`,每 600 秒扫一次(错误自愈 60s 重试)
+- 超窗判定:`replay_frames` 里 SELECT > cursor 空 AND `MAX(sequence)` 为 NULL AND cursor > 0 → `expired=True`
+
+### 14.4 三档 UX
+
+| 场景 | 服务端信号 | 前端处理 | 用户可见 |
+|------|-----------|---------|---------|
+| 短暂网络抖动 | Redis Pub/Sub 里 frames 一直流入,PG 里 sequence 涨 | `consumer.ts` 静默 3×指数退避重连,第一帧到达清 badge | 短暂看到 `正在重新连接… (1/3)` pill,然后自动继续,不打断输入 |
+| agents 重启中 | 上游 fetch 立即失败,3 次全撞 502 | 3 次退避耗尽 → `onError` 显示 error footer | 看到 error footer 但仍能选择"重新开始",无缝下一 turn 走新 thread |
+| 客户端离线 24h+ | `_prune_loop` 已把该 thread 全部行删了,resume 分支返回 `event: stream_expired` | `onStreamExpired` → 米黄卡片 | 看到"流已过期 · 重新开始",点击清 flag,自然发下一 turn |
+
+### 14.5 验证收口
+
+**agents 层**
+- `agents/tests/test_stream_events.py` 21 case 全过(helpers + PG round-trip + Pub/Sub live tail + prune)
+- `agents/tests/test_ask_stream_resume.py` 3 case 全过(HTTP 层 header + body cursor + expired)
+- 全套 314 tests 0 fail
+
+**Bun 网关**
+- `api/src/routes/ask.test.ts` 23 case 全过(pass-through + Last-Event-ID + X-Relay-Resume)
+
+**Web**
+- `web/src/lib/agent-events/__tests__/consumer-resume.test.ts` 5 case 全过(store wiring + 帧结构)
+- `bun test src/lib/agent-events/` 全 32 case 通过
+- `bun run typecheck` 全绿
+
+**手动烟测**
+```bash
+# 1. 触发一次正常 turn,PG 里看数据
+psql -c "SELECT thread_id, sequence, event_name, length(frame) FROM ask_stream_events ORDER BY sequence DESC LIMIT 5;"
+
+# 2. 触发 resume:seed 3 帧,resume from cursor=1
+curl -sN -X POST http://localhost:3001/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Last-Event-ID: 1" \
+  -d '{"message":""}'
+# expect: X-Relay-Resume: 1 响应头,frames 只有 id:2 id:3
+
+# 3. expired 场景:空 buffer + cursor=42
+curl -sN -X POST http://localhost:3001/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Last-Event-ID: 42" \
+  -d '{"message":""}'
+# expect: event: stream_expired\ndata: {"reason":"buffer_evicted","traceId":"..."}
+```
+
+### 14.6 决策日志
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| sequence 粒度 | per-thread 单调 | Dock lifetime thread 跨多个 run;per-run seq 每次归零,cursor 失效 |
+| cursor 载体 | SSE `id:` 行 + JSON `rawEvent.stream_seq` 双写 | EventSource 原生用 `id:`,fetch-based 用 JSON,后续换 EventSource 零成本 |
+| expired 触发 | buffer 全空 AND cursor > 0 | 部分保留时优先给用户能收到的 frames,reducer 走 run_id reset 自愈 |
+| 重试次数 | 3 次 (500/1500/3500ms) | 覆盖典型代理超时 + 短暂 agents 重启;更多会给"卡住"错觉 |
+| 断开时 LangGraph | 后台 drainer 继续跑,不 cancel | 让"客户端关 tab 一分钟再回来"能 resume 到完成的 turn |
+| POST body cursor 也支持 | body.last_event_id 与 header 二选一 | fetch 客户端跨 CDN / 代理时 header 可能被抹,body 是保底 |
+| stream_expired 后不自动 sendAsk | 用户点"重新开始" 才发 | 静默重发用户没打完的 prompt 是更糟的 UX |
+| retention 24h / 1000 行 | 中庸值 | 覆盖过夜 idle 场景,不至于让 PG 单表膨胀 |
+
+### 14.7 引用文件清单
+
+- `infra/postgres/migrations/021_ask_stream_events.up.sql` / `.down.sql`
+- `agents/harness/stream_events.py`
+- `agents/api/server.py`(_resume_stream, _detached_run, lifespan prune loop)
+- `agents/tests/test_stream_events.py`, `agents/tests/test_ask_stream_resume.py`
+- `api/src/routes/ask.ts`(Last-Event-ID + X-Relay-Resume 透传)
+- `api/src/routes/ask.test.ts`(两条新 case)
+- `web/src/lib/agent-events/consumer.ts`(带 cursor 的 3 次重试)
+- `web/src/lib/agent-events/store.ts`(reconnectAttempt / streamExpired)
+- `web/src/lib/agent-events/index.ts`(新 selector 导出)
+- `web/src/components/ask-vantage/step-timeline.tsx`(三档 footer)
+- `web/messages/en.json` / `zh.json`(dock.message.reconnecting + streamExpired)
