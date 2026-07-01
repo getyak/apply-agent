@@ -104,6 +104,14 @@ from agents.harness.checkpointer import (  # noqa: E402
 )
 from agents.harness.guards import BudgetExhausted  # noqa: E402
 from agents.harness.state import InterviewMode  # noqa: E402
+from agents.harness.stream_events import (  # noqa: E402
+    last_event_id_from_headers,
+    live_frames,
+    persist_stream,
+    prune_ask_stream_events,
+    replay_frames,
+    resume_enabled,
+)
 from agents.nodes import interview_agent, resume_agent  # noqa: E402
 from agents.tools.auto import pg_query  # noqa: E402
 
@@ -124,6 +132,23 @@ async def _lifespan(_app: FastAPI):
     from agents.events.consumers import start_all_in_background
 
     tasks = start_all_in_background()
+
+    # D3 (stream resume): prune ask_stream_events every 10 min so the
+    # 24h retention + 1000-row cap actually apply. Loop is fail-open —
+    # PG hiccups don't take the app down.
+    async def _prune_loop() -> None:
+        while True:
+            try:
+                await asyncio.sleep(600.0)
+                await prune_ask_stream_events()
+            except asyncio.CancelledError:
+                return
+            except Exception:  # noqa: BLE001 — best-effort background job
+                await asyncio.sleep(60.0)
+
+    prune_task = asyncio.create_task(_prune_loop(), name="ask_stream_prune")
+    tasks = list(tasks) + [prune_task]
+
     try:
         yield
     finally:
@@ -562,6 +587,14 @@ class AskPayload(BaseModel):
     # Forwarded to LangGraph as Command(resume=...) via dock_agent.run_dock_turn.
     # When set, ``message`` may be empty — the resume decision drives the turn.
     command: dict[str, Any] | None = None
+    # Stream resume-by-cursor (D3 of stream-resume-plan): when set to a
+    # positive integer, /ask/stream skips the live pipeline entirely and
+    # replays persisted frames with sequence > last_event_id from PG,
+    # then tails Redis for anything the in-flight run emits next. This
+    # is the fetch-based sibling of the browser EventSource ``Last-Event-ID``
+    # header (POST bodies can't rely on the header, so we accept it here
+    # too). See docs/architecture/error-handling.md §Stream resume.
+    last_event_id: int | None = None
 
 
 @app.post("/ask/stream")
@@ -726,11 +759,178 @@ async def ask_stream(
 
         yield _sse({"event": "done"})
 
+    # Stream resume-by-cursor (D3): if the client sent a Last-Event-ID
+    # (either via the SSE header or the POST body field), skip the live
+    # pipeline entirely and hand over what they missed. See
+    # docs/architecture/error-handling.md §Stream resume. When the
+    # persistence substrate is unavailable, ``resume_enabled()`` is False
+    # and this branch degrades to the pre-021 pipeline (fresh stream).
+    header_cursor = last_event_id_from_headers(request.headers)
+    body_cursor = payload.last_event_id if payload.last_event_id and payload.last_event_id > 0 else None
+    cursor = header_cursor or body_cursor
+    if cursor is not None and cursor > 0 and resume_enabled():
+        log.info(
+            "ask_stream.resume",
+            thread_id=thread_id,
+            after_seq=cursor,
+            trace_id=trace_id,
+            request_id=req_id,
+        )
+        return StreamingResponse(
+            _resume_stream(thread_id=thread_id, after_seq=cursor, trace_id=trace_id),
+            media_type="text/event-stream",
+            headers={"X-Relay-Resume": "1"},
+        )
+
     # Wrap the dock generator in a 10 s heartbeat (event: "ping"). Keeps
     # intermediaries from killing the SSE connection during long ReAct
     # thinking pauses and lets the dock idle-watchdog distinguish
     # "agent is alive but quiet" from "stream is dead".
-    return StreamingResponse(_with_heartbeat(gen()), media_type="text/event-stream")
+    #
+    # After heartbeats are injected, wrap the whole stream in
+    # ``persist_stream`` so every frame — dock, heartbeat, error — is
+    # captured for future resume. ``persist_stream`` yields the same
+    # frames with an ``id: <sequence>`` SSE line prepended so browser
+    # clients get native Last-Event-ID semantics.
+    #
+    # Detached run (D3): a resume-by-cursor client must be able to
+    # reconnect and pick up where they left off — but a raw
+    # StreamingResponse cancels its generator when the fetch aborts,
+    # which tears down LangGraph mid-turn. We wrap the persisted stream
+    # in ``_detached_run`` so the run keeps executing in a background
+    # task that writes to PG + Redis regardless of whether the HTTP
+    # response is still connected.
+    live_source = _with_heartbeat(gen())
+    persisted = persist_stream(live_source, thread_id=thread_id)
+    return StreamingResponse(
+        _detached_run(persisted, thread_id=thread_id),
+        media_type="text/event-stream",
+    )
+
+
+async def _detached_run(
+    source: AsyncIterator[str],
+    *,
+    thread_id: str,
+) -> AsyncIterator[str]:
+    """Forward ``source`` frames to the HTTP response, but keep the underlying
+    run alive if the client disconnects.
+
+    The trick: a background task drains ``source`` (persisting every frame
+    via persist_stream on the way) and shoves each frame onto a bounded
+    queue. The outer generator relays queue items to the fetch response.
+    When the fetch cancels, we detach — the background drainer keeps
+    running to completion so LangGraph finishes the turn and every frame
+    lands in PG + Redis for a resume-by-cursor client to pick up.
+    """
+    queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue(maxsize=32)
+
+    async def _drain() -> None:
+        try:
+            async for chunk in source:
+                await queue.put(("chunk", chunk))
+        except BaseException as exc:  # noqa: BLE001 — top-of-task boundary
+            log.warning("ask_stream.detached_drain_failed", thread_id=thread_id, error=repr(exc))
+        finally:
+            await queue.put(("done", None))
+
+    drain_task = asyncio.create_task(_drain(), name=f"ask_stream_drain:{thread_id[-8:]}")
+
+    try:
+        while True:
+            kind, payload_str = await queue.get()
+            if kind == "done":
+                return
+            if payload_str is None:
+                continue
+            yield payload_str
+    except (asyncio.CancelledError, GeneratorExit):
+        # Client disconnected. Do NOT cancel the drainer — that would
+        # kill the LangGraph run mid-turn and leave the resume buffer
+        # incomplete. The drainer will finish naturally when ``source``
+        # is exhausted; its frames will still land in PG + Redis for
+        # any resume-by-cursor client.
+        log.info(
+            "ask_stream.detached_client_gone",
+            thread_id=thread_id,
+            drain_pending=not drain_task.done(),
+        )
+        raise
+    finally:
+        # If the drainer somehow finished before the client disconnected
+        # (normal path), await it so its exception surfaces.
+        if drain_task.done():
+            try:
+                drain_task.result()
+            except BaseException:  # noqa: BLE001
+                pass
+
+
+async def _resume_stream(
+    *,
+    thread_id: str,
+    after_seq: int,
+    trace_id: str | None,
+    live_idle_s: float | None = None,
+) -> AsyncIterator[str]:
+    """Serve a resume-by-cursor stream: PG replay → Redis live tail.
+
+    Emits missed frames verbatim (already stamped with ``id: <seq>`` at
+    write time) so the client's reducer folds them exactly as if the
+    connection had never dropped. When the client's cursor points at
+    events that have been pruned out of the buffer, emits a single
+    ``event: stream_expired`` frame carrying a trace id so the UI can
+    show "Stream expired · Start over".
+
+    ``live_idle_s`` — how long to hold the Redis Pub/Sub tail open after
+    replay drains, waiting for the in-flight run to publish more frames.
+    Defaults to the RELAY_STREAM_RESUME_IDLE_S env var (10 s in tests
+    via monkeypatch, 30 s in prod). Set to 0 to skip live tail entirely
+    — useful when the caller just wants a catch-up snapshot.
+    """
+    replay = await replay_frames(thread_id, after_seq=after_seq)
+    if replay.expired:
+        yield (
+            "event: stream_expired\n"
+            f"data: {json.dumps({'traceId': trace_id, 'reason': 'buffer_evicted'})}\n\n"
+        )
+        return
+
+    cursor = after_seq
+    for seq, frame_bytes in replay.frames:
+        try:
+            frame_str = frame_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        cursor = max(cursor, seq)
+        # Frames already carry ``id: <seq>`` from persist_stream if they
+        # were written after 021 landed. Older frames (pre-021, if any)
+        # would lack the header — cheap re-stamp keeps the contract.
+        if not frame_str.startswith("id:"):
+            frame_str = f"id: {seq}\n{frame_str}"
+        yield frame_str
+
+    # Live tail: whatever the in-flight run publishes after we caught up.
+    # Configurable so callers/tests can dial it down; production dock
+    # clients set STREAM_IDLE_TIMEOUT_MS = 120 s but resume connections
+    # don't need to hold that long — the client will reconnect on any
+    # gap and pick up the tail again. 30 s is a solid trade-off:
+    # covers a slow ReAct thinking pause without pinning a connection
+    # for a stale run.
+    if live_idle_s is None:
+        try:
+            live_idle_s = float(os.environ.get("RELAY_STREAM_RESUME_IDLE_S", "30"))
+        except (ValueError, TypeError):
+            live_idle_s = 30.0
+    if live_idle_s <= 0:
+        return
+    async for seq, frame_str in live_frames(
+        thread_id, after_seq=cursor, idle_timeout_s=live_idle_s
+    ):
+        cursor = max(cursor, seq)
+        if not frame_str.startswith("id:"):
+            frame_str = f"id: {seq}\n{frame_str}"
+        yield frame_str
 
 
 async def _dispatch_and_persist(

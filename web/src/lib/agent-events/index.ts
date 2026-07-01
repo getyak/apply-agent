@@ -18,6 +18,8 @@ export {
   useStepIds,
   useIsStreaming,
   useStreamError,
+  useReconnectAttempt,
+  useStreamExpired,
   useHasSteps,
   sendAsk,
   sendResume,
