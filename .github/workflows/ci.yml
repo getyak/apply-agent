@@ -61,6 +61,7 @@ jobs:
               - 'web/**'
               - 'scripts/web-hydration-smoke.mjs'
               - 'scripts/web-route-smoke.mjs'
+              - 'scripts/check-i18n-parity.mjs'
             extension:
               - 'apps/extension/**'
             infra:
@@ -323,6 +324,21 @@ jobs:
             tail -n 80 /tmp/next-start.log || true
           fi
 
+  # ---- i18n parity ----
+  # Structural guard: every key in web/messages/en.json must exist in zh.json
+  # and vice versa (docs/architecture/error-handling.md §6 flagged the errors.*
+  # namespace drifting between locales). No deps, no secrets — plain Node.
+  i18n-parity:
+    name: i18n parity (en ⇄ zh)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check en ⇄ zh key parity
+        run: node scripts/check-i18n-parity.mjs
+
   # ---- Extension job (MV3) ----
   # The MV3 extension is part of the client-side-delivery plan but the
   # apps/extension directory does not exist in-repo yet (see
@@ -410,7 +426,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [api, agents, web, extension, ttar-gate]
+    needs: [api, agents, web, i18n-parity, extension, ttar-gate]
     runs-on: ubuntu-latest
     steps:
       - name: Verify

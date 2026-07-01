@@ -1,0 +1,6 @@
+[test]
+# Bun's test runner scans *.test.* files. Playwright e2e specs use their own
+# runner (`bunx playwright test` via the `e2e` script) and their import of
+# `@playwright/test` throws under bun test. Root-scoping to src/ excludes the
+# tests/e2e/ tree so `bun test` remains focused on unit + component tests.
+root = "src"

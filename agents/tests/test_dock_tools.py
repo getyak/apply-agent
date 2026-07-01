@@ -127,9 +127,48 @@ async def test_draft_cover_letter_envelope(bound_user):
 
 
 @pytest.mark.asyncio
-async def test_trends_today_stub(bound_user):
-    out = await dock_tools.trends_today.ainvoke({})
-    assert out["status"] == "not_implemented"
+async def test_trends_today_returns_snapshot(bound_user):
+    import datetime
+
+    from agents.nodes.trend_agent import TrendSnapshot
+
+    fake = TrendSnapshot(
+        snapshot_date=datetime.date(2026, 7, 1),
+        total_jobs=12,
+        new_jobs_today=3,
+        sources=["stripe", "airbnb"],
+        skills=[{"skill": "Go", "count": 5, "trend_pct_7d": None}],
+        top_roles=[{"role": "Backend Engineer", "count": 4}],
+        salary_stats={},
+        remote_ratio=0.5,
+        insights=[
+            {
+                "skill": "Rust",
+                "count": 3,
+                "unlock_roles": 3,
+                "message": "if you learn Rust, +3 roles",
+            }
+        ],
+    )
+    with patch("agents.nodes.trend_agent.today_snapshot", new=AsyncMock(return_value=fake)):
+        out = await dock_tools.trends_today.ainvoke({})
+    assert out["status"] == "ok"
+    assert out["agent"] == "trend_agent"
+    assert out["snapshot"]["total_jobs"] == 12
+    # The "learn X → +Y roles" hook must surface in the summary.
+    assert "if you learn Rust, +3 roles" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_trends_today_degrades_on_fetch_failure(bound_user):
+    from agents.nodes.trend_agent import TrendFetchError
+
+    with patch(
+        "agents.nodes.trend_agent.today_snapshot",
+        new=AsyncMock(side_effect=TrendFetchError("no jobs")),
+    ):
+        out = await dock_tools.trends_today.ainvoke({})
+    assert out["status"] == "unavailable"
     assert out["agent"] == "trend_agent"
 
 

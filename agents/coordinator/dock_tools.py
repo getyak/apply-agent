@@ -626,16 +626,58 @@ async def build_resume_from_scratch() -> dict[str, Any]:
 
 @tool
 async def trends_today() -> dict[str, Any]:
-    """Pull today's market snapshot (trend_agent — not yet implemented).
+    """Pull today's job-market snapshot: trending skills + "learn X → +Y roles".
 
-    Returns:
-      ``{status, agent, action, summary}`` — stub today.
+    Runs the TrendAgent ETL over public Greenhouse boards, aggregates the top
+    skills, and personalises the actionable insights against the user's résumé
+    (skills they lack that the market is hiring for).
+
+    No args. Returns:
+      ``{status, agent, action, summary, snapshot}`` where ``snapshot`` carries
+      ``skills`` (top by count), ``top_roles``, ``salary_stats`` and
+      ``insights`` (the "if you learn X, +Y roles" cards). Render the insights
+      prominently — that's the hook. Returns ``status="unavailable"`` when the
+      feeds are unreachable so the dock reasons "couldn't reach the market
+      today" rather than failing the turn.
     """
+    user_id = _require_user()
+    from agents.nodes.trend_agent import TrendFetchError, today_snapshot
+
+    try:
+        snapshot = await today_snapshot(user_id)
+    except TrendFetchError as exc:
+        log.warning("dock_tools.trends_today.no_data", error=str(exc))
+        return {
+            "status": "unavailable",
+            "agent": "trend_agent",
+            "action": "daily_snapshot",
+            "summary": "Couldn't reach the job-market feeds right now — try again shortly.",
+        }
+    except Exception as exc:  # noqa: BLE001 — degrade rather than crash the dock turn
+        log.warning("dock_tools.trends_today.failed", error=str(exc))
+        return {
+            "status": "error",
+            "agent": "trend_agent",
+            "action": "daily_snapshot",
+            "summary": "The trend scan hit an error — try again shortly.",
+        }
+
+    top_skill = snapshot.skills[0]["skill"] if snapshot.skills else None
+    lead_insight = snapshot.insights[0]["message"] if snapshot.insights else None
+    summary = (
+        f"Scanned {snapshot.total_jobs} live roles across {', '.join(snapshot.sources)}."
+    )
+    if lead_insight:
+        summary += f" Top actionable gap: {lead_insight}."
+    elif top_skill:
+        summary += f" Most-demanded skill right now: {top_skill}."
+
     return {
-        "status": "not_implemented",
+        "status": "ok",
         "agent": "trend_agent",
         "action": "daily_snapshot",
-        "summary": ("Trend agent is on the roadmap — wired into the plan but not generating yet."),
+        "summary": summary,
+        "snapshot": snapshot.to_dict(),
     }
 
 

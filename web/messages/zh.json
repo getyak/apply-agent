@@ -720,11 +720,26 @@
       "loadFailed": "斜杠命令加载失败。",
       "actionBadge": "操作",
       "commands": {
-        "new": { "title": "新建会话", "description": "开启一个全新的 Ask Vantage 线程" },
-        "clear": { "title": "清空视图", "description": "隐藏当前视图中的步骤（服务器历史保留）" },
-        "search": { "title": "深度搜索…", "description": "/search <关键词> — agent 会执行一次研究式检索" },
-        "help": { "title": "Dock 怎么用？", "description": "打开 Ask Vantage 使用指南" },
-        "focus": { "title": "专注模式", "description": "把 dock 切到全屏" }
+        "new": {
+          "title": "新建会话",
+          "description": "开启一个全新的 Ask Vantage 线程"
+        },
+        "clear": {
+          "title": "清空视图",
+          "description": "隐藏当前视图中的步骤（服务器历史保留）"
+        },
+        "search": {
+          "title": "深度搜索…",
+          "description": "/search <关键词> — agent 会执行一次研究式检索"
+        },
+        "help": {
+          "title": "Dock 怎么用？",
+          "description": "打开 Ask Vantage 使用指南"
+        },
+        "focus": {
+          "title": "专注模式",
+          "description": "把 dock 切到全屏"
+        }
       }
     },
     "fullscreen": {
@@ -961,7 +976,8 @@
       "optimized": "优化版",
       "original": "原版",
       "compare": "对照",
-      "compareDisabledHint": "在左侧选一个优化版或定制版，才能与原版进行对照。"
+      "compareDisabledHint": "在左侧选一个优化版或定制版，才能与原版进行对照。",
+      "tracks": "轨道"
     },
     "editor": {
       "dirtyCount": "{n, plural, one {# 项未保存} other {# 项未保存}}",
@@ -1128,6 +1144,21 @@
         "title": "打印",
         "cta": "打开打印对话框"
       }
+    },
+    "dualTrack": {
+      "regionAria": "简历双轨视图",
+      "columnsAria": "简历轨道：原版、优化版、定制版",
+      "originalColAria": "原版轨道 — 你上传的不可变版本",
+      "optimizedColAria": "优化版轨道 — AI 改进的同级版本",
+      "tailoredColAria": "定制版轨道 — 针对岗位的分支",
+      "suggestionsAria": "AI 建议堆栈 — 逐条接受或拒绝",
+      "acceptAria": "接受建议：{change}",
+      "rejectAria": "拒绝建议：{change}",
+      "selectAria": "选择{track}版本 v{v}",
+      "immutableBadge": "不可变",
+      "emptyColumn": "暂无",
+      "beforeLabel": "改前",
+      "afterLabel": "改后"
     }
   },
   "today": {

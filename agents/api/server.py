@@ -1197,15 +1197,34 @@ async def resume_suggestion_decision(
     if not rec:
         raise HTTPException(status_code=404, detail="suggestion not found")
 
+    # Atomic claim (proposed → decision). The conditional UPDATE is the single
+    # source of truth for the state machine: exactly one of N concurrent
+    # requests moves the row out of 'proposed'; the rest see rowcount 0 and get
+    # 409. This closes the accept-path TOCTOU (two accepts both reading
+    # 'proposed' and both materializing a version).
+    target_status = "accepted" if payload.decision == "accept" else "rejected"
+    claimed = await resume_store.set_suggestion_status(
+        suggestion_id,
+        user_id,
+        target_status,
+        decided_via=payload.decided_via,
+        expected_from="proposed",
+    )
+    if not claimed:
+        raise HTTPException(status_code=409, detail="suggestion already decided")
+
     if payload.decision == "reject":
-        await resume_store.set_suggestion_status(
-            suggestion_id, user_id, "rejected", decided_via=payload.decided_via
-        )
         return {"ok": True, "status": "rejected"}
 
-    # accept → apply it into a new optimized version
+    # accept → materialize into a new optimized version. The row is already
+    # marked 'accepted' above, so apply_suggestions' own status write is a
+    # harmless no-op; if the fabrication guard rejects the change we roll the
+    # claim back to 'proposed' so the user can retry / discuss.
     result = await resume_agent.apply_suggestions([suggestion_id], user_id=user_id)
     if not result.get("ok"):
+        await resume_store.set_suggestion_status(
+            suggestion_id, user_id, "proposed", decided_via=None
+        )
         raise HTTPException(status_code=422, detail=result)
     return {"ok": True, "status": "accepted", **result}
 
