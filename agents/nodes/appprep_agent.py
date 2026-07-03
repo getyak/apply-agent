@@ -105,7 +105,14 @@ async def generate_cover_letter(
         candidate_name = _candidate_name(tailored_resume) or "Candidate"
 
         try:
-            model = pick_model("general", temperature=0.5, max_tokens=2048)
+            # P0-10 fix (2026-07-02): default reasoning_effort="medium"
+            # sent GLM-4.7's JSON payload into OpenRouter's reasoning
+            # channel — resp.content came back empty, _safe_json({}) → we
+            # fell to the template letter with `fallback=True`. Opt out
+            # of the reasoning passthrough so JSON lands in .content.
+            model = pick_model(
+                "general", temperature=0.5, max_tokens=2048, reasoning_effort=None
+            )
         except RuntimeError as exc:
             log.warning("appprep.cover.no_llm_key", error=str(exc))
             return _template_cover_letter(role_title, company, candidate_name)

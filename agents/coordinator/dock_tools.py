@@ -420,24 +420,94 @@ async def draft_cover_letter(
       tone: ``professional`` | ``friendly`` | ``direct``. Default ``professional``.
 
     Returns:
-      ``{status, agent, action, summary}`` — surfaces intent. The actual
-      draft endpoint (``appprep_agent.generate_cover_letter``) needs the
-      pre-loaded résumé + parsed JD, which the dock doesn't materialise
-      here; we return ``needs_args`` so the dock can chain through.
+      ``{status, agent, action, artifact}`` — artifact is
+      ``{subject, body, tone, fallback}`` from appprep_agent.generate_cover_letter.
+
+    P0-9 fix (2026-07-02): stub returned needs_args, leaving the dock
+    unable to actually produce a letter. Materialise inline: load the
+    user's base résumé + the job row, then hand off to
+    appprep_agent.generate_cover_letter (with fabrication guard).
     """
     user_id = _require_user()
-    return {
-        "status": "needs_args",
-        "agent": "appprep_agent",
-        "action": "draft_cover_letter",
-        "needs": ["base_resume_content", "parsed_jd"],
-        "args": {
-            "job_id": job_id,
-            "tone": tone,
-            "user_id": str(user_id),
-        },
-        "summary": "Cover-letter draft is queued — chain with the prep endpoint to materialise.",
-    }
+    try:
+        from agents.nodes.appprep_agent import generate_cover_letter
+        from agents.tools.auto import pg_query
+
+        # Load base résumé.
+        r_rows = await pg_query(
+            """
+            SELECT id, content
+            FROM resumes
+            WHERE user_id = %s AND is_base = true AND track = 'original'
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (str(user_id),),
+        )
+        if not r_rows:
+            return {
+                "status": "empty",
+                "agent": "appprep_agent",
+                "action": "draft_cover_letter",
+                "reason": "no base résumé yet — upload one first",
+            }
+        content = r_rows[0].get("content") or {}
+        parsed_r = content.get("parsed") if isinstance(content, dict) else None
+        base_resume = parsed_r if isinstance(parsed_r, dict) else (content or {})
+
+        # Load the job.
+        j_rows = await pg_query(
+            """
+            SELECT id, company, role_title, jd_text, parsed
+            FROM jobs
+            WHERE id = %s AND is_active = true
+            LIMIT 1
+            """,
+            (str(job_id),),
+        )
+        if not j_rows:
+            return {
+                "status": "not_found",
+                "agent": "appprep_agent",
+                "action": "draft_cover_letter",
+                "reason": f"job {job_id} not in the index",
+            }
+        job = j_rows[0]
+        parsed_jd = job.get("parsed") if isinstance(job.get("parsed"), dict) else {}
+        parsed_jd = {
+            **(parsed_jd or {}),
+            "role_title": job["role_title"],
+            "company": job["company"],
+            "jd_text": job.get("jd_text") or "",
+        }
+
+        cl = await generate_cover_letter(
+            tailored_resume=base_resume,
+            base_resume=base_resume,
+            parsed_jd=parsed_jd,
+            company=job["company"],
+            role_title=job["role_title"],
+            user_id=user_id,
+        )
+        return {
+            "status": "ok",
+            "agent": "appprep_agent",
+            "action": "draft_cover_letter",
+            "artifact": {
+                "subject": cl.subject,
+                "body": cl.body,
+                "tone": cl.tone or tone,
+                "fallback": cl.fallback,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001 — surface graceful failure
+        log.warning("dock_tools.draft_cover_letter.failed", error=str(exc))
+        return {
+            "status": "unavailable",
+            "agent": "appprep_agent",
+            "action": "draft_cover_letter",
+            "reason": str(exc),
+        }
 
 
 @tool
@@ -709,10 +779,10 @@ async def recall_user_memory(query: str, limit: int = 5) -> dict[str, Any]:
         # Without an embedding pipeline wired here we fall back to recency.
         rows = await pg_query(
             """
-            SELECT kind, summary
+            SELECT memory_type AS kind, content AS summary
             FROM user_memories
-            WHERE user_id = %s
-            ORDER BY updated_at DESC NULLS LAST, created_at DESC
+            WHERE user_id = %s AND is_active = true
+            ORDER BY importance DESC, updated_at DESC NULLS LAST, created_at DESC
             LIMIT %s
             """,
             (str(user_id), limit),
@@ -781,7 +851,9 @@ async def recall_weak_points(limit: int = 5) -> dict[str, Any]:
             """
             SELECT weak_points, completed_at
             FROM interview_sessions
-            WHERE user_id = %s AND weak_points IS NOT NULL
+            WHERE user_id = %s
+              AND weak_points IS NOT NULL
+              AND jsonb_array_length(weak_points) > 0
             ORDER BY COALESCE(completed_at, created_at) DESC
             LIMIT 3
             """,

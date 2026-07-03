@@ -66,13 +66,19 @@ def _close_held_cms() -> None:
             while _HELD_CMS:
                 cm = _HELD_CMS.pop()
                 try:
+                    # AsyncConnectionPool exposes explicit close();
+                    # AsyncPostgresSaver CMs expose __aexit__.
+                    aclose = getattr(cm, "close", None)
+                    if aclose is not None and asyncio.iscoroutinefunction(aclose):
+                        await aclose()
+                        continue
                     aexit = getattr(cm, "__aexit__", None)
                     if aexit is not None:
                         await aexit(None, None, None)
-                    else:
-                        exit_ = getattr(cm, "__exit__", None)
-                        if exit_ is not None:
-                            exit_(None, None, None)
+                        continue
+                    exit_ = getattr(cm, "__exit__", None)
+                    if exit_ is not None:
+                        exit_(None, None, None)
                 except Exception:  # noqa: BLE001 — best-effort shutdown
                     pass
 
@@ -161,15 +167,43 @@ def get_checkpointer():
             from langgraph.checkpoint.postgres.aio import (  # type: ignore
                 AsyncPostgresSaver,
             )
+            from psycopg_pool import AsyncConnectionPool  # type: ignore
 
             loop = _HELD_LOOP or _start_background_loop()
 
             async def _enter() -> Any:
-                cm = AsyncPostgresSaver.from_conn_string(dsn)
-                saver = await cm.__aenter__()
-                _HELD_CMS.append(cm)
-                # setup() ensures the three checkpoint tables exist; idempotent.
-                await saver.setup()
+                # P0-5 fix (2026-07-02): swap single-conn from_conn_string for
+                # AsyncConnectionPool. The single conn sat idle between dock
+                # turns and PG killed it (OperationalError: the connection is
+                # closed at graph.aget_state). Pool transparently re-opens
+                # dead conns via max_idle/max_lifetime recycle.
+                pool = AsyncConnectionPool(
+                    conninfo=dsn,
+                    min_size=1,
+                    max_size=10,
+                    max_idle=300.0,  # recycle before PG's default idle timeout
+                    max_lifetime=1800.0,
+                    open=False,
+                    kwargs={"autocommit": True, "prepare_threshold": 0},
+                )
+                try:
+                    await pool.open()
+                    saver = AsyncPostgresSaver(pool)
+                    # setup() ensures the three checkpoint tables exist; idempotent.
+                    await saver.setup()
+                except BaseException:
+                    # Any failure (PG unreachable, setup crash) means we can't
+                    # use this pool. Close it before propagating so we don't
+                    # leak a running pool into _HELD_CMS and stall shutdown.
+                    try:
+                        await pool.close()
+                    except Exception:  # noqa: BLE001 — best-effort cleanup
+                        pass
+                    raise
+                # Only after both open() AND setup() succeed do we commit the
+                # pool to the held list — that way the fallback branch never
+                # sees a half-initialised connection pool.
+                _HELD_CMS.append(pool)
                 return saver
 
             future = asyncio.run_coroutine_threadsafe(_enter(), loop)

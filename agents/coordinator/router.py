@@ -469,11 +469,27 @@ async def dispatch(
     one. Other surfaces keep the old, surface-agnostic behaviour.
     """
     if intent.intent == "find_jobs":
-        return {
-            "agent": "jobmatch_agent",
-            "action": "find_matches",
-            "status": "not_implemented_yet",
-        }
+        # P0-6 fix (2026-07-02): fast-path used to stub not_implemented_yet
+        # even though dock_tools.find_jobs is fully wired to the jobs table.
+        # Invoke it directly so the intent-classified fast-path returns real
+        # items instead of an empty envelope.
+        from agents.coordinator.dock_tools import find_jobs, set_dock_context
+
+        set_dock_context(
+            user_id=user_id,
+            thread_id=thread_id or "",
+            surface=surface,
+        )
+        args = intent.args or {}
+        result = await find_jobs.ainvoke(
+            {
+                "role": args.get("role"),
+                "location": args.get("location"),
+                "remote_only": bool(args.get("remote_only", False)),
+                "limit": int(args.get("limit") or 10),
+            }
+        )
+        return result
 
     if intent.intent == "tailor_resume":
         # Hands off to resume_agent.customize via API layer (it needs job + base ids).
@@ -485,11 +501,49 @@ async def dispatch(
         }
 
     if intent.intent == "draft_cover_letter":
-        return {
-            "agent": "appprep_agent",
-            "action": "draft_cover_letter",
-            "status": "not_implemented_yet",
-        }
+        # P0-9 fix (2026-07-02): fast-path no longer stubs — invoke the
+        # dock_tools implementation. If the LLM emitted no job_id, fall
+        # back to the user's most recent app draft's job.
+        from agents.coordinator.dock_tools import (
+            draft_cover_letter,
+            set_dock_context,
+        )
+        from agents.tools.auto import pg_query
+
+        args = intent.args or {}
+        job_id = args.get("job_id")
+        if not job_id:
+            rows = await pg_query(
+                """
+                SELECT job_id FROM application_drafts
+                WHERE user_id = %s ORDER BY updated_at DESC LIMIT 1
+                """,
+                (str(user_id),),
+            )
+            if rows:
+                job_id = str(rows[0]["job_id"])
+            else:
+                rows = await pg_query(
+                    "SELECT id FROM jobs WHERE is_active = true ORDER BY posted_date DESC NULLS LAST LIMIT 1",
+                    (),
+                )
+                if rows:
+                    job_id = str(rows[0]["id"])
+        if not job_id:
+            return {
+                "agent": "appprep_agent",
+                "action": "draft_cover_letter",
+                "status": "empty",
+                "reason": "no job to write a cover letter for — try 'find jobs' first",
+            }
+        set_dock_context(
+            user_id=user_id,
+            thread_id=thread_id or "",
+            surface=surface,
+        )
+        return await draft_cover_letter.ainvoke(
+            {"job_id": job_id, "tone": args.get("tone") or "professional"}
+        )
 
     if intent.intent == "mock_me":
         from agents.nodes.interview_agent import load_mode

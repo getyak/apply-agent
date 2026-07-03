@@ -92,6 +92,14 @@ class MockState(TypedDict, total=False):
     total_cost_cents: float
     total_tokens: int
     consecutive_errors: int
+    # P0-7 fix (2026-07-02): the current Q awaiting the user's answer. Set
+    # by ask_question_node before await_user_input's interrupt() and read
+    # by the API layer to render the question. Was missing from the
+    # TypedDict so langgraph dropped it from the checkpoint snapshot —
+    # /mock/start returned current_question=None even though the graph
+    # asked one.
+    _pending_question: dict | None
+    _pending_cost_cents: float
     # Forwarded from the gateway (X-Relay-Locale) so translate_feedback can
     # run a post-hoc reply-locale check on each piece of feedback text. None
     # → no enforcement (legacy clients / direct test invocations).
