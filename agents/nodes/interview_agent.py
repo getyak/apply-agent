@@ -514,7 +514,13 @@ async def translate_feedback(
         "mode_pressure": pressure,
         "user_stalled": stalled,
     }
-    model = pick_model("heavy", temperature=0.4, max_tokens=800)
+    # P0-8 fix (2026-07-02): heavy tier with the default reasoning_effort=
+    # "medium" made V4 Pro / GLM-4.7 emit the answer into OpenRouter's
+    # reasoning channel; resp.content came back empty and _safe_json
+    # returned {}, producing blank interviewer_heard / suggested_rephrase.
+    # We need JSON in .content, so opt out of the reasoning passthrough
+    # for this call.
+    model = pick_model("heavy", temperature=0.4, max_tokens=800, reasoning_effort=None)
     resp = await model.ainvoke(
         [
             SystemMessage(content=prompt),

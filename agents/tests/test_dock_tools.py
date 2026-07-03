@@ -3,7 +3,8 @@
 Covers each tool's contract end-to-end without hitting the LLM:
   - propose_plan validates + caps fields
   - recall_* tools degrade gracefully when PG is unavailable
-  - tailor_resume / find_jobs / draft_cover_letter return needs_args envelopes
+  - tailor_resume returns needs_args envelopes; find_jobs / draft_cover_letter
+    materialise inline (P0-6, P0-9) and return status=empty on missing data
   - list_my_applications wraps the applications tool
   - context guard refuses tool calls without a bound user_id
 """
@@ -119,11 +120,16 @@ async def test_find_jobs_empty_when_no_jobs(bound_user, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_draft_cover_letter_envelope(bound_user):
+async def test_draft_cover_letter_returns_empty_without_base_resume(bound_user):
+    """P0-9: draft_cover_letter now materialises inline instead of returning
+    ``needs_args``. With a fresh bound_user and no résumé in PG, the base
+    résumé lookup misses and the tool returns ``status=empty``.
+    """
     out = await dock_tools.draft_cover_letter.ainvoke({"job_id": str(uuid4())})
-    assert out["status"] == "needs_args"
+    assert out["status"] == "empty"
     assert out["agent"] == "appprep_agent"
-    assert out["args"]["tone"] == "professional"
+    assert out["action"] == "draft_cover_letter"
+    assert "reason" in out
 
 
 @pytest.mark.asyncio
