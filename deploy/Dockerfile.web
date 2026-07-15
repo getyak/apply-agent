@@ -1,0 +1,10 @@
+FROM oven/bun:1-alpine
+WORKDIR /app
+COPY web/package.json web/bun.lock* ./web/
+RUN cd web && bun install --frozen-lockfile
+COPY web web
+RUN cd web && bun run build
+WORKDIR /app/web
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["bun", "run", "start"]
