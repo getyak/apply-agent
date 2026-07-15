@@ -1,0 +1,39 @@
+name: Deploy self-hosted production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: self-hosted-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$PORT" -H "$HOST" >> ~/.ssh/known_hosts
+      - name: Synchronize and deploy
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          PORT: ${{ secrets.DEPLOY_PORT }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -p $PORT"
+          $SSH "$USER@$HOST" 'install -d -m 700 /srv/apps/apply-agent/current'
+          rsync -az --delete --exclude .git --exclude .env --exclude node_modules --exclude .next -e "$SSH" ./ "$USER@$HOST:/srv/apps/apply-agent/current/"
+          printf '%s' "$ENV_FILE" | $SSH "$USER@$HOST" 'umask 077; cat > /srv/apps/apply-agent/current/.env'
+          $SSH "$USER@$HOST" 'cd /srv/apps/apply-agent/current && bash deploy/deploy.sh'
