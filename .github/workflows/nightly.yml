@@ -45,7 +45,7 @@ jobs:
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20 }
       - run: npm install -g promptfoo@latest
       - name: Run 20 golden inputs × 5 agents
@@ -75,7 +75,7 @@ jobs:
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20 }
       - run: npm install -g promptfoo@latest
       - name: Strict red-team
