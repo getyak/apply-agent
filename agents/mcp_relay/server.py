@@ -28,8 +28,10 @@ INSTRUCTIONS = (
     "separate résumé approval. Treat application outcomes as non-causal ranking signals "
     "that never rewrite facts. Publishing is public and always requires confirmation. "
     "Track applications locally before handoff. Application execution is browser-only: "
-    "never enter passwords, bypass CAPTCHA, or click the final Submit/Apply button without "
-    "explicit user approval."
+    "assess the observed page before fill and again before submit review; stop on stale "
+    "jobs, login, CAPTCHA, or security checks. An enabled DOM button is not authorization. "
+    "Never enter passwords, bypass CAPTCHA, or click the final Submit/Apply button without "
+    "the exact per-application phrase in the user's current message."
 )
 
 
@@ -378,6 +380,32 @@ async def prepare_application_handoff(
     return await tools.prepare_application_handoff(
         compilation_id=compilation_id,
         job_url=job_url,
+    )
+
+
+@mcp.tool(
+    title="Assess application browser checkpoint",
+    description=(
+        "Compare the observed browser URL and visible checkpoint text with an owned "
+        "application handoff before filling or submit review. Stops on stale/changed "
+        "jobs, login, CAPTCHA, security checks, or unsupported platforms. This tool "
+        "never authorizes the final click; an enabled DOM button is not user approval."
+    ),
+    annotations=READ_ONLY,
+)
+async def assess_application_browser_checkpoint(
+    compilation_id: str,
+    job_url: str,
+    observed_url: str,
+    visible_text: str = "",
+    stage: str = "before_fill",
+) -> dict[str, Any]:
+    return await tools.assess_application_browser_checkpoint(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        observed_url=observed_url,
+        visible_text=visible_text,
+        stage=stage,
     )
 
 

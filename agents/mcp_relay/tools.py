@@ -7,7 +7,7 @@ cross the owner boundary by changing tool arguments.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -18,6 +18,8 @@ from agents.career_graph.fake_store import InMemoryCareerGraphStore
 from agents.career_graph.importer import json_resume_to_operations
 from agents.career_graph.store import CareerGraphStateError
 from agents.mcp_relay.delivery import (
+    BrowserCheckpointStage,
+    assess_browser_checkpoint,
     batch_safety_contract,
     classify_application_target,
 )
@@ -420,7 +422,57 @@ async def prepare_application_handoff(
         job_url=job_url,
     )
     handoff["target_site"] = classify_application_target(job_url)
+    handoff["submission_gate"] = {
+        **handoff["target_site"]["submission_gate"],
+        "confirmation_phrase": (f"SUBMIT APPLICATION {handoff['application_id']}"),
+    }
     return handoff
+
+
+async def assess_application_browser_checkpoint(
+    *,
+    compilation_id: str,
+    job_url: str,
+    observed_url: str,
+    visible_text: str = "",
+    stage: str = "before_fill",
+) -> dict[str, Any]:
+    """Validate browser state against an owned, approved application handoff."""
+
+    _require_scope("application:prepare")
+    if stage not in {"before_fill", "before_submit"}:
+        raise CareerGraphStateError("stage must be 'before_fill' or 'before_submit'")
+    for field, value in (("job_url", job_url), ("observed_url", observed_url)):
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise CareerGraphStateError(f"{field} must be an absolute http(s) URL")
+    if len(visible_text) > 20_000:
+        raise CareerGraphStateError("visible_text must be at most 20000 characters")
+
+    handoff = await _store_call(
+        "application_handoff",
+        current_user_id(),
+        _uuid(compilation_id, "compilation_id"),
+        job_url=job_url,
+    )
+    checkpoint = assess_browser_checkpoint(
+        expected_job_url=job_url,
+        observed_url=observed_url,
+        visible_text=visible_text,
+        stage=cast(BrowserCheckpointStage, stage),
+    )
+    confirmation_phrase = f"SUBMIT APPLICATION {handoff['application_id']}"
+    checkpoint["application_id"] = handoff["application_id"]
+    checkpoint["compilation_id"] = compilation_id
+    checkpoint["submission_gate"]["confirmation_phrase"] = confirmation_phrase
+    checkpoint["next_action"] = (
+        "stop_and_return_control_to_user"
+        if checkpoint["status"] == "stop"
+        else "ask_user_for_exact_confirmation_phrase"
+        if stage == "before_submit"
+        else "fill_supported_fields_then_reassess_before_submit"
+    )
+    return checkpoint
 
 
 async def prepare_application_batch(

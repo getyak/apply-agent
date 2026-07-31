@@ -1,7 +1,8 @@
 # Codex × Career Graph 原生集成
 
-> 状态：Career Graph 本地闭环与远程 OAuth 身份已实现；现有简历导入审阅 UI
-> 和真实招聘平台回归仍在后续范围内。
+> 状态：Career Graph 本地闭环、远程 OAuth 身份和 Greenhouse/Lever/Ashby
+> 目标站 fill-only 回归已实现；现有简历导入审阅 UI 和真实用户最终提交仍在
+> 后续范围内。
 >
 > 核心决定：Relay 拥有 Career Graph、编译和反馈；Codex 拥有交互式编排与
 > 用户浏览器执行。Relay 不造服务器端投递器。
@@ -172,8 +173,11 @@ v1 同时使用三层保证：
 2. **精确确认短语**：批准/发布工具拒绝普通 “yes”。
 3. **Codex MCP approval policy**：项目配置对写工具和关键批准工具开启 prompt。
 
-浏览器交接只返回 package，不暴露 server-side submit tool。Skill 还要求每一份
-批量申请在最终点击前单独确认；一次批量授权不会被解释为无限期许可。
+浏览器交接只返回 package，不暴露 server-side submit tool。每次 fill 前和最终
+提交审阅前都必须调用 `assess_application_browser_checkpoint`；404、跳到其他
+职位、登录、验证码或安全检查会停止整批。网页上的 Submit 按钮即使可见且 enabled
+也不构成授权。Skill 要求用户在当前消息输入与 application ID 绑定的精确确认
+短语；一次批量授权不会被解释为无限期许可。
 
 用户确定要申请后，`create_application_draft` 会先幂等创建或复用 Relay 本地
 `application_drafts` 记录，并把它连接到批准的 compilation résumé。它不会打开
@@ -195,9 +199,9 @@ v1 同时使用三层保证：
 | Codex 登录 | ChatGPT 登录态 → skill → live MCP → PG 多轮验证 | ✅ Codex 侧 |
 | Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
 | 简历公开发布 | approved compilation → `/r/<token>` | ✅ |
-| 真实浏览器填表 | approved package handoff | ⚠️ 尚未做目标站回归 |
+| 真实浏览器预填 | Greenhouse/Lever/Ashby 目标站合成身份 fill-only | ✅ 未提交 |
 | 申请跟踪连接 | approved compilation → idempotent local draft/compact batch queue → just-in-time handoff | ✅ v1 |
-| Boss 直聘批量投递 | 每份必须单独确认，无绕 CAPTCHA | ❌ 尚未实现/验证 |
+| Boss 直聘自动投递 | 命中 `_security_check`/登录即停止并手工交接 | ❌ 不自动化 |
 | 结果反馈驱动下一次编译 | application stage → manifest → evidence tie-break | ✅ v1 |
 
 ## 7. 下一段必须完成的工作
@@ -209,8 +213,9 @@ v1 同时使用三层保证：
 3. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
    ranking；下一步补 application status history、样本置信区间和跨 JD cohort，
    仍不得自动改写事实或把相关性冒充因果。
-4. **浏览器真实验证**：先验证 Greenhouse/Lever/Ashby，再对 Boss 直聘做平台条款
-   和账号风险 review；任何登录、验证码或封禁信号都立即交还用户。
+4. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
+   真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
+   Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
 
 在这些证据完成前，不能声称“Codex 已真实跑通 Boss 批量投递全流程”。
 
@@ -233,6 +238,23 @@ v1 同时使用三层保证：
 - migration 023 为远程 MCP 增加 DCR、PKCE authorization request、摘要化
   access/refresh token 与 family revocation；Hono consent API 只在现有 JWT
   会话中绑定 Relay user UUID。
-- Playwright 真实页面回归只填入 source-only 姓名、邮箱和经历字段；密码与 SSN
-  保持空白，Submit 按钮未点击，页面最终仍为 `Not submitted`。这是安全边界
-  验证，不等同于 Greenhouse/Lever/Ashby 或 Boss 直聘目标站回归。
+- 2026-08-01 使用 Playwright 对
+  [Greenhouse / Genius AI](https://job-boards.greenhouse.io/glossgenius/jobs/6681936003)、
+  [Lever / Until](https://jobs.lever.co/until/8c0ae3cf-6bb0-44de-b054-c3acba5a2926/apply)
+  和
+  [Ashby / Extend](https://jobs.ashbyhq.com/extend/a8a99013-d200-4a84-80ae-14c71a5d6657/application)
+  做了真实目标站回归：只填 `example.test` 姓名/邮箱，简历、LinkedIn、资格、
+  法律和开放题保持空白，最终 Submit 从未点击。三站的 Submit 按钮在不完整表单
+  下仍可点击，因此 `dom_button_state_is_authorization=false` 已进入 MCP 契约。
+- 同一轮中，搜索索引里 5 天前仍存在的 Lever/Ashby 职位在浏览器中已变成 404，
+  证明执行时必须重新验证 exact job identity；checkpoint 会在 stale/changed job
+  上停止。
+- [Boss 直聘深圳列表](https://www.zhipin.com/zhaopin/35d0ab6f7f586dbf03Z_0tm_FQ~~/)
+  在自动化浏览器中跳到带 `_security_check=1` 的路径，页面显示登录/手机号/
+  验证码入口，继续交互后页面失效。回归按策略立即停止，没有登录、填凭据或规避
+  安全检查；Boss 被固定为 `user_login_and_manual_handoff`。
+- 原生 Codex CLI v0.146.0 使用 ChatGPT 登录态，经项目 STDIO MCP 和真实
+  PostgreSQL owner scope 连续调用新 checkpoint：`before_fill` 返回
+  `ready_for_fill`，`before_submit` 返回 `review_required`；两次都返回
+  `safe_to_submit=false` 和同一 application ID 绑定的确认短语。隔离用户、职位和
+  application 在验证后已删除。

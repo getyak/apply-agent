@@ -84,21 +84,28 @@ Publishing a résumé is not submitting a job application.
 2. Work through a batch one item at a time. Call `prepare_application_handoff`
    just before filling that item, and verify it returns the queued
    `application_id`. Do not retain full handoff packages for the whole batch.
-3. Use the connected Codex Chrome or Browser capability so execution happens
+3. Open the exact job URL, then call `assess_application_browser_checkpoint`
+   with `stage=before_fill`, the observed URL, and only the visible checkpoint
+   text needed to detect login, CAPTCHA, security checks, or a stale posting.
+   Stop the whole batch when it returns `status=stop`.
+4. Use the connected Codex Chrome or Browser capability so execution happens
    in the user's logged-in browser. Do not use a server-side application
    submitter.
-4. Never request, store, reveal, or type a job-platform password. Let the user
+5. Never request, store, reveal, or type a job-platform password. Let the user
    log in directly.
-5. Never solve or bypass CAPTCHA or anti-bot challenges.
-6. Fill only fields supported by the approved package or facts the user
+6. Never solve or bypass CAPTCHA or anti-bot challenges.
+7. Fill only fields supported by the approved package or facts the user
    supplies in the current conversation.
-7. Stop on unsupported demographic, legal, salary, sponsorship, or
+8. Stop on unsupported demographic, legal, salary, sponsorship, or
    eligibility questions and ask the user.
-8. Before the final Submit/Apply click, show the platform, role, résumé
-   compilation ID, generated answers, and unresolved warnings. Ask for explicit
-   approval for that application.
-9. Click the final button only after that approval. Repeat the gate for every
-   application in a batch.
+9. Immediately before the final click, call
+   `assess_application_browser_checkpoint` again with `stage=before_submit`.
+   A visible or enabled DOM button is never authorization.
+10. Show the platform, role, application ID, résumé compilation ID, generated
+    answers, and unresolved warnings. Ask the user to type the exact
+    `submission_gate.confirmation_phrase` returned by the checkpoint.
+11. Click the final button only after that exact phrase appears in the user's
+    current message. Repeat the gate for every application in a batch.
 
 If the site blocks automation, preserve the prepared package and hand control
 to the user. Do not evade the block.

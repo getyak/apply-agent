@@ -159,6 +159,10 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     assert handoff["execution"] == "user_browser_only"
     assert handoff["target_site"]["platform"] == "other"
     assert handoff["requires_submit_confirmation"] is True
+    assert handoff["submission_gate"]["dom_button_state_is_authorization"] is False
+    assert handoff["submission_gate"]["confirmation_phrase"] == (
+        f"SUBMIT APPLICATION {application['application_id']}"
+    )
     assert any("CAPTCHA" in item for item in handoff["forbidden_automation"])
 
     with pytest.raises(CareerGraphStateError, match="explicit confirmation"):
@@ -211,6 +215,40 @@ async def test_handoff_requires_a_draft_for_the_exact_job_url() -> None:
             compilation_id=compilation_id,
             job_url="https://jobs.example.test/different-role",
         )
+
+
+async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    application = await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example",
+        role_title="Engineer",
+        job_url="https://jobs.lever.co/example/abc",
+    )
+    checkpoint = await tools.assess_application_browser_checkpoint(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        visible_text="Submit application",
+        stage="before_submit",
+    )
+    assert checkpoint["application_id"] == application["application_id"]
+    assert checkpoint["status"] == "review_required"
+    assert checkpoint["safe_to_submit"] is False
+    assert checkpoint["submission_gate"]["confirmation_phrase"] == (
+        f"SUBMIT APPLICATION {application['application_id']}"
+    )
+    assert checkpoint["next_action"] == "ask_user_for_exact_confirmation_phrase"
+    assert "resume" not in checkpoint
 
 
 async def test_batch_prepares_each_application_without_blanket_submit_approval() -> None:
