@@ -84,6 +84,8 @@ packages = [
     "agents.coordinator",
     "agents.events",
     "agents.harness",
+    "agents.career_graph",
+    "agents.mcp_relay",
     "agents.mcp_probe",
     "agents.nodes",
     "agents.tools",

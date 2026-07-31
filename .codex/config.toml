@@ -41,6 +41,36 @@ args = [
     "@modelcontextprotocol/server-sequential-thinking",
 ]
 
+[mcp_servers.relay-career]
+command = "uv"
+args = [
+    "--directory",
+    "agents",
+    "run",
+    "python",
+    "-m",
+    "agents.mcp_relay.server",
+]
+cwd = "."
+env_vars = [
+    "RELAY_MCP_FAKE",
+    "RELAY_USER_ID",
+    "RELAY_PG_DSN",
+    "RELAY_PUBLIC_BASE_URL",
+]
+startup_timeout_sec = 15
+tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
+
+[mcp_servers.relay-career.tools.approve_career_graph_change]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.approve_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.publish_resume_compilation]
+approval_mode = "prompt"
+
 [features]
 multi_agent = true
 

@@ -13,6 +13,7 @@
 - [**系统总架构**](architecture/system-overview.md) — 五层架构总览
 - [**Agent 架构**](architecture/agent-architecture.md) — 5 个核心 agent 与编排
 - [**Agent Harness**](architecture/agent-harness.md) — 单 agent 执行框架(ReAct loop)
+- [**Codex × Career Graph**](architecture/codex-career-graph.md) — 原生 MCP/Skill、JD 编译与人工确认
 - [**客户端投递方案**](architecture/client-side-delivery.md) ⭐ — 浏览器原生投递,零封号
 
 ### 设计 · Design

@@ -1,0 +1,12 @@
+interface:
+  display_name: "Manage Career Graph"
+  short_description: "Build, tailor, approve, and publish evidence-backed résumés"
+  default_prompt: "Use $manage-career-graph to create or tailor my résumé from my Career Graph, pause for review, then prepare the browser handoff."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "relay-career"
+      description: "Relay Career Graph, résumé compilation, approval, and browser-handoff tools"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

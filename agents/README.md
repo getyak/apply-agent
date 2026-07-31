@@ -39,6 +39,8 @@ agents/
   api/                  # FastAPI entry — Bun gateway proxies HTTP here
     server.py           # /ask/stream, /mock/start, /mock/resume, /resume/*
     deps.py             # current_user (X-User-Id; LOCAL_DEV fallback)
+  career_graph/         # fact graph + revisions + compiler + outcome ranking
+  mcp_relay/            # native Codex stdio tools (review-gated, no submit tool)
   tests/                # pytest (markers: integration, smoke)
 ```
 
@@ -67,6 +69,8 @@ Env vars:
 - `LOCAL_DEV=1` — accept the demo user when X-User-Id is missing
 - `RELAY_LLM_KILLSWITCH=1` — emergency stop (skip all LLM calls)
 - `RELAY_MOCK_MAX_QUESTIONS=10` — cap per Mock session
+- `RELAY_USER_ID` — trusted-local owner identity for the `relay-career` Codex MCP server
+- `RELAY_MCP_FAKE=1` — hermetic MCP demo mode (no PG/OpenRouter)
 
 ## Smoke-test (first-week priority)
 

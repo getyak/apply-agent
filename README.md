@@ -70,6 +70,7 @@ Relay 的赌注是另一条路:
    - [系统总架构](docs/architecture/system-overview.md)
    - [Agent 架构](docs/architecture/agent-architecture.md)
    - [Agent Harness](docs/architecture/agent-harness.md)
+   - [Codex × Career Graph 原生集成](docs/architecture/codex-career-graph.md)
    - [客户端投递方案](docs/architecture/client-side-delivery.md) ⭐ 核心
 5. **设计**
    - [设计哲学](docs/design/design-philosophy.md) — 把"创造"变成"审核"
