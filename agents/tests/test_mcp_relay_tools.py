@@ -157,6 +157,7 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     )
     assert handoff["application_id"] == application["application_id"]
     assert handoff["execution"] == "user_browser_only"
+    assert handoff["target_site"]["platform"] == "other"
     assert handoff["requires_submit_confirmation"] is True
     assert any("CAPTCHA" in item for item in handoff["forbidden_automation"])
 
@@ -186,3 +187,92 @@ async def test_application_draft_requires_approved_compilation() -> None:
             role_title="Engineer",
             job_url="https://jobs.example.test/engineer",
         )
+
+
+async def test_handoff_requires_a_draft_for_the_exact_job_url() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example",
+        role_title="Engineer",
+        job_url="https://jobs.example.test/engineer",
+    )
+    with pytest.raises(CareerGraphStateError, match="exact job URL"):
+        await tools.prepare_application_handoff(
+            compilation_id=compilation_id,
+            job_url="https://jobs.example.test/different-role",
+        )
+
+
+async def test_batch_prepares_each_application_without_blanket_submit_approval() -> None:
+    approved = await _approved_graph()
+    items = []
+    targets = [
+        (
+            "Greenhouse Role",
+            "https://job-boards.greenhouse.io/example/jobs/123",
+        ),
+        (
+            "Boss Role",
+            "https://www.zhipin.com/job_detail/example.html",
+        ),
+    ]
+    for role_title, job_url in targets:
+        compilation = await tools.compile_resume_for_jd(
+            graph_id=approved["graph_id"],
+            jd_text=f"{role_title} Python PostgreSQL",
+        )
+        compilation_id = compilation["id"]
+        await tools.approve_resume_compilation(
+            compilation_id=compilation_id,
+            confirmation=f"APPROVE RESUME {compilation_id}",
+        )
+        items.append(
+            {
+                "compilation_id": compilation_id,
+                "company": "Example",
+                "role_title": role_title,
+                "job_url": job_url,
+            }
+        )
+
+    batch = await tools.prepare_application_batch(applications=items)
+    assert [item["status"] for item in batch["applications"]] == [
+        "prepared_not_submitted",
+        "prepared_not_submitted",
+    ]
+    assert [item["target_site"]["platform"] for item in batch["applications"]] == [
+        "greenhouse",
+        "boss_zhipin",
+    ]
+    assert batch["batch"]["preparation_only"] is True
+    assert batch["batch"]["blanket_submit_approval"] is False
+    assert batch["batch"]["approval_granularity"] == "one_application"
+    assert batch["server_side_submission"] is False
+    assert all(item["handoff_ready"] is True for item in batch["applications"])
+    assert all(item["next_tool"] == "prepare_application_handoff" for item in batch["applications"])
+    assert all("handoff" not in item for item in batch["applications"])
+
+
+async def test_batch_validates_every_item_before_writing() -> None:
+    with pytest.raises(CareerGraphStateError, match="absolute http"):
+        await tools.prepare_application_batch(
+            applications=[
+                {
+                    "compilation_id": "00000000-0000-4000-8000-000000000123",
+                    "company": "Example",
+                    "role_title": "Engineer",
+                    "job_url": "javascript:alert(1)",
+                }
+            ]
+        )
+    assert tools.FAKE_STORE.application_drafts == {}

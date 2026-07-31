@@ -1,7 +1,7 @@
 # Codex × Career Graph 原生集成
 
-> 状态：v1 本地闭环已实现；远程 OAuth、现有简历导入审阅 UI 和真实招聘平台
-> 回归仍在后续范围内。
+> 状态：Career Graph 本地闭环与远程 OAuth 身份已实现；现有简历导入审阅 UI
+> 和真实招聘平台回归仍在后续范围内。
 >
 > 核心决定：Relay 拥有 Career Graph、编译和反馈；Codex 拥有交互式编排与
 > 用户浏览器执行。Relay 不造服务器端投递器。
@@ -80,8 +80,13 @@ evidence outcome report。排序策略有意保守：JD 相关性始终优先；
 
 ## 4. 原生 Codex surface
 
-项目 `.codex/config.toml` 注册 `relay-career` stdio MCP server。Codex 会从
-`.agents/skills/manage-career-graph` 自动发现工作流 skill。
+项目 `.codex/config.toml` 注册两个互斥 surface：
+
+- `relay-career`：默认开启的 trusted-local STDIO 开发入口。
+- `relay-career-remote`：默认关闭的 Streamable HTTP + OAuth 2.1/PKCE
+  多用户入口；启用后运行 `codex mcp login relay-career-remote`。
+
+Codex 会从 `.agents/skills/manage-career-graph` 自动发现工作流 skill。
 
 MCP 使用当前 Python SDK 的 `FastMCP` 和 typed structured output，并为工具声明
 只读、写入和 open-world annotations。Codex 仍保留自己的工具确认；Relay 又在
@@ -91,10 +96,31 @@ MCP 使用当前 Python SDK 的 `FastMCP` 和 typed structured output，并为�
 - résumé compilation：`APPROVE RESUME <id>`
 - public publish：`PUBLISH <id>`
 
-调用方不能传 `user_id`。v1 本地模式只从 MCP server 环境读取
-`RELAY_USER_ID`，消除探针中“模型参数可切换用户”的 IDOR 风险。
+调用方不能传 `user_id`。本地 STDIO 模式只从 MCP server 环境读取
+`RELAY_USER_ID`；远程模式只信任经过 bearer middleware 验证的 OAuth
+`subject`，并把它解析为 Relay user UUID。模型参数无法切换 owner。
 
-### 本地启动
+远程授权由 Python FastMCP 提供 OAuth 协议端点、动态客户端注册、PKCE 和令牌
+校验；Relay Web/Hono 继续负责用户登录与 consent。两层只通过共享 PostgreSQL
+交换短期状态：
+
+```text
+Codex ── OAuth/PKCE ──► Python MCP
+                          │ pending request
+                          ▼
+                     shared PostgreSQL
+                          ▲ approval + user UUID
+                          │
+Relay Web ◄── JWT ── Hono consent API
+```
+
+授权码、access token 和 refresh token 在数据库中只保存 SHA-256 摘要。access
+token 有效期 1 小时，refresh token 有效期 30 天且每次刷新旋转；重放已旋转
+refresh token 会撤销整个 token family。scope 分为 `career:read`、
+`career:write`、`resume:publish` 与 `application:prepare`。scope 只授予调用
+资格，不会跳过 graph / compilation / publish 的独立 HITL 状态机。
+
+### Trusted-local STDIO
 
 Codex 自身支持 ChatGPT 登录或 API key 登录；本机可用
 `codex login status` 检查。Codex 登录和 Relay 数据身份是两个独立边界。
@@ -117,6 +143,25 @@ codex
 `python -m agents.mcp_relay.server`。官方 Codex 支持 `codex login` 的浏览器
 登录与本地会话缓存，详见
 [Authentication](https://learn.chatgpt.com/docs/auth)。
+
+### 远程 OAuth 本地回归
+
+先执行 migration 023 并启动 API/Web，然后：
+
+```bash
+make mcp-remote
+```
+
+将 `.codex/config.toml` 中 `relay-career` 设为 `enabled = false`，
+`relay-career-remote` 设为 `enabled = true`，再运行：
+
+```bash
+codex mcp login relay-career-remote
+```
+
+浏览器会进入 `/auth/mcp?request_id=...`。用户先完成 Relay 登录，再审阅 client
+和 scopes；批准后才回到 Codex 的 loopback callback。生产环境必须把 issuer、
+resource 和 Web URL 替换为 HTTPS，不能使用 loopback 配置。
 
 ## 5. HITL 不是一句 prompt
 
@@ -144,30 +189,27 @@ v1 同时使用三层保证：
 | 不编造经历 | provenance 必填 + source-only compiler | ✅ 编译路径 |
 | 版本追踪 | immutable revisions + optimistic base check | ✅ |
 | 现有简历导入 | JSON Resume → upsert-only pending change | ✅ 本地 |
-| MCP 暴露给 Codex | `agents/mcp_relay` + stdio protocol e2e | ✅ 本地 |
+| MCP 暴露给 Codex | STDIO + OAuth Streamable HTTP | ✅ |
 | Repo skill 编排 | `manage-career-graph` | ✅ |
 | 人工确认闸门 | change / compilation / publish 独立确认 | ✅ |
 | Codex 登录 | ChatGPT 登录态 → skill → live MCP → PG 多轮验证 | ✅ Codex 侧 |
-| Relay 多用户登录集成 | 当前为 trusted-local `RELAY_USER_ID` | ⚠️ 未完成 OAuth |
+| Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
 | 简历公开发布 | approved compilation → `/r/<token>` | ✅ |
 | 真实浏览器填表 | approved package handoff | ⚠️ 尚未做目标站回归 |
-| 申请跟踪连接 | approved compilation → idempotent local draft → handoff ID | ✅ v1 |
+| 申请跟踪连接 | approved compilation → idempotent local draft/compact batch queue → just-in-time handoff | ✅ v1 |
 | Boss 直聘批量投递 | 每份必须单独确认，无绕 CAPTCHA | ❌ 尚未实现/验证 |
 | 结果反馈驱动下一次编译 | application stage → manifest → evidence tie-break | ✅ v1 |
 
 ## 7. 下一段必须完成的工作
 
-1. **Relay 身份**：把 stdio 本地身份升级为 streamable HTTP + OAuth，或实现
-   不让模型看到密码的 device flow。生产私有 MCP 不能以 `user_id` 环境变量
-   作为最终方案。
-2. **导入审阅 UI**：JSON Resume 已能转换成 pending graph change set；仍需在
+1. **导入审阅 UI**：JSON Resume 已能转换成 pending graph change set；仍需在
    Web 中提供 node/edge diff 审批，并接入 PDF/DOCX 解析结果。
-3. **编译质量**：在不改变事实的前提下增加版式、长度预算、语言和 ATS profile；
+2. **编译质量**：在不改变事实的前提下增加版式、长度预算、语言和 ATS profile；
    可把“措辞建议”作为单独 change proposal，不能直接污染 graph。
-4. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
+3. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
    ranking；下一步补 application status history、样本置信区间和跨 JD cohort，
    仍不得自动改写事实或把相关性冒充因果。
-5. **浏览器真实验证**：先验证 Greenhouse/Lever/Ashby，再对 Boss 直聘做平台条款
+4. **浏览器真实验证**：先验证 Greenhouse/Lever/Ashby，再对 Boss 直聘做平台条款
    和账号风险 review；任何登录、验证码或封禁信号都立即交还用户。
 
 在这些证据完成前，不能声称“Codex 已真实跑通 Boss 批量投递全流程”。
@@ -188,6 +230,9 @@ v1 同时使用三层保证：
   `source_only=true` 和原文不变。
 - 本地申请草稿在真实 PostgreSQL 中完成两次调用幂等验证；handoff 返回同一
   application ID，且明确 `server_side_submission=false`。
+- migration 023 为远程 MCP 增加 DCR、PKCE authorization request、摘要化
+  access/refresh token 与 family revocation；Hono consent API 只在现有 JWT
+  会话中绑定 Relay user UUID。
 - Playwright 真实页面回归只填入 source-only 姓名、邮箱和经历字段；密码与 SSN
   保持空白，Submit 按钮未点击，页面最终仍为 `Not submitted`。这是安全边界
   验证，不等同于 Greenhouse/Lever/Ashby 或 Boss 直聘目标站回归。

@@ -320,13 +320,19 @@ class InMemoryCareerGraphStore:
             (
                 item
                 for item in self.application_drafts.values()
-                if item["user_id"] == str(user_id) and item["resume_id"] == compilation["resume_id"]
+                if item["user_id"] == str(user_id)
+                and item["resume_id"] == compilation["resume_id"]
+                and item["job_url"] == job_url
             ),
             None,
         )
+        if not application:
+            raise CareerGraphStateError(
+                "create an application draft for this exact job URL before browser handoff"
+            )
         return {
             "compilation_id": str(compilation_id),
-            "application_id": application["id"] if application else None,
+            "application_id": application["id"],
             "job_url": job_url,
             "resume_id": compilation["resume_id"],
             "resume": compilation["resume"],
@@ -364,6 +370,8 @@ class InMemoryCareerGraphStore:
             None,
         )
         reused = existing is not None
+        if existing and existing["job_url"] != job_url:
+            raise CareerGraphStateError("compilation is already bound to a different job URL")
         if not existing:
             application_id = str(uuid4())
             existing = {

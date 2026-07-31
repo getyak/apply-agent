@@ -1374,6 +1374,27 @@
       "generic": "Something went wrong"
     }
   },
+  "mcpAuth": {
+    "loading": "Loading authorization request…",
+    "eyebrow": "Codex connection",
+    "title": "Connect Relay to Codex",
+    "requestCopy": "{client} is asking to work with your Relay Career Graph.",
+    "permissions": "This connection can:",
+    "scopes": {
+      "careerRead": "Read your approved Career Graph, résumé compilations, and evidence reports.",
+      "careerWrite": "Propose graph changes and create JD-specific résumé drafts. Relay's review gates still apply.",
+      "resumePublish": "Publish a résumé only after you type the exact publication confirmation.",
+      "applicationPrepare": "Prepare a browser-only application handoff. It cannot enter passwords, bypass CAPTCHA, or submit without approval."
+    },
+    "safety": "Your Relay password is never shared with Codex. You can deny this request now, and OAuth tokens can be revoked independently of your Relay login.",
+    "approve": "Connect Codex",
+    "approving": "Connecting…",
+    "deny": "Deny",
+    "denying": "Denying…",
+    "invalidRequest": "This authorization link is invalid.",
+    "loadFailed": "We couldn't load this authorization request.",
+    "decisionFailed": "We couldn't complete this authorization decision."
+  },
   "onboarding": {
     "heroTitle": "Your job hunt, handled.",
     "heroSubtitle": "Drop your résumé in. We find the roles, tailor each application, and prep you for every interview — you stay in control.",

@@ -1374,6 +1374,27 @@
       "generic": "出了点问题"
     }
   },
+  "mcpAuth": {
+    "loading": "正在加载授权请求…",
+    "eyebrow": "Codex 连接",
+    "title": "将 Relay 连接到 Codex",
+    "requestCopy": "{client} 请求访问你的 Relay Career Graph。",
+    "permissions": "此连接可以：",
+    "scopes": {
+      "careerRead": "读取已批准的 Career Graph、简历编译结果和证据报告。",
+      "careerWrite": "提出图谱变更并创建针对 JD 的简历草稿；Relay 的人工审阅闸门仍然有效。",
+      "resumePublish": "仅在你输入精确发布确认短语后公开简历。",
+      "applicationPrepare": "准备仅在浏览器执行的申请交接；不能输入密码、绕过验证码，也不能未经批准提交。"
+    },
+    "safety": "你的 Relay 密码不会共享给 Codex。你可以立即拒绝此请求，OAuth 令牌也可以独立于 Relay 登录撤销。",
+    "approve": "连接 Codex",
+    "approving": "正在连接…",
+    "deny": "拒绝",
+    "denying": "正在拒绝…",
+    "invalidRequest": "此授权链接无效。",
+    "loadFailed": "无法加载此授权请求。",
+    "decisionFailed": "无法完成此次授权决定。"
+  },
   "onboarding": {
     "heroTitle": "你的求职，我们包办。",
     "heroSubtitle": "把简历交给我们。我们帮你找职位、为每次投递定制内容、为每场面试做准备 — 主动权始终在你手中。",

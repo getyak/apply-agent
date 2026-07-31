@@ -40,7 +40,7 @@ agents/
     server.py           # /ask/stream, /mock/start, /mock/resume, /resume/*
     deps.py             # current_user (X-User-Id; LOCAL_DEV fallback)
   career_graph/         # fact graph + revisions + compiler + outcome ranking
-  mcp_relay/            # native Codex stdio tools (review-gated, no submit tool)
+  mcp_relay/            # Codex STDIO/HTTP OAuth tools (review-gated, no submit tool)
   tests/                # pytest (markers: integration, smoke)
 ```
 
@@ -69,7 +69,9 @@ Env vars:
 - `LOCAL_DEV=1` — accept the demo user when X-User-Id is missing
 - `RELAY_LLM_KILLSWITCH=1` — emergency stop (skip all LLM calls)
 - `RELAY_MOCK_MAX_QUESTIONS=10` — cap per Mock session
-- `RELAY_USER_ID` — trusted-local owner identity for the `relay-career` Codex MCP server
+- `RELAY_USER_ID` — trusted-local STDIO owner identity only; remote HTTP uses the OAuth subject
+- `RELAY_MCP_TRANSPORT` — `stdio` (default) or OAuth-protected `streamable-http`
+- `RELAY_MCP_ISSUER_URL` / `RELAY_MCP_PUBLIC_URL` / `RELAY_WEB_BASE_URL` — remote MCP OAuth URLs
 - `RELAY_MCP_FAKE=1` — hermetic MCP demo mode (no PG/OpenRouter)
 
 ## Smoke-test (first-week priority)

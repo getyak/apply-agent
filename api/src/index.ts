@@ -26,6 +26,7 @@ import userRoutes from "./routes/users";
 import askRoutes from "./routes/ask";
 import slashRoutes from "./routes/slash";
 import todayRoutes from "./routes/today";
+import mcpOAuthRoutes from "./routes/mcp-oauth";
 
 const app = new Hono<AppEnv>();
 
@@ -47,6 +48,10 @@ app.use(
 );
 
 app.route("/api/auth", authRoutes);
+// OAuth consent bridge for the remote Career Graph MCP. The Python MCP
+// service owns the OAuth protocol; this authenticated Hono route binds a
+// pending PKCE request to the signed-in Relay user through shared PostgreSQL.
+app.route("/api/mcp-oauth", mcpOAuthRoutes);
 app.route("/api/resumes", resumeRoutes);
 // Public résumé share links — NO auth. The token (16-byte hex) IS the
 // capability. See routes/public-resumes.ts for the security posture.

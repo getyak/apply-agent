@@ -787,6 +787,22 @@ async def create_application_draft(
                     """,
                     (str(job_id), str(compilation_id), str(user_id)),
                 )
+            else:
+                await cur.execute(
+                    """
+                    SELECT url
+                      FROM jobs
+                     WHERE id = %s
+                    """,
+                    (str(job_id),),
+                )
+                existing_job = await cur.fetchone()
+                if not existing_job:
+                    raise CareerGraphNotFoundError("compilation job not found")
+                if existing_job[0] != job_url:
+                    raise CareerGraphStateError(
+                        "compilation is already bound to a different job URL"
+                    )
 
             await cur.execute(
                 """
@@ -847,18 +863,25 @@ async def application_handoff(
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT id
-                  FROM application_drafts
-                 WHERE user_id = %s AND resume_version_id = %s
-                 ORDER BY created_at DESC
+                SELECT a.id
+                  FROM application_drafts a
+                  JOIN jobs j ON j.id = a.job_id
+                 WHERE a.user_id = %s
+                   AND a.resume_version_id = %s
+                   AND j.url = %s
+                 ORDER BY a.created_at DESC
                  LIMIT 1
                 """,
-                (str(user_id), compilation["resume_id"]),
+                (str(user_id), compilation["resume_id"], job_url),
             )
             application_row = await cur.fetchone()
+    if not application_row:
+        raise CareerGraphStateError(
+            "create an application draft for this exact job URL before browser handoff"
+        )
     return {
         "compilation_id": str(compilation_id),
-        "application_id": str(application_row[0]) if application_row else None,
+        "application_id": str(application_row[0]),
         "job_url": job_url,
         "resume_id": compilation["resume_id"],
         "resume": compilation["resume"],

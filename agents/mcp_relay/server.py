@@ -1,13 +1,25 @@
-"""Native stdio MCP server for Codex-driven Career Graph workflows."""
+"""Native MCP server for Codex-driven Career Graph workflows.
+
+STDIO is a trusted-local development surface. Streamable HTTP is a remote,
+multi-user surface protected by OAuth 2.1 authorization code + PKCE.
+"""
 
 from __future__ import annotations
 
-from typing import Any
+import os
+from typing import Any, Literal
 
+from mcp.server.auth.settings import (
+    AuthSettings,
+    ClientRegistrationOptions,
+    RevocationOptions,
+)
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import AnyHttpUrl
 
 from agents.mcp_relay import tools
+from agents.mcp_relay.oauth import ALL_SCOPES, PostgresOAuthProvider
 
 INSTRUCTIONS = (
     "Career Graph is the source of truth; résumés are compiled artifacts. Never invent "
@@ -20,7 +32,60 @@ INSTRUCTIONS = (
     "explicit user approval."
 )
 
-mcp = FastMCP("relay-career", instructions=INSTRUCTIONS)
+
+def _transport() -> Literal["stdio", "streamable-http"]:
+    value = os.environ.get("RELAY_MCP_TRANSPORT", "stdio").strip()
+    if value == "stdio":
+        return "stdio"
+    if value == "streamable-http":
+        return "streamable-http"
+    raise RuntimeError("RELAY_MCP_TRANSPORT must be 'stdio' or 'streamable-http'")
+
+
+def _server_options() -> dict[str, Any]:
+    if _transport() == "stdio":
+        return {}
+
+    host = os.environ.get("RELAY_MCP_HOST", "127.0.0.1")
+    port = int(os.environ.get("RELAY_MCP_PORT", "8002"))
+    issuer_url = os.environ.get(
+        "RELAY_MCP_ISSUER_URL",
+        f"http://{host}:{port}",
+    ).rstrip("/")
+    resource_url = os.environ.get(
+        "RELAY_MCP_PUBLIC_URL",
+        f"{issuer_url}/mcp",
+    )
+    web_base_url = os.environ.get(
+        "RELAY_WEB_BASE_URL",
+        "http://localhost:3000",
+    )
+    provider = PostgresOAuthProvider(
+        web_base_url=web_base_url,
+        issuer_url=issuer_url,
+    )
+    auth = AuthSettings(
+        issuer_url=AnyHttpUrl(issuer_url),
+        resource_server_url=AnyHttpUrl(resource_url),
+        required_scopes=["career:read"],
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=ALL_SCOPES,
+            default_scopes=ALL_SCOPES,
+        ),
+        revocation_options=RevocationOptions(enabled=True),
+    )
+    return {
+        "auth_server_provider": provider,
+        "auth": auth,
+        "host": host,
+        "port": port,
+        "streamable_http_path": "/mcp",
+        "stateless_http": True,
+    }
+
+
+mcp = FastMCP("relay-career", instructions=INSTRUCTIONS, **_server_options())
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -45,8 +110,8 @@ PUBLIC_WRITE = ToolAnnotations(
 @mcp.tool(
     title="Check Relay Career status",
     description=(
-        "Check whether the trusted local Relay identity is configured and summarize the "
-        "review-gated Career Graph workflow."
+        "Check whether an OAuth or trusted-local Relay identity is configured and "
+        "summarize the review-gated Career Graph workflow."
     ),
     annotations=READ_ONLY,
 )
@@ -316,8 +381,24 @@ async def prepare_application_handoff(
     )
 
 
+@mcp.tool(
+    title="Prepare browser application batch",
+    description=(
+        "Create or reuse a compact local queue for 1-20 approved résumé compilations. "
+        "Fetch each full browser handoff just in time with prepare_application_handoff. "
+        "Every final Submit/Apply action still requires separate approval, and any login, "
+        "CAPTCHA, or risk signal stops the batch."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def prepare_application_batch(
+    applications: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return await tools.prepare_application_batch(applications=applications)
+
+
 def main() -> None:
-    mcp.run(transport="stdio")
+    mcp.run(transport=_transport())
 
 
 if __name__ == "__main__":

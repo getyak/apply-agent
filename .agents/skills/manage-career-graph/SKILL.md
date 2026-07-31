@@ -12,7 +12,9 @@ compilations, publication, and browser handoff.
 ## Preflight
 
 1. Call `relay_status`.
-2. Stop if Relay identity is not configured. Never pass or guess a `user_id`.
+2. Stop if Relay identity is not configured. Remote MCP identity must come from
+   the OAuth subject; trusted-local STDIO may use `RELAY_USER_ID`. Never pass or
+   guess a `user_id`.
 3. Call `list_career_graphs`; reuse the intended graph or create one through a
    proposal.
 4. Read [references/graph-contract.md](references/graph-contract.md) before
@@ -74,11 +76,14 @@ Publishing a résumé is not submitting a job application.
 
 ## Prepare and execute a browser application
 
-1. When the user intends to apply, call `create_application_draft` with the
-   approved compilation, company, role, and exact job URL. This creates only a
-   Relay-local tracking row and makes later outcome feedback attributable.
-2. Call `prepare_application_handoff` and verify it returns the same
-   `application_id`.
+1. For one application, call `create_application_draft` with the approved
+   compilation, company, role, and exact job URL. For multiple applications,
+   call `prepare_application_batch` once after every compilation has its own
+   approval. Both paths create only Relay-local tracking rows and make later
+   outcome feedback attributable; neither path submits anything.
+2. Work through a batch one item at a time. Call `prepare_application_handoff`
+   just before filling that item, and verify it returns the queued
+   `application_id`. Do not retain full handoff packages for the whole batch.
 3. Use the connected Codex Chrome or Browser capability so execution happens
    in the user's logged-in browser. Do not use a server-side application
    submitter.

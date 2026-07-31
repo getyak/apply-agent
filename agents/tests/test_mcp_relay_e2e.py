@@ -42,6 +42,7 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "compile_resume_for_jd",
                 "approve_resume_compilation",
                 "create_application_draft",
+                "prepare_application_batch",
                 "publish_resume_compilation",
                 "prepare_application_handoff",
             }.issubset(by_name)

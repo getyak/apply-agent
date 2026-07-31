@@ -10,6 +10,28 @@ import { BrandLoader, Button, Field, Input } from "@/components/ui";
 import { resolveError, type ResolvedError } from "@/lib/errors/resolve";
 import { ErrorInline } from "@/components/errors";
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function oauthReturnPath(value: string | null): string {
+  if (!value) return "/app";
+  try {
+    const parsed = new URL(value, "https://relay.invalid");
+    const requestId = parsed.searchParams.get("request_id");
+    if (
+      parsed.origin !== "https://relay.invalid" ||
+      parsed.pathname !== "/auth/mcp" ||
+      !requestId ||
+      !UUID_PATTERN.test(requestId)
+    ) {
+      return "/app";
+    }
+    return `/auth/mcp?request_id=${encodeURIComponent(requestId)}`;
+  } catch {
+    return "/app";
+  }
+}
+
 // Next 16 requires components that read URL search params to be wrapped in a
 // Suspense boundary so the rest of the page can be prerendered. Without it,
 // `next build` fails the /auth route with "useSearchParams() should be wrapped
@@ -32,6 +54,10 @@ function AuthPageInner() {
   const router = useRouter();
   const t = useTranslations("auth");
   const search = useSearchParams();
+  const nextPath = useMemo(
+    () => oauthReturnPath(search?.get("next") ?? null),
+    [search],
+  );
   const sessionNotice = useMemo(() => {
     const reason = search?.get("reason");
     if (reason === "session_expired")
@@ -92,7 +118,7 @@ function AuthPageInner() {
     authApi
       .me()
       .then(() => {
-        if (!cancelled) router.replace("/app");
+        if (!cancelled) router.replace(nextPath);
       })
       .catch(() => {
         if (!cancelled) setChecking(false);
@@ -102,7 +128,7 @@ function AuthPageInner() {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [router]);
+  }, [nextPath, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,7 +142,7 @@ function AuthPageInner() {
         const { token } = await authApi.register(email, password, name || undefined);
         setToken(token);
       }
-      router.push("/app");
+      router.push(nextPath);
     } catch (err) {
       // The error router (web/src/lib/errors/resolve.ts) maps every
       // ApiError code into a typed ResolvedError carrying its own

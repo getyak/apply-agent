@@ -483,6 +483,35 @@ export const auth = {
     ),
 };
 
+export interface McpAuthorizationRequest {
+  id: string;
+  client: {
+    id: string;
+    name: string;
+    uri: string | null;
+  };
+  scopes: string[];
+  resource: string | null;
+  status: "pending" | "approved" | "denied" | "consumed";
+  expiresAt: string;
+}
+
+export const mcpOAuth = {
+  request: (requestId: string) =>
+    api<{ request: McpAuthorizationRequest }>(
+      `/api/mcp-oauth/requests/${encodeURIComponent(requestId)}`,
+    ),
+
+  decide: (requestId: string, decision: "approve" | "deny") =>
+    api<{ redirectUrl: string }>(
+      `/api/mcp-oauth/requests/${encodeURIComponent(requestId)}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      },
+    ),
+};
+
 /** Async parse job mirrored from the API's AsyncJob record. */
 export interface ParseJob {
   id: string;

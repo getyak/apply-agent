@@ -11,10 +11,16 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
+from mcp.server.auth.middleware.auth_context import get_access_token
+
 from agents.career_graph import store as pg_store
 from agents.career_graph.fake_store import InMemoryCareerGraphStore
 from agents.career_graph.importer import json_resume_to_operations
 from agents.career_graph.store import CareerGraphStateError
+from agents.mcp_relay.delivery import (
+    batch_safety_contract,
+    classify_application_target,
+)
 
 FAKE_USER_ID = UUID("00000000-0000-0000-0000-000000000999")
 FAKE_SOURCE_RESUME_ID = UUID("00000000-0000-0000-0000-000000000101")
@@ -41,10 +47,20 @@ def fake_mode() -> bool:
 
 
 def current_user_id() -> UUID:
-    """Resolve the trusted local identity without exposing it as a tool arg."""
+    """Resolve OAuth subject or trusted-local identity without a tool arg."""
 
     if fake_mode():
         return FAKE_USER_ID
+    access_token = get_access_token()
+    if access_token is not None:
+        if not access_token.subject:
+            raise CareerGraphStateError("OAuth access token is missing its Relay subject")
+        try:
+            return UUID(access_token.subject)
+        except ValueError as exc:
+            raise CareerGraphStateError(
+                "OAuth access token subject must be a Relay user UUID"
+            ) from exc
     raw = os.environ.get("RELAY_USER_ID", "").strip()
     if not raw:
         raise CareerGraphStateError(
@@ -55,6 +71,16 @@ def current_user_id() -> UUID:
         return UUID(raw)
     except ValueError as exc:
         raise CareerGraphStateError("RELAY_USER_ID must be a UUID") from exc
+
+
+def _require_scope(scope: str) -> None:
+    """Enforce fine-grained OAuth scopes while preserving trusted STDIO."""
+
+    if fake_mode():
+        return
+    access_token = get_access_token()
+    if access_token is not None and scope not in access_token.scopes:
+        raise CareerGraphStateError(f"OAuth scope required: {scope}")
 
 
 async def _store_call(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -80,12 +106,25 @@ def _require_confirmation(actual: str, expected: str) -> None:
 async def relay_status() -> dict[str, Any]:
     user_id = current_user_id()
     graphs = await _store_call("list_graphs", user_id)
+    access_token = None if fake_mode() else get_access_token()
     return {
         "ok": True,
         "server": "relay-career",
-        "mode": "fake" if fake_mode() else "live",
+        "mode": (
+            "fake"
+            if fake_mode()
+            else "remote_oauth"
+            if access_token is not None
+            else "trusted_local"
+        ),
         "identity_configured": True,
-        "identity_source": "fake_fixture" if fake_mode() else "RELAY_USER_ID",
+        "identity_source": (
+            "fake_fixture"
+            if fake_mode()
+            else "oauth_subject"
+            if access_token is not None
+            else "RELAY_USER_ID"
+        ),
         "career_graph_count": len(graphs),
         "fake_source_resume_id": str(FAKE_SOURCE_RESUME_ID) if fake_mode() else None,
         "workflow": [
@@ -130,6 +169,7 @@ async def propose_resume_import(
     graph_id: str | None = None,
     graph_label: str = "Career Graph",
 ) -> dict[str, Any]:
+    _require_scope("career:write")
     parsed_resume_id = _uuid(resume_id, "resume_id")
     user_id = current_user_id()
     if not fake_mode():
@@ -193,6 +233,7 @@ async def propose_career_graph_changes(
 ) -> dict[str, Any]:
     """Stage changes only; never mutate the approved graph revision."""
 
+    _require_scope("career:write")
     user_id = current_user_id()
     if not summary.strip():
         raise CareerGraphStateError("summary is required")
@@ -232,6 +273,7 @@ async def approve_career_graph_change(
     change_set_id: str,
     confirmation: str,
 ) -> dict[str, Any]:
+    _require_scope("career:write")
     expected = f"APPROVE CAREER CHANGE {change_set_id}"
     _require_confirmation(confirmation, expected)
     return await _store_call(
@@ -247,6 +289,7 @@ async def reject_career_graph_change(
     change_set_id: str,
     confirmation: str,
 ) -> dict[str, Any]:
+    _require_scope("career:write")
     expected = f"REJECT CAREER CHANGE {change_set_id}"
     _require_confirmation(confirmation, expected)
     return await _store_call(
@@ -264,6 +307,7 @@ async def compile_resume_for_jd(
     job_id: str | None = None,
     max_achievements_per_role: int = 4,
 ) -> dict[str, Any]:
+    _require_scope("career:write")
     if not jd_text.strip():
         raise CareerGraphStateError("jd_text is required")
     parsed_job_id = _uuid(job_id, "job_id") if job_id else None
@@ -293,6 +337,7 @@ async def approve_resume_compilation(
     compilation_id: str,
     confirmation: str,
 ) -> dict[str, Any]:
+    _require_scope("career:write")
     expected = f"APPROVE RESUME {compilation_id}"
     _require_confirmation(confirmation, expected)
     return await _store_call(
@@ -307,6 +352,7 @@ async def reject_resume_compilation(
     compilation_id: str,
     confirmation: str,
 ) -> dict[str, Any]:
+    _require_scope("career:write")
     expected = f"REJECT RESUME {compilation_id}"
     _require_confirmation(confirmation, expected)
     return await _store_call(
@@ -321,6 +367,7 @@ async def publish_resume_compilation(
     compilation_id: str,
     confirmation: str,
 ) -> dict[str, Any]:
+    _require_scope("resume:publish")
     return await _store_call(
         "publish_compilation",
         current_user_id(),
@@ -337,6 +384,7 @@ async def create_application_draft(
     role_title: str,
     job_url: str,
 ) -> dict[str, Any]:
+    _require_scope("application:prepare")
     parsed = urlparse(job_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise CareerGraphStateError("job_url must be an absolute http(s) URL")
@@ -361,12 +409,87 @@ async def prepare_application_handoff(
     compilation_id: str,
     job_url: str,
 ) -> dict[str, Any]:
+    _require_scope("application:prepare")
     parsed = urlparse(job_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise CareerGraphStateError("job_url must be an absolute http(s) URL")
-    return await _store_call(
+    handoff = await _store_call(
         "application_handoff",
         current_user_id(),
         _uuid(compilation_id, "compilation_id"),
         job_url=job_url,
     )
+    handoff["target_site"] = classify_application_target(job_url)
+    return handoff
+
+
+async def prepare_application_batch(
+    *,
+    applications: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Prepare multiple local drafts/handoffs without submitting any of them."""
+
+    _require_scope("application:prepare")
+    if not applications or len(applications) > 20:
+        raise CareerGraphStateError("applications must contain 1-20 items")
+
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(applications):
+        if not isinstance(item, dict):
+            raise CareerGraphStateError(f"applications[{index}] must be an object")
+        required = ("compilation_id", "company", "role_title", "job_url")
+        values: dict[str, str] = {}
+        for field in required:
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise CareerGraphStateError(f"applications[{index}].{field} is required")
+            values[field] = value.strip()
+        _uuid(values["compilation_id"], f"applications[{index}].compilation_id")
+        parsed = urlparse(values["job_url"])
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise CareerGraphStateError(
+                f"applications[{index}].job_url must be an absolute http(s) URL"
+            )
+        if len(values["company"]) > 200 or len(values["role_title"]) > 200:
+            raise CareerGraphStateError(
+                f"applications[{index}] company and role_title must be at most 200 characters"
+            )
+        key = (values["compilation_id"], values["job_url"])
+        if key in seen:
+            raise CareerGraphStateError(
+                f"applications[{index}] duplicates an earlier compilation/job URL"
+            )
+        seen.add(key)
+        normalized.append(values)
+
+    prepared: list[dict[str, Any]] = []
+    for item in normalized:
+        draft = await create_application_draft(**item)
+        handoff = await prepare_application_handoff(
+            compilation_id=item["compilation_id"],
+            job_url=item["job_url"],
+        )
+        if handoff["application_id"] != draft["application_id"]:
+            raise RuntimeError("application draft and browser handoff identity diverged")
+        prepared.append(
+            {
+                "application_id": draft["application_id"],
+                "compilation_id": item["compilation_id"],
+                "company": item["company"],
+                "role_title": item["role_title"],
+                "job_url": item["job_url"],
+                "reused": draft["reused"],
+                "target_site": handoff["target_site"],
+                "handoff_ready": True,
+                "next_tool": "prepare_application_handoff",
+                "status": "prepared_not_submitted",
+            }
+        )
+
+    return {
+        "ok": True,
+        "applications": prepared,
+        "batch": batch_safety_contract(len(prepared)),
+        "server_side_submission": False,
+    }
