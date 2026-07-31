@@ -16,6 +16,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from agents.career_graph import store as pg_store
 from agents.career_graph.fake_store import InMemoryCareerGraphStore
 from agents.career_graph.importer import json_resume_to_operations
+from agents.career_graph.model import normalize_compiler_config
 from agents.career_graph.store import CareerGraphStateError
 from agents.mcp_relay.delivery import (
     BrowserCheckpointStage,
@@ -307,18 +308,35 @@ async def compile_resume_for_jd(
     graph_id: str,
     jd_text: str,
     job_id: str | None = None,
-    max_achievements_per_role: int = 4,
+    artifact_locale: str = "en",
+    length_budget: str = "two_page",
+    ats_profile: str = "standard",
+    max_achievements_per_role: int | None = None,
 ) -> dict[str, Any]:
     _require_scope("career:write")
     if not jd_text.strip():
         raise CareerGraphStateError("jd_text is required")
+    if len(jd_text) > 50_000:
+        raise CareerGraphStateError("jd_text must be at most 50000 characters")
     parsed_job_id = _uuid(job_id, "job_id") if job_id else None
+    try:
+        normalize_compiler_config(
+            artifact_locale=artifact_locale,
+            length_budget=length_budget,
+            ats_profile=ats_profile,
+            max_achievements_per_role=max_achievements_per_role,
+        )
+    except ValueError as exc:
+        raise CareerGraphStateError(str(exc)) from exc
     return await _store_call(
         "create_compilation",
         current_user_id(),
         _uuid(graph_id, "graph_id"),
         jd_text=jd_text,
         job_id=parsed_job_id,
+        artifact_locale=artifact_locale,
+        length_budget=length_budget,
+        ats_profile=ats_profile,
         max_achievements_per_role=max_achievements_per_role,
     )
 

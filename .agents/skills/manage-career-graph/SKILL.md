@@ -52,10 +52,22 @@ compilations, publication, and browser handoff.
 2. Call `get_career_graph_evidence_report`. Explain that outcome ranking is
    correlation, not causation; JD relevance remains primary and rejections do
    not automatically penalize a fact.
-3. Call `compile_resume_for_jd` against an approved graph revision.
+3. Choose and state the reproducible compiler inputs before calling
+   `compile_resume_for_jd`:
+
+   - `artifact_locale`: `en` or `zh`; this localizes structural labels only
+     and never translates source facts;
+   - `length_budget`: `one_page` or `two_page`;
+   - `ats_profile`: `standard` or `strict`.
+
+   Use `two_page` + `standard` when the user gives no preference. Do not use
+   `max_achievements_per_role` unless the user asks for a specific override.
 4. Call `get_resume_compilation`.
-5. Present the draft, graph revision, selected and omitted evidence, and
-   `guard_report`. Do not rewrite the compiled facts outside Relay.
+5. Present the draft, graph revision, `compiler_config`, selected and omitted
+   evidence, `quality_report`, and `guard_report`. Call out failed ATS checks,
+   estimated-page overflow, and unmatched JD tokens. Page count is an estimate,
+   not proof of final PDF pagination. Do not rewrite the compiled facts outside
+   Relay.
 6. Ask the user to type exactly `APPROVE RESUME <compilation_id>` or
    `REJECT RESUME <compilation_id>`.
 7. Call the decision tool only after the exact user-authored phrase.

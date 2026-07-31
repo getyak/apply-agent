@@ -116,3 +116,17 @@ describe("resumes.ts — edit/save draft-vs-snapshot guards", () => {
     expect(SRC).toMatch(/resume:\s*unwrapResumeRow\([^()]*(?:\([^()]*\)[^()]*)*\)\s*,\s*mode/);
   });
 });
+
+describe("resumes.ts — Career Graph compilation immutability", () => {
+  it("checks the owner-scoped compilation link before edit and delete", () => {
+    expect(SRC).toMatch(
+      /FROM career_graph_compilations\s+WHERE resume_id = \$1 AND user_id = \$2/,
+    );
+    expect(SRC.match(/await requireMutableResume\(id, userId\);/g)?.length).toBe(2);
+  });
+
+  it("returns an actionable conflict instead of silently invalidating approval", () => {
+    expect(SRC).toContain("Career Graph compiled résumés are immutable");
+    expect(SRC).toContain("create and approve a new compilation");
+  });
+});

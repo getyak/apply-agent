@@ -405,6 +405,24 @@ app.get("/:id", async (c) => {
   return c.json({ resume: unwrapResumeRow(resume, resolveLocale(c)) });
 });
 
+async function requireMutableResume(
+  resumeId: string,
+  userId: string,
+): Promise<void> {
+  const result = await query<{ compilation_id: string }>(
+    `SELECT id AS compilation_id
+       FROM career_graph_compilations
+      WHERE resume_id = $1 AND user_id = $2
+      LIMIT 1`,
+    [resumeId, userId],
+  );
+  if (result.rows.length > 0) {
+    throw new ConflictError(
+      "Career Graph compiled résumés are immutable — create and approve a new compilation",
+    );
+  }
+}
+
 app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id")!; // present by route definition
@@ -415,6 +433,7 @@ app.put("/:id", validateBody(UpdateResumeSchema), async (c) => {
   // Either way we keep the expectedVersion guard so a parallel writer still
   // wins a race and we 409 here cleanly (§5 reconcile UX hangs on this).
   const mode = c.req.query("mode") === "draft" ? "draft" : "snapshot";
+  await requireMutableResume(id, userId);
 
   // Hand-edits flow through this route. Preserve the wrapper shape if the row
   // already has one (raw text + warnings shouldn't be silently dropped when a
@@ -465,6 +484,8 @@ function isWrappedResume(content: unknown): content is {
   markdown?: string;
   warnings?: string[];
   parsedAt?: string;
+  artifactLocale?: "en" | "zh";
+  compilerConfig?: Record<string, unknown>;
   source?: {
     fileId: string;
     fileName: string;
@@ -482,21 +503,38 @@ function isWrappedResume(content: unknown): content is {
 
 /** Flatten the wrapper shape back to a backward-compatible row: the client still
  *  reads `content.basics / content.work / ...` like before, with the new
- *  metadata available as `_raw / _markdown / _warnings / _parsedAt / _source`.
+ *  metadata available as `_raw / _markdown / _warnings / _parsedAt /
+ *  _artifactLocale / _compilerConfig / _source`.
  *  `_markdown` is the canonical GFM main track (§11.3) the front-end renders
  *  by default; if a legacy row pre-dates the dual-format envelope we re-render
  *  it on read so the client never has to do JSON-to-MD itself. */
-function unwrapResumeRow(
+export function unwrapResumeRow(
   row: Record<string, unknown>,
   locale: "en" | "zh" = "en",
 ): Record<string, unknown> {
   if (!isWrappedResume(row.content)) return row;
-  const { raw, parsed, markdown, warnings, parsedAt, source } = row.content;
+  const {
+    raw,
+    parsed,
+    markdown,
+    warnings,
+    parsedAt,
+    artifactLocale,
+    compilerConfig,
+    source,
+  } = row.content;
   // Prefer the persisted markdown — it was rendered in the writer's locale
   // (see the create / parse / put routes above). Only re-render when the row
   // predates the envelope; then we use the *reader's* locale so a zh user
   // sees zh chrome even on a legacy row.
-  const md = markdown && markdown.length > 0 ? markdown : jsonResumeToMarkdown(parsed, { locale });
+  const renderLocale =
+    artifactLocale === "en" || artifactLocale === "zh"
+      ? artifactLocale
+      : locale;
+  const md =
+    markdown && markdown.length > 0
+      ? markdown
+      : jsonResumeToMarkdown(parsed, { locale: renderLocale });
   return {
     ...row,
     content: {
@@ -505,6 +543,8 @@ function unwrapResumeRow(
       _markdown: md,
       _warnings: warnings ?? [],
       _parsedAt: parsedAt ?? null,
+      _artifactLocale: renderLocale,
+      ...(compilerConfig ? { _compilerConfig: compilerConfig } : {}),
       ...(source ? { _source: source } : {}),
     },
   };
@@ -514,6 +554,7 @@ app.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
   await requireOwnership("resumes", id, userId, "id"); // 404 if not owned
+  await requireMutableResume(id, userId);
   await query("DELETE FROM resumes WHERE id = $1 AND user_id = $2", [id, userId]);
   return c.json({ ok: true });
 });
@@ -554,10 +595,21 @@ app.get("/:id/export", async (c) => {
   // the canonical _markdown for downstream pdf/docx render — pull them both
   // out cleanly here.
   const content = (unwrapped.content ?? {}) as Record<string, unknown>;
-  const { _markdown, _raw, _warnings, _parsedAt, _source, ...parsed } = content as any;
+  const {
+    _markdown,
+    _raw,
+    _warnings,
+    _parsedAt,
+    _artifactLocale,
+    _compilerConfig,
+    _source,
+    ...parsed
+  } = content as any;
   void _raw;
   void _warnings;
   void _parsedAt;
+  void _artifactLocale;
+  void _compilerConfig;
   void _source;
 
   const version = unwrapped.version ?? row.version ?? 1;

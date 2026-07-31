@@ -59,16 +59,20 @@ pending change set ──人工批准──► immutable Career Graph revision
 
 ## 3. v1 数据模型
 
-迁移 `022_career_graph` 新增四类实体：
+迁移 `022_career_graph` 新增四类实体，迁移
+`024_career_graph_compiler_profiles` 为 compilation 固定编译器配置和质量报告：
 
 - `career_graphs`：用户拥有的图谱入口，只指向一个当前已批准 revision。
 - `career_graph_revisions`：不可变 node/edge snapshot。
 - `career_graph_change_sets`：agent 提出的候选 snapshot；pending 状态不会改变图谱。
 - `career_graph_compilations`：固定 graph revision + JD + résumé row +
-  selection manifest + guard report。
+  selection manifest + guard report + compiler config + quality report。
 
 节点有稳定 ID、类型、事实数据和 provenance；边表达 role → achievement、
 achievement → skill 等关系。编译器只选择和排序节点文本，不根据 JD 生成新事实。
+一旦 résumé row 被 compilation 引用，migration 024 的数据库触发器会禁止修改其
+内容、版本和派生关系；要改变产物必须创建新的 compilation 并重新经过批准。
+发布 token 和发布时间等交付元数据仍可独立更新。
 
 `selection_manifest` 把 `work.0.highlights` 等输出路径映射回 graph node ID。
 这使“为什么这份 JD 简历出现这条 bullet”可被机器追踪，而不只是一段 LLM
@@ -189,7 +193,7 @@ v1 同时使用三层保证：
 | 原始要求 | 当前证据 | 状态 |
 |---|---|---|
 | Career Graph 是底层资产 | migration 022 + `agents/career_graph` | ✅ v1 |
-| 针对 JD 现场编译 | `compile_resume` + selection manifest | ✅ v1（选择/排序） |
+| 针对 JD 现场编译 | `compile_resume` + selection manifest + versioned locale/length/ATS profile | ✅ v1 |
 | 不编造经历 | provenance 必填 + source-only compiler | ✅ 编译路径 |
 | 版本追踪 | immutable revisions + optimistic base check | ✅ |
 | 现有简历导入 | JSON Resume → pending change → Web node/edge diff → exact-confirmation revision | ✅ |
@@ -206,11 +210,12 @@ v1 同时使用三层保证：
 
 ## 7. 下一段必须完成的工作
 
-1. **编译质量**：在不改变事实的前提下增加版式、长度预算、语言和 ATS profile；
-   可把“措辞建议”作为单独 change proposal，不能直接污染 graph。
-2. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
+1. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
    ranking；下一步补 application status history、样本置信区间和跨 JD cohort，
    仍不得自动改写事实或把相关性冒充因果。
+2. **渲染质量**：编译器已经持久化一/两页预算、`en/zh` 结构标签、标准/严格
+   ATS profile、JD token 覆盖率和省略证据；下一步用真实 PDF/DOCX 排版回归校准
+   页数估算。可把“措辞建议”作为独立 change proposal，但不能直接污染 graph。
 3. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
@@ -240,6 +245,12 @@ v1 同时使用三层保证：
 - migration 023 为远程 MCP 增加 DCR、PKCE authorization request、摘要化
   access/refresh token 与 family revocation；Hono consent API 只在现有 JWT
   会话中绑定 Relay user UUID。
+- migration 024 在隔离 PostgreSQL 中通过完整 up/down/up 往返。真实
+  PostgreSQL compilation 同时持久化 `compiler_config`、`quality_report` 和
+  résumé envelope 的 `artifactLocale`；API 私有预览和公开链接都优先使用该
+  locale 渲染结构标签，事实文本不翻译。隔离库还验证了已关联 compilation 的
+  résumé 内容更新被数据库拒绝，而 publish token 更新仍被允许；旧 compilation
+  被诚实标记为 profile version 0 / `legacy_unbounded`，不会伪装成新版 profile。
 - 2026-08-01 使用 Playwright 对
   [Greenhouse / Genius AI](https://job-boards.greenhouse.io/glossgenius/jobs/6681936003)、
   [Lever / Until](https://jobs.lever.co/until/8c0ae3cf-6bb0-44de-b054-c3acba5a2926/apply)
@@ -260,3 +271,8 @@ v1 同时使用三层保证：
   `ready_for_fill`，`before_submit` 返回 `review_required`；两次都返回
   `safe_to_submit=false` 和同一 application ID 绑定的确认短语。隔离用户、职位和
   application 在验证后已删除。
+- 原生 Codex CLI 使用 ChatGPT 登录态，经同一 STDIO MCP 真实调用新版
+  `compile_resume_for_jd(artifact_locale=zh, length_budget=one_page,
+  ats_profile=strict)`；随后独立读取 compilation，确认 profile version 1、
+  `ready_for_human_review`、ATS ready、估算 1 页及 `source_only=true` 均已持久化。
+  该验证只创建 draft，没有批准、发布或投递。

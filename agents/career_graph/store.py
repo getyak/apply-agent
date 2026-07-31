@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import secrets
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -522,7 +523,10 @@ async def create_compilation(
     *,
     jd_text: str,
     job_id: UUID | None = None,
-    max_achievements_per_role: int = 4,
+    artifact_locale: str = "en",
+    length_budget: str = "two_page",
+    ats_profile: str = "standard",
+    max_achievements_per_role: int | None = None,
 ) -> dict[str, Any]:
     """Render one draft résumé from the current immutable graph revision."""
 
@@ -537,6 +541,9 @@ async def create_compilation(
     compiled = compile_resume(
         revision["snapshot"],
         jd_text,
+        artifact_locale=artifact_locale,
+        length_budget=length_budget,
+        ats_profile=ats_profile,
         max_achievements_per_role=max_achievements_per_role,
         evidence_ranking=evidence_scores(feedback_report),
     )
@@ -544,6 +551,14 @@ async def create_compilation(
     resume_id = uuid4()
     fingerprint = hashlib.sha256(jd_text.encode("utf-8")).hexdigest()
     label = f"Career Graph r{revision['revision']} · JD {fingerprint[:8]}"
+    persisted_resume = {
+        "raw": "",
+        "parsed": compiled["resume"],
+        "warnings": compiled["quality_report"]["warnings"],
+        "parsedAt": datetime.now(UTC).isoformat(),
+        "artifactLocale": compiled["compiler_config"]["artifact_locale"],
+        "compilerConfig": compiled["compiler_config"],
+    }
 
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         async with conn.cursor() as cur:
@@ -558,7 +573,7 @@ async def create_compilation(
                 (
                     str(resume_id),
                     str(user_id),
-                    _json(compiled["resume"]),
+                    _json(persisted_resume),
                     label,
                     str(job_id) if job_id else None,
                 ),
@@ -569,8 +584,8 @@ async def create_compilation(
                 INSERT INTO career_graph_compilations (
                     id, user_id, graph_id, graph_revision_id, job_id,
                     jd_text, jd_fingerprint, resume_id, selection_manifest,
-                    guard_report
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    guard_report, compiler_config, quality_report
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     str(compilation_id),
@@ -583,6 +598,8 @@ async def create_compilation(
                     str(resume_id),
                     _json(compiled["selection_manifest"]),
                     _json(compiled["guard_report"]),
+                    _json(compiled["compiler_config"]),
+                    _json(compiled["quality_report"]),
                 ),
             )
         await conn.commit()
@@ -660,8 +677,9 @@ async def get_compilation(user_id: UUID, compilation_id: UUID) -> dict[str, Any]
                 SELECT c.id, c.graph_id, c.graph_revision_id, r.revision,
                        c.job_id, c.jd_fingerprint, c.resume_id, rv.version,
                        rv.content, c.status, c.selection_manifest,
-                       c.guard_report, rv.publish_token, c.created_at,
-                       c.approved_at, c.published_at
+                       c.guard_report, c.compiler_config, c.quality_report,
+                       rv.publish_token, c.created_at, c.approved_at,
+                       c.published_at
                   FROM career_graph_compilations c
                   JOIN career_graph_revisions r ON r.id = c.graph_revision_id
                   JOIN resumes rv ON rv.id = c.resume_id
@@ -681,14 +699,16 @@ async def get_compilation(user_id: UUID, compilation_id: UUID) -> dict[str, Any]
         "jd_fingerprint": row[5],
         "resume_id": str(row[6]),
         "resume_version": int(row[7]),
-        "resume": _coerce_json(row[8]),
+        "resume": _unwrap_resume_content(row[8]),
         "status": row[9],
         "selection_manifest": _coerce_json(row[10]),
         "guard_report": _coerce_json(row[11]),
-        "publish_token": row[12],
-        "created_at": row[13].isoformat(),
-        "approved_at": row[14].isoformat() if row[14] else None,
-        "published_at": row[15].isoformat() if row[15] else None,
+        "compiler_config": _coerce_json(row[12]),
+        "quality_report": _coerce_json(row[13]),
+        "publish_token": row[14],
+        "created_at": row[15].isoformat(),
+        "approved_at": row[16].isoformat() if row[16] else None,
+        "published_at": row[17].isoformat() if row[17] else None,
     }
 
 

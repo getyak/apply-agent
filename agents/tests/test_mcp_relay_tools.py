@@ -141,6 +141,9 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     compilation_id = compilation["id"]
     assert compilation["status"] == "draft"
     assert compilation["guard_report"]["source_only"] is True
+    assert compilation["compiler_config"]["length_budget"] == "two_page"
+    assert compilation["compiler_config"]["ats_profile"] == "standard"
+    assert compilation["quality_report"]["quality_status"] == "ready_for_human_review"
 
     with pytest.raises(CareerGraphStateError, match="approve the compilation"):
         await tools.prepare_application_handoff(
@@ -194,6 +197,40 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     )
     assert published["status"] == "published"
     assert published["public_url"].startswith("http://localhost:3000/r/")
+
+
+async def test_compiler_profile_round_trips_through_mcp_review() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="PostgreSQL backend engineer",
+        artifact_locale="zh",
+        length_budget="one_page",
+        ats_profile="strict",
+    )
+    reviewed = await tools.get_resume_compilation(compilation["id"])
+
+    assert reviewed["compiler_config"]["artifact_locale"] == "zh"
+    assert reviewed["compiler_config"]["target_pages"] == 1
+    assert reviewed["quality_report"]["ats"]["profile"] == "strict"
+    assert reviewed["quality_report"]["length"]["budget"] == "one_page"
+    assert reviewed["guard_report"]["source_only"] is True
+
+
+async def test_compiler_rejects_unknown_profile_before_persisting() -> None:
+    approved = await _approved_graph()
+    with pytest.raises(CareerGraphStateError, match="artifact_locale"):
+        await tools.compile_resume_for_jd(
+            graph_id=approved["graph_id"],
+            jd_text="Backend engineer",
+            artifact_locale="fr",
+        )
+    with pytest.raises(CareerGraphStateError, match="at most 50000"):
+        await tools.compile_resume_for_jd(
+            graph_id=approved["graph_id"],
+            jd_text="x" * 50_001,
+        )
+    assert tools.FAKE_STORE.compilations == {}
 
 
 async def test_application_draft_requires_approved_compilation() -> None:

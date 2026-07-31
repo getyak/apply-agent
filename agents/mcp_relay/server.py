@@ -25,8 +25,10 @@ INSTRUCTIONS = (
     "Career Graph is the source of truth; résumés are compiled artifacts. Never invent "
     "experience. Propose graph changes first and show the diff; approval tools require an "
     "exact phrase typed by the user. Compile for one JD, show provenance, then request a "
-    "separate résumé approval. Treat application outcomes as non-causal ranking signals "
-    "that never rewrite facts. Publishing is public and always requires confirmation. "
+    "separate résumé approval. Always show the persisted compiler config and quality report; "
+    "artifact locale changes structural labels only and never translates source facts. Treat "
+    "application outcomes as non-causal ranking signals that never rewrite facts. Publishing "
+    "is public and always requires confirmation. "
     "Track applications locally before handoff. Application execution is browser-only: "
     "assess the observed page before fill and again before submit review; stop on stale "
     "jobs, login, CAPTCHA, or security checks. An enabled DOM button is not authorization. "
@@ -261,7 +263,8 @@ async def reject_career_graph_change(
     title="Compile résumé for JD",
     description=(
         "Render a draft JSON Resume from one approved Career Graph revision for a pasted JD. "
-        "Selection and ordering may change, but every rendered fact is copied from graph nodes."
+        "Selection and ordering may change, but every rendered fact is copied from graph nodes. "
+        "The result records a reproducible locale, length budget, ATS profile, and quality report."
     ),
     annotations=LOCAL_WRITE,
 )
@@ -269,12 +272,18 @@ async def compile_resume_for_jd(
     graph_id: str,
     jd_text: str,
     job_id: str | None = None,
-    max_achievements_per_role: int = 4,
+    artifact_locale: Literal["en", "zh"] = "en",
+    length_budget: Literal["one_page", "two_page"] = "two_page",
+    ats_profile: Literal["standard", "strict"] = "standard",
+    max_achievements_per_role: int | None = None,
 ) -> dict[str, Any]:
     return await tools.compile_resume_for_jd(
         graph_id=graph_id,
         jd_text=jd_text,
         job_id=job_id,
+        artifact_locale=artifact_locale,
+        length_budget=length_budget,
+        ats_profile=ats_profile,
         max_achievements_per_role=max_achievements_per_role,
     )
 

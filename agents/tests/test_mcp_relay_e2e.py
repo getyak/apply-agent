@@ -50,6 +50,10 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             for tool in listed.tools:
                 assert "user_id" not in tool.inputSchema.get("properties", {})
 
+            compiler_schema = by_name["compile_resume_for_jd"].inputSchema["properties"]
+            assert compiler_schema["artifact_locale"]["enum"] == ["en", "zh"]
+            assert compiler_schema["length_budget"]["enum"] == ["one_page", "two_page"]
+            assert compiler_schema["ats_profile"]["enum"] == ["standard", "strict"]
             assert by_name["relay_status"].annotations.readOnlyHint is True
             assert by_name["publish_resume_compilation"].annotations.openWorldHint is True
 

@@ -237,7 +237,10 @@ class InMemoryCareerGraphStore:
         *,
         jd_text: str,
         job_id: UUID | None = None,
-        max_achievements_per_role: int = 4,
+        artifact_locale: str = "en",
+        length_budget: str = "two_page",
+        ats_profile: str = "standard",
+        max_achievements_per_role: int | None = None,
     ) -> dict[str, Any]:
         graph = self._owned_graph(user_id, graph_id)
         revision = graph["current_revision"]
@@ -248,6 +251,9 @@ class InMemoryCareerGraphStore:
         compiled = compile_resume(
             revision["snapshot"],
             jd_text,
+            artifact_locale=artifact_locale,
+            length_budget=length_budget,
+            ats_profile=ats_profile,
             max_achievements_per_role=max_achievements_per_role,
         )
         compilation_id = str(uuid4())

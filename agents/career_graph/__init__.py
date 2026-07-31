@@ -6,6 +6,7 @@ from agents.career_graph.model import (
     apply_operations,
     compile_resume,
     empty_snapshot,
+    normalize_compiler_config,
     summarize_snapshot_changes,
     validate_snapshot,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "compile_resume",
     "empty_snapshot",
     "json_resume_to_operations",
+    "normalize_compiler_config",
     "summarize_snapshot_changes",
     "validate_snapshot",
 ]

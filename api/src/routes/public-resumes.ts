@@ -65,7 +65,10 @@ app.get("/:token", async (c) => {
   // X-Relay-Locale (if a logged-in viewer's browser sends it) → Accept-Language
   // → "en". The persisted markdown wins whenever present — it was rendered
   // under the publishing user's locale at write time.
-  const { parsed, markdown } = unwrapForPublic(row.content, resolveLocale(c));
+  const { parsed, markdown, artifactLocale } = unwrapForPublic(
+    row.content,
+    resolveLocale(c),
+  );
 
   return c.json({
     // basics only — never expose user_id, email, file ids, etc.
@@ -75,6 +78,7 @@ app.get("/:token", async (c) => {
     },
     parsed,
     markdown,
+    artifactLocale,
     version: row.version,
     publishedAt: row.published_at,
   });
@@ -88,24 +92,40 @@ app.get("/:token", async (c) => {
  * In both cases we recompute markdown when absent so the public page always
  * has a string to render — no client-side JSON-to-MD work.
  */
-function unwrapForPublic(content: unknown, locale: "en" | "zh" = "en"): {
+export function unwrapForPublic(
+  content: unknown,
+  locale: "en" | "zh" = "en",
+): {
   parsed: JsonResume;
   markdown: string;
+  artifactLocale: "en" | "zh";
 } {
   if (
     content &&
     typeof content === "object" &&
     "parsed" in (content as Record<string, unknown>)
   ) {
-    const env = content as { parsed: JsonResume; markdown?: string };
+    const env = content as {
+      parsed: JsonResume;
+      markdown?: string;
+      artifactLocale?: "en" | "zh";
+    };
+    const artifactLocale =
+      env.artifactLocale === "en" || env.artifactLocale === "zh"
+        ? env.artifactLocale
+        : locale;
     const md =
       typeof env.markdown === "string" && env.markdown.length > 0
         ? env.markdown
-        : jsonResumeToMarkdown(env.parsed, { locale });
-    return { parsed: env.parsed, markdown: md };
+        : jsonResumeToMarkdown(env.parsed, { locale: artifactLocale });
+    return { parsed: env.parsed, markdown: md, artifactLocale };
   }
   const flat = (content ?? {}) as JsonResume;
-  return { parsed: flat, markdown: jsonResumeToMarkdown(flat, { locale }) };
+  return {
+    parsed: flat,
+    markdown: jsonResumeToMarkdown(flat, { locale }),
+    artifactLocale: locale,
+  };
 }
 
 export default app;
