@@ -79,9 +79,17 @@ achievement → skill 等关系。编译器只选择和排序节点文本，不�
 解释。
 
 已关联到 compilation résumé 的 `application_drafts` 会通过 manifest 回流成
-evidence outcome report。排序策略有意保守：JD 相关性始终优先；面试和 offer
-仅作为同等相关证据的正向次级信号；拒绝不产生负分，free-text outcome 也不会
-被静默分类。该报告明确标注相关性不等于因果，且不会修改图谱事实。
+evidence outcome report。migration 025 的数据库触发器把 Web、Agent、MCP 和
+浏览器扩展写入统一记录为 append-only `application_outcome_events`，所以
+submitted → interview → rejected 不会因当前状态变化而丢失曾到达 interview 的
+证据。排序策略有意保守：JD 相关性始终优先；面试和 offer 仅作为同等相关证据的
+正向次级信号；拒绝不产生负分，free-text outcome 也不会被静默分类。
+
+报告同时给出 JD fingerprint cohort、跨 JD compiler-profile cohort 和基于已提交
+样本的 95% Wilson 区间。少于 20 个 submitted 样本一律标记
+`insufficient_sample`；跨 JD profile 还必须至少包含 2 个不同 JD 才能标记
+`directional_only`。cohort rate 不参与自动改写或 evidence score，报告明确标注
+相关性不等于因果。
 
 ## 4. 原生 Codex surface
 
@@ -186,7 +194,11 @@ v1 同时使用三层保证：
 用户确定要申请后，`create_application_draft` 会先幂等创建或复用 Relay 本地
 `application_drafts` 记录，并把它连接到批准的 compilation résumé。它不会打开
 网站或提交表单。后续 handoff 携带同一个 application ID，浏览器扩展在用户真正
-提交后即可更新该记录，使结果反馈能回到 selection manifest。
+提交后更新该记录，使结果反馈能回到 selection manifest。提交回写不再复用只读
+`pg_query`：FastAPI 使用 owner-scoped PostgreSQL write transaction，并由
+migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点击不算完成；
+只有确认页、用户明确报告或招聘方消息才允许 MCP
+`record_application_progress` 追加观察。
 
 ## 6. 当前完成度审计
 
@@ -206,17 +218,14 @@ v1 同时使用三层保证：
 | 真实浏览器预填 | Greenhouse/Lever/Ashby 目标站合成身份 fill-only | ✅ 未提交 |
 | 申请跟踪连接 | approved compilation → idempotent local draft/compact batch queue → just-in-time handoff | ✅ v1 |
 | Boss 直聘自动投递 | 命中 `_security_check`/登录即停止并手工交接 | ❌ 不自动化 |
-| 结果反馈驱动下一次编译 | application stage → manifest → evidence tie-break | ✅ v1 |
+| 结果反馈驱动下一次编译 | append-only history → manifest → evidence tie-break + confidence-bounded cohorts | ✅ v2 |
 
 ## 7. 下一段必须完成的工作
 
-1. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
-   ranking；下一步补 application status history、样本置信区间和跨 JD cohort，
-   仍不得自动改写事实或把相关性冒充因果。
-2. **渲染质量**：编译器已经持久化一/两页预算、`en/zh` 结构标签、标准/严格
+1. **渲染质量**：编译器已经持久化一/两页预算、`en/zh` 结构标签、标准/严格
    ATS profile、JD token 覆盖率和省略证据；下一步用真实 PDF/DOCX 排版回归校准
    页数估算。可把“措辞建议”作为独立 change proposal，但不能直接污染 graph。
-3. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
+2. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
 
@@ -251,6 +260,21 @@ v1 同时使用三层保证：
   locale 渲染结构标签，事实文本不翻译。隔离库还验证了已关联 compilation 的
   résumé 内容更新被数据库拒绝，而 publish token 更新仍被允许；旧 compilation
   被诚实标记为 profile version 0 / `legacy_unbounded`，不会伪装成新版 profile。
+- migration 025 在隔离 PostgreSQL 中通过完整 up/down/up 往返：created、
+  `web_api` submit 和后续状态各形成独立事件，非生命周期字段更新不会产生噪声；
+  owner 错配、直接 update/delete 均被拒绝，删除申请或账号仍能级联清理。down
+  会把新终态映射回旧状态并把原含义保存在 outcome，再次 up 只生成明确标注的
+  `migration_backfill` baseline。
+- 真实 PostgreSQL + FastAPI + MCP 回归记录了
+  `codex_mcp_prepare → browser_extension → codex_mcp_recruiter_message →
+  codex_mcp_user_reported` 四个事件。提交端点重试没有把 interview 回退成
+  submitted，也没有重复发布事件；清空当前 interview date 后，报告仍从历史得出
+  furthest stage 为 interview、正向分数为 2，并把单样本 cohort 标为
+  `insufficient_sample`。
+- 本机 ChatGPT 登录态的 Codex CLI 经项目 STDIO MCP 真实调用
+  `record_application_progress` 写入 recruiter-message interview，再读取 evidence
+  report：返回 append-only 事件、Wilson 区间和非因果警告；Career Graph revision
+  与事实原文未变化，也没有发布、打开招聘站或提交。
 - 2026-08-01 使用 Playwright 对
   [Greenhouse / Genius AI](https://job-boards.greenhouse.io/glossgenius/jobs/6681936003)、
   [Lever / Until](https://jobs.lever.co/until/8c0ae3cf-6bb0-44de-b054-c3acba5a2926/apply)

@@ -27,8 +27,10 @@ INSTRUCTIONS = (
     "exact phrase typed by the user. Compile for one JD, show provenance, then request a "
     "separate résumé approval. Always show the persisted compiler config and quality report; "
     "artifact locale changes structural labels only and never translates source facts. Treat "
-    "application outcomes as non-causal ranking signals that never rewrite facts. Publishing "
-    "is public and always requires confirmation. "
+    "application outcomes as non-causal ranking signals that never rewrite facts. Record "
+    "application progress only from a user report, browser confirmation, or recruiter message; "
+    "never infer submission from a visible button. Publishing is public and always requires "
+    "confirmation. "
     "Track applications locally before handoff. Application execution is browser-only: "
     "assess the observed page before fill and again before submit review; stop on stale "
     "jobs, login, CAPTCHA, or security checks. An enabled DOM button is not authorization. "
@@ -179,9 +181,10 @@ async def get_career_graph(graph_id: str) -> dict[str, Any]:
 @mcp.tool(
     title="Get Career Graph evidence outcomes",
     description=(
-        "Read transparent, owner-scoped application-stage signals for the graph nodes "
-        "selected in prior compiled résumés. JD relevance remains the primary ranking "
-        "signal, and outcomes never rewrite facts."
+        "Read transparent, owner-scoped append-only application history, furthest-stage "
+        "signals, cross-JD compiler-profile cohorts, sample bounds, and 95% confidence "
+        "intervals for graph nodes selected in prior compilations. JD relevance remains "
+        "primary; outcomes and cohort rates never rewrite facts."
     ),
     annotations=READ_ONLY,
 )
@@ -371,6 +374,51 @@ async def create_application_draft(
         company=company,
         role_title=role_title,
         job_url=job_url,
+    )
+
+
+@mcp.tool(
+    title="Record observed application progress",
+    description=(
+        "Append an owner-scoped lifecycle observation for a Career Graph application. Use only "
+        "after the user reports it, the browser shows a post-submit confirmation, or a recruiter "
+        "message establishes it. This changes tracking state, never Career Graph facts, and a "
+        "visible/enabled Submit button alone is not evidence of submission."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def record_application_progress(
+    application_id: str,
+    status: Literal[
+        "draft",
+        "review",
+        "submitted",
+        "interview",
+        "rejected",
+        "offer",
+        "withdrawn",
+        "ghosted",
+        "accepted",
+        "closed",
+    ],
+    evidence_source: Literal[
+        "user_reported",
+        "browser_confirmation",
+        "recruiter_message",
+    ],
+    outcome: str | None = None,
+    interview_date: str | None = None,
+    clear_interview_date: bool = False,
+    submitted_via: Literal["client_extension", "api", "manual", "email"] | None = None,
+) -> dict[str, Any]:
+    return await tools.record_application_progress(
+        application_id=application_id,
+        status=status,
+        evidence_source=evidence_source,
+        outcome=outcome,
+        interview_date=interview_date,
+        clear_interview_date=clear_interview_date,
+        submitted_via=submitted_via,
     )
 
 

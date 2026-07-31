@@ -272,6 +272,87 @@ async def test_handoff_requires_a_draft_for_the_exact_job_url() -> None:
         )
 
 
+async def test_application_progress_builds_history_and_feedback_without_rewriting_facts() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    application = await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example",
+        role_title="Engineer",
+        job_url="https://jobs.example.test/engineer",
+    )
+    application_id = application["application_id"]
+
+    submitted = await tools.record_application_progress(
+        application_id=application_id,
+        status="submitted",
+        evidence_source="browser_confirmation",
+        submitted_via="client_extension",
+    )
+    interviewed = await tools.record_application_progress(
+        application_id=application_id,
+        status="interview",
+        evidence_source="recruiter_message",
+        interview_date="2026-08-15",
+    )
+    rejected = await tools.record_application_progress(
+        application_id=application_id,
+        status="rejected",
+        evidence_source="user_reported",
+        outcome="Position filled",
+        clear_interview_date=True,
+    )
+    repeated = await tools.record_application_progress(
+        application_id=application_id,
+        status="rejected",
+        evidence_source="user_reported",
+        outcome="Position filled",
+        clear_interview_date=True,
+    )
+    report = await tools.get_career_graph_evidence_report(approved["graph_id"])
+
+    assert submitted["history_event"]["event_source"] == ("codex_mcp_browser_confirmation")
+    assert submitted["facts_changed"] is False
+    assert interviewed["interview_date"] == "2026-08-15"
+    assert rejected["status"] == "rejected"
+    assert rejected["interview_date"] is None
+    assert repeated["changed"] is False
+    assert repeated["history_event"] is None
+    assert report["linked_application_count"] == 1
+    assert report["evidence"][0]["interview_count"] == 1
+    assert report["evidence"][0]["ranking_score"] == 2
+    assert report["application_history"][0]["furthest_observed_stage"] == "interview"
+    assert report["application_history"][0]["event_count"] == 4
+    assert report["cohorts"]["overall"]["interpretation"] == "insufficient_sample"
+    assert report["ranking_policy"]["cohort_rates_change_facts_or_scores"] is False
+
+
+async def test_application_progress_rejects_unverifiable_inputs_before_writing() -> None:
+    with pytest.raises(CareerGraphStateError, match="interview_date"):
+        await tools.record_application_progress(
+            application_id="00000000-0000-4000-8000-000000000123",
+            status="interview",
+            evidence_source="user_reported",
+            interview_date="next Tuesday",
+        )
+    with pytest.raises(CareerGraphStateError, match="only valid"):
+        await tools.record_application_progress(
+            application_id="00000000-0000-4000-8000-000000000123",
+            status="offer",
+            evidence_source="user_reported",
+            submitted_via="manual",
+        )
+    assert tools.FAKE_STORE.application_drafts == {}
+
+
 async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None:
     approved = await _approved_graph()
     compilation = await tools.compile_resume_for_jd(

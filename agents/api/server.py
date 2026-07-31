@@ -1484,7 +1484,7 @@ class CareerGraphDecisionPayload(BaseModel):
 def _raise_career_graph_error(exc: Exception) -> NoReturn:
     if isinstance(exc, CareerGraphNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, (CareerGraphConflictError, CareerGraphStateError)):
+    if isinstance(exc, CareerGraphConflictError | CareerGraphStateError):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, GraphValidationError):
         raise HTTPException(
@@ -1645,7 +1645,7 @@ class ApplicationSubmittedPayload(BaseModel):
 
     company: str | None = None
     role_title: str | None = None
-    submitted_via: str = "client_extension"
+    submitted_via: Literal["client_extension", "api", "manual", "email"] = "client_extension"
 
 
 @app.post("/applications/{application_id}/submitted")
@@ -1664,36 +1664,107 @@ async def applications_submitted(
     the event fire is the real product surface — if PG is down for some
     reason we still emit so the consumers see the submit.
     """
+    import psycopg
+
     from agents.events.bus import publish
-    from agents.tools.auto import pg_query
 
-    # Best-effort DB update — drop the application into 'submitted' state
-    # and stamp submitted_at. If the row is owned by another user we
-    # silently no-op (don't leak existence).
-    try:
-        await pg_query(
-            "UPDATE application_drafts "
-            "   SET status = 'submitted', "
-            "       submitted_at = COALESCE(submitted_at, now()), "
-            "       submitted_via = COALESCE(submitted_via, %s), "
-            "       updated_at = now() "
-            " WHERE id = %s AND user_id = %s",
-            (payload.submitted_via, str(application_id), str(user_id)),
-        )
-    except Exception as exc:  # noqa: BLE001 boundary
-        log.warning("applications.submitted.db_write_failed", error=redact_exception_text(str(exc)))
-
-    entry_id = await publish(
-        "application:submitted",
-        {
-            "user_id": str(user_id),
-            "application_id": str(application_id),
-            "company": payload.company,
-            "role_title": payload.role_title,
-            "submitted_via": payload.submitted_via,
-        },
+    # The old implementation sent this UPDATE through the read-only pg_query
+    # helper, which unconditionally called fetchall(). PostgreSQL therefore
+    # raised "no result" and rolled the transition back. Use a real write
+    # transaction so the database history trigger observes the browser event.
+    dsn = (
+        os.environ.get("RELAY_PG_DSN")
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
     )
-    return {"ok": True, "event_id": entry_id, "application_id": str(application_id)}
+    db_persisted = False
+    transition_changed = False
+    if dsn:
+        try:
+            pending_transition_changed = False
+            async with await psycopg.AsyncConnection.connect(dsn) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT set_config("
+                        "'relay.application_event_source', "
+                        "'browser_extension', true)"
+                    )
+                    await cur.execute(
+                        """
+                        SELECT status, submitted_at, submitted_via
+                          FROM application_drafts
+                         WHERE id = %s AND user_id = %s
+                         FOR UPDATE
+                        """,
+                        (str(application_id), str(user_id)),
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        raise HTTPException(status_code=404, detail="application not found")
+                    current_status, submitted_at, submitted_via = row
+                    should_record_submit = current_status in {
+                        "draft",
+                        "review",
+                    } or (
+                        current_status == "submitted"
+                        and (submitted_at is None or submitted_via is None)
+                    )
+                    if should_record_submit:
+                        await cur.execute(
+                            """
+                            UPDATE application_drafts
+                               SET status = 'submitted',
+                                   submitted_at = COALESCE(submitted_at, now()),
+                                   submitted_via = COALESCE(submitted_via, %s),
+                                   updated_at = now()
+                             WHERE id = %s AND user_id = %s
+                            RETURNING id
+                            """,
+                            (
+                                payload.submitted_via,
+                                str(application_id),
+                                str(user_id),
+                            ),
+                        )
+                        updated = await cur.fetchone()
+                        if not updated:
+                            raise HTTPException(
+                                status_code=404,
+                                detail="application not found",
+                            )
+                        pending_transition_changed = True
+                await conn.commit()
+            db_persisted = True
+            transition_changed = pending_transition_changed
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 boundary
+            log.warning(
+                "applications.submitted.db_write_failed",
+                error=redact_exception_text(str(exc)),
+            )
+
+    entry_id = None
+    if transition_changed or not db_persisted:
+        entry_id = await publish(
+            "application:submitted",
+            {
+                "user_id": str(user_id),
+                "application_id": str(application_id),
+                "company": payload.company,
+                "role_title": payload.role_title,
+                "submitted_via": payload.submitted_via,
+                "db_persisted": db_persisted,
+                "transition_changed": transition_changed,
+            },
+        )
+    return {
+        "ok": True,
+        "event_id": entry_id,
+        "application_id": str(application_id),
+        "db_persisted": db_persisted,
+        "transition_changed": transition_changed,
+    }
 
 
 # ───────────────────────────────────────────────────────────────────────

@@ -51,7 +51,10 @@ compilations, publication, and browser handoff.
    Codex to read.
 2. Call `get_career_graph_evidence_report`. Explain that outcome ranking is
    correlation, not causation; JD relevance remains primary and rejections do
-   not automatically penalize a fact.
+   not automatically penalize a fact. Show application history truncation,
+   sample size, 95% confidence intervals, and cohort interpretation. Never use
+   a cohort marked `insufficient_sample` as a recommendation, and treat
+   `directional_only` as a hypothesis rather than proof.
 3. Choose and state the reproducible compiler inputs before calling
    `compile_resume_for_jd`:
 
@@ -118,12 +121,39 @@ Publishing a résumé is not submitting a job application.
     `submission_gate.confirmation_phrase` returned by the checkpoint.
 11. Click the final button only after that exact phrase appears in the user's
     current message. Repeat the gate for every application in a batch.
+12. A click is not evidence of submission. Only after a visible post-submit
+    confirmation page, call `record_application_progress` with
+    `status=submitted`, `evidence_source=browser_confirmation`, and the actual
+    submission channel. If the page remains ambiguous, do not record it as
+    submitted; hand control to the user.
 
 If the site blocks automation, preserve the prepared package and hand control
 to the user. Do not evade the block.
 
+## Record later outcomes
+
+Application history is append-only and never changes Career Graph facts.
+
+1. Call `record_application_progress` only when one of these is true:
+
+   - the user explicitly reports the stage or outcome;
+   - the browser shows a post-submit confirmation;
+   - the user provides a recruiter message establishing the stage.
+
+2. Set the matching `evidence_source`. Do not infer an interview, rejection,
+   offer, acceptance, or ghosting from elapsed time, an enabled button, or a
+   missing reply.
+3. Preserve structured status separately from optional free-text outcome.
+   Free-text outcome is never silently classified.
+4. Read `get_career_graph_evidence_report` again and show the new history event,
+   furthest observed stage, cohort sample size, confidence interval, and
+   causality warning.
+5. Outcome signals may break a JD-relevance tie in a future compilation. They
+   must never rewrite nodes, create metrics, or bypass a new résumé approval.
+
 ## Completion report
 
 Report graph revision, compilation ID, publication URL if any, and browser
-handoff/submission status separately. Never claim “submitted” from a prepared
-handoff alone.
+handoff/submission status separately. When progress was recorded, include the
+application ID, event source, and whether a new history event was appended.
+Never claim “submitted” from a prepared handoff or button click alone.

@@ -9,6 +9,7 @@
  * Covered matrix (3 resources × verbs, plus unauthenticated guard):
  *   resumes     : GET /:id, PUT /:id, DELETE /:id
  *   applications: GET /:id, PATCH /:id
+ *                 GET /:id/history
  *   files       : GET /:id/download
  *
  * The routes call `requireOwnership(table, id, userId, columns, queryFn)`.
@@ -166,6 +167,11 @@ describe("SEC-009 IDOR — unauthenticated → 401", () => {
   it("GET /api/applications/:id", async () => {
     expect((await req("GET", `/api/applications/${APP_ID}`)).status).toBe(401);
   });
+  it("GET /api/applications/:id/history", async () => {
+    expect((await req("GET", `/api/applications/${APP_ID}/history`)).status).toBe(
+      401,
+    );
+  });
   it("PATCH /api/applications/:id", async () => {
     expect(
       (await req("PATCH", `/api/applications/${APP_ID}`, { body: { status: "submitted" } }))
@@ -213,6 +219,13 @@ describe("SEC-009 IDOR — cross-user (User B on User A resources) → 404 only"
     expect(res.status).toBe(404);
   });
 
+  it("GET /api/applications/:id/history → 404", async () => {
+    const res = await req("GET", `/api/applications/${APP_ID}/history`, {
+      userId: USER_B,
+    });
+    expect(res.status).toBe(404);
+  });
+
   it("GET /api/files/:id/download → 404", async () => {
     const res = await req("GET", `/api/files/${FILE_ID}/download`, { userId: USER_B });
     expect(res.status).toBe(404);
@@ -235,6 +248,14 @@ describe("SEC-009 IDOR — same-user (User A on own resources) → not 404", () 
   it("GET /api/applications/:id by owner → 200", async () => {
     activeOwnerId = USER_A;
     expect((await req("GET", `/api/applications/${APP_ID}`, { userId: USER_A })).status).toBe(200);
+  });
+
+  it("GET /api/applications/:id/history by owner → 200", async () => {
+    activeOwnerId = USER_A;
+    expect(
+      (await req("GET", `/api/applications/${APP_ID}/history`, { userId: USER_A }))
+        .status,
+    ).toBe(200);
   });
 });
 

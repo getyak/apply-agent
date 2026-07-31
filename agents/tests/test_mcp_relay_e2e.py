@@ -43,6 +43,7 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "approve_resume_compilation",
                 "assess_application_browser_checkpoint",
                 "create_application_draft",
+                "record_application_progress",
                 "prepare_application_batch",
                 "publish_resume_compilation",
                 "prepare_application_handoff",
@@ -54,6 +55,14 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             assert compiler_schema["artifact_locale"]["enum"] == ["en", "zh"]
             assert compiler_schema["length_budget"]["enum"] == ["one_page", "two_page"]
             assert compiler_schema["ats_profile"]["enum"] == ["standard", "strict"]
+            progress_schema = by_name["record_application_progress"].inputSchema["properties"]
+            assert progress_schema["evidence_source"]["enum"] == [
+                "user_reported",
+                "browser_confirmation",
+                "recruiter_message",
+            ]
+            assert "submitted" in progress_schema["status"]["enum"]
+            assert "accepted" in progress_schema["status"]["enum"]
             assert by_name["relay_status"].annotations.readOnlyHint is True
             assert by_name["publish_resume_compilation"].annotations.openWorldHint is True
 

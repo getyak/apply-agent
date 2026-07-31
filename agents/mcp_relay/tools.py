@@ -7,6 +7,7 @@ cross the owner boundary by changing tool arguments.
 from __future__ import annotations
 
 import os
+from datetime import date
 from typing import Any, cast
 from urllib.parse import urlparse
 from uuid import UUID
@@ -421,6 +422,69 @@ async def create_application_draft(
         company=company,
         role_title=role_title,
         job_url=job_url,
+    )
+
+
+async def record_application_progress(
+    *,
+    application_id: str,
+    status: str,
+    evidence_source: str,
+    outcome: str | None = None,
+    interview_date: str | None = None,
+    clear_interview_date: bool = False,
+    submitted_via: str | None = None,
+) -> dict[str, Any]:
+    """Persist a user/browser-observed lifecycle transition, never an inference."""
+
+    _require_scope("application:prepare")
+    allowed_statuses = {
+        "draft",
+        "review",
+        "submitted",
+        "interview",
+        "rejected",
+        "offer",
+        "withdrawn",
+        "ghosted",
+        "accepted",
+        "closed",
+    }
+    allowed_evidence_sources = {
+        "user_reported",
+        "browser_confirmation",
+        "recruiter_message",
+    }
+    allowed_submit_channels = {"client_extension", "api", "manual", "email"}
+    if status not in allowed_statuses:
+        raise CareerGraphStateError("unsupported application status")
+    if evidence_source not in allowed_evidence_sources:
+        raise CareerGraphStateError("unsupported application evidence source")
+    if outcome is not None and len(outcome.strip()) > 200:
+        raise CareerGraphStateError("outcome must be at most 200 characters")
+    if interview_date is not None:
+        try:
+            date.fromisoformat(interview_date)
+        except ValueError as exc:
+            raise CareerGraphStateError("interview_date must be YYYY-MM-DD") from exc
+    if interview_date is not None and clear_interview_date:
+        raise CareerGraphStateError(
+            "interview_date and clear_interview_date cannot be used together"
+        )
+    if submitted_via is not None and submitted_via not in allowed_submit_channels:
+        raise CareerGraphStateError("unsupported submission channel")
+    if status != "submitted" and submitted_via is not None:
+        raise CareerGraphStateError("submitted_via is only valid for submitted status")
+    return await _store_call(
+        "record_application_transition",
+        current_user_id(),
+        _uuid(application_id, "application_id"),
+        status=status,
+        evidence_source=evidence_source,
+        outcome=outcome,
+        interview_date=interview_date,
+        clear_interview_date=clear_interview_date,
+        submitted_via=submitted_via,
     )
 
 

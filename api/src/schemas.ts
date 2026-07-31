@@ -85,6 +85,10 @@ const APPLICATION_STATUSES = [
   "interview",
   "rejected",
   "offer",
+  "withdrawn",
+  "ghosted",
+  "accepted",
+  "closed",
 ] as const;
 export const ApplicationStatusSchema = z.enum(APPLICATION_STATUSES);
 
@@ -112,7 +116,7 @@ export const UpdateApplicationSchema = z
     status: ApplicationStatusSchema.optional(),
     coverLetter: z.string().optional(),
     formAnswers: z.record(z.string(), z.unknown()).optional(),
-    outcome: z.string().optional(),
+    outcome: z.string().trim().max(200).optional(),
     submittedVia: z.enum(SUBMIT_CHANNELS).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {

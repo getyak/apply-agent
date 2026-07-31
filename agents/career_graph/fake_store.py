@@ -15,6 +15,9 @@ from agents.career_graph.model import (
     summarize_snapshot_changes,
 )
 from agents.career_graph.store import (
+    EVIDENCE_REPORT_APPLICATION_LIMIT,
+    EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION,
+    EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT,
     CareerGraphConflictError,
     CareerGraphNotFoundError,
     CareerGraphStateError,
@@ -287,12 +290,42 @@ class InMemoryCareerGraphStore:
         graph_id: UUID,
     ) -> dict[str, Any]:
         graph = self._owned_graph(user_id, graph_id)
-        report = aggregate_evidence_outcomes([])
+        records: list[dict[str, Any]] = []
+        for application in self.application_drafts.values():
+            if application["user_id"] != str(user_id):
+                continue
+            compilation = self.compilations.get(application["compilation_id"])
+            if not compilation or compilation["graph_id"] != str(graph_id):
+                continue
+            records.append(
+                {
+                    "application_id": application["id"],
+                    "status": application["status"],
+                    "outcome": application.get("outcome"),
+                    "submitted_at": application.get("submitted_at"),
+                    "interview_date": application.get("interview_date"),
+                    "selected_node_ids": compilation["guard_report"]["selected_node_ids"],
+                    "jd_fingerprint": compilation["jd_fingerprint"],
+                    "compiler_config": compilation["compiler_config"],
+                    "history": application["history"],
+                    "history_event_count": len(application["history"]),
+                    "history_truncated": False,
+                }
+            )
+        report = aggregate_evidence_outcomes(records)
         return {
             "graph_id": str(graph_id),
             "graph_revision": (
                 graph["current_revision"]["revision"] if graph["current_revision"] else 0
             ),
+            "report_scope": {
+                "application_count_total": len(records),
+                "application_count_included": len(records),
+                "applications_truncated": False,
+                "application_limit": EVIDENCE_REPORT_APPLICATION_LIMIT,
+                "history_application_limit": EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT,
+                "event_limit_per_application": EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION,
+            },
             **report,
         }
 
@@ -431,6 +464,25 @@ class InMemoryCareerGraphStore:
                 "role_title": role_title,
                 "job_url": job_url,
                 "status": "review",
+                "outcome": None,
+                "submitted_at": None,
+                "submitted_via": None,
+                "interview_date": None,
+                "history": [
+                    {
+                        "event_kind": "created",
+                        "event_source": "fake_store",
+                        "changed_fields": ["created"],
+                        "from_status": None,
+                        "to_status": "review",
+                        "from_outcome": None,
+                        "to_outcome": None,
+                        "submitted_at": None,
+                        "submitted_via": None,
+                        "interview_date": None,
+                        "occurred_at": _now(),
+                    }
+                ],
             }
             self.application_drafts[application_id] = existing
         return {
@@ -443,6 +495,71 @@ class InMemoryCareerGraphStore:
             "job_url": job_url,
             "reused": reused,
             "server_side_submission": False,
+        }
+
+    async def record_application_transition(
+        self,
+        user_id: UUID,
+        application_id: UUID,
+        *,
+        status: str,
+        evidence_source: str,
+        outcome: str | None = None,
+        interview_date: str | None = None,
+        clear_interview_date: bool = False,
+        submitted_via: str | None = None,
+    ) -> dict[str, Any]:
+        application = self.application_drafts.get(str(application_id))
+        if not application or application["user_id"] != str(user_id):
+            raise CareerGraphNotFoundError("Career Graph application not found")
+        old_status = application["status"]
+        old_outcome = application.get("outcome")
+        changed_fields: list[str] = []
+        if old_status != status:
+            application["status"] = status
+            changed_fields.append("status")
+        if outcome is not None and old_outcome != (outcome.strip() or None):
+            application["outcome"] = outcome.strip() or None
+            changed_fields.append("outcome")
+        if interview_date is not None and application.get("interview_date") != interview_date:
+            application["interview_date"] = interview_date
+            changed_fields.append("interview_date")
+        elif clear_interview_date and application.get("interview_date") is not None:
+            application["interview_date"] = None
+            changed_fields.append("interview_date")
+        if status == "submitted" and not application.get("submitted_at"):
+            application["submitted_at"] = _now()
+            application["submitted_via"] = submitted_via or "client_extension"
+            changed_fields.extend(["submitted_at", "submitted_via"])
+
+        event = None
+        if changed_fields:
+            event = {
+                "event_kind": "changed",
+                "event_source": f"codex_mcp_{evidence_source}",
+                "changed_fields": changed_fields,
+                "from_status": old_status,
+                "to_status": application["status"],
+                "from_outcome": old_outcome,
+                "to_outcome": application.get("outcome"),
+                "submitted_at": application.get("submitted_at"),
+                "submitted_via": application.get("submitted_via"),
+                "interview_date": application.get("interview_date"),
+                "occurred_at": _now(),
+            }
+            application["history"].append(event)
+        return {
+            "ok": True,
+            "application_id": application["id"],
+            "status": application["status"],
+            "outcome": application.get("outcome"),
+            "submitted_at": application.get("submitted_at"),
+            "submitted_via": application.get("submitted_via"),
+            "interview_date": application.get("interview_date"),
+            "history_event": event,
+            "changed": event is not None,
+            "facts_changed": False,
+            "requires_human_review_for_future_compilation": True,
         }
 
     def _owned_graph(self, user_id: UUID, graph_id: UUID) -> dict[str, Any]:

@@ -51,7 +51,7 @@ describe("schemas", () => {
   });
 
   test("UpdateApplicationSchema rejects an unknown status", () => {
-    expect(UpdateApplicationSchema.safeParse({ status: "ghosted" }).success).toBe(
+    expect(UpdateApplicationSchema.safeParse({ status: "invented" }).success).toBe(
       false,
     );
   });
@@ -64,9 +64,22 @@ describe("schemas", () => {
       "interview",
       "rejected",
       "offer",
+      "withdrawn",
+      "ghosted",
+      "accepted",
+      "closed",
     ]) {
       expect(ApplicationStatusSchema.safeParse(s).success).toBe(true);
     }
+  });
+
+  test("UpdateApplicationSchema bounds free-text outcome history", () => {
+    expect(UpdateApplicationSchema.safeParse({ outcome: "x".repeat(200) }).success).toBe(
+      true,
+    );
+    expect(UpdateApplicationSchema.safeParse({ outcome: "x".repeat(201) }).success).toBe(
+      false,
+    );
   });
 
   test("UserPreferencesSchema rejects unknown fields (strict)", () => {

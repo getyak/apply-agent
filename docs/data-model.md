@@ -51,6 +51,7 @@ ApplicationDraft {
   user_id       UUID,
   job_id        UUID,
   status        TEXT,     -- draft | review | submitted | interview | rejected | offer
+                              | withdrawn | ghosted | accepted | closed
   resume_version UUID,
   cover_letter  TEXT,
   form_answers  JSONB,
@@ -60,6 +61,36 @@ ApplicationDraft {
   interview_date DATE
 }
 ```
+
+### ApplicationOutcomeEvent
+```sql
+ApplicationOutcomeEvent {
+  id                  UUID PRIMARY KEY,
+  user_id             UUID,
+  application_id      UUID,
+  event_kind          TEXT,       -- baseline | created | changed
+  event_source        TEXT,       -- web_api | browser_extension | codex_mcp_*
+  changed_fields      TEXT[],
+  from_status         TEXT,
+  to_status           TEXT,
+  from_outcome        TEXT,
+  to_outcome          TEXT,
+  submitted_at        TIMESTAMP,
+  submitted_via       TEXT,
+  interview_date      DATE,
+  resume_version_id   UUID,
+  job_id              UUID,
+  occurred_at         TIMESTAMP
+}
+```
+
+`application_drafts` remains the current kanban projection. Database triggers
+append every lifecycle mutation to `application_outcome_events`, including
+writes from the API, Agent, MCP, and browser extension. Direct event
+update/delete is rejected; parent account/application deletion can still
+cascade for privacy deletion. Career Graph feedback uses the furthest observed
+stage, never silently classifies free-text outcomes, and labels small cohorts
+as insufficient rather than causal evidence.
 
 ### InterviewSession + InterviewQuestion ⭐(数据飞轮核心)
 ```sql

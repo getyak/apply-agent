@@ -34,6 +34,11 @@ class CareerGraphStateError(RuntimeError):
     pass
 
 
+EVIDENCE_REPORT_APPLICATION_LIMIT = 1000
+EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT = 100
+EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION = 100
+
+
 def _dsn() -> str:
     value = os.environ.get("RELAY_PG_DSN")
     if not value:
@@ -622,7 +627,7 @@ async def get_evidence_outcome_report(
     user_id: UUID,
     graph_id: UUID,
 ) -> dict[str, Any]:
-    """Map application stages back to the graph nodes selected for each résumé."""
+    """Map immutable application history back to selected graph evidence."""
 
     graph = await get_graph(user_id, graph_id)
     if not graph:
@@ -633,39 +638,284 @@ async def get_evidence_outcome_report(
             await cur.execute(
                 """
                 SELECT a.id, a.status, a.submitted_at, a.interview_date,
-                       c.guard_report
+                       a.outcome, c.guard_report, c.jd_fingerprint,
+                       c.compiler_config, COALESCE(history.event_count, 0),
+                       CASE
+                           WHEN history.observed_offer THEN 'offer'
+                           WHEN history.observed_interview THEN 'interview'
+                           WHEN history.observed_submitted THEN 'submitted'
+                           ELSE 'prepared'
+                       END AS furthest_observed_stage,
+                       count(*) OVER () AS total_application_count
                   FROM career_graph_compilations c
                   JOIN application_drafts a
                     ON a.resume_version_id = c.resume_id
                    AND a.user_id = c.user_id
+                  LEFT JOIN LATERAL (
+                      SELECT
+                          count(*) AS event_count,
+                          COALESCE(bool_or(
+                              e.to_status IN ('offer', 'accepted')
+                          ), false) AS observed_offer,
+                          COALESCE(bool_or(
+                              e.to_status = 'interview'
+                              OR e.interview_date IS NOT NULL
+                          ), false) AS observed_interview,
+                          COALESCE(bool_or(
+                              e.to_status IN (
+                                  'submitted', 'rejected', 'withdrawn',
+                                  'ghosted', 'closed'
+                              )
+                              OR e.submitted_at IS NOT NULL
+                          ), false) AS observed_submitted
+                        FROM application_outcome_events e
+                       WHERE e.application_id = a.id
+                         AND e.user_id = a.user_id
+                  ) history ON true
                  WHERE c.graph_id = %s AND c.user_id = %s
+                 ORDER BY a.created_at DESC, a.id
+                 LIMIT %s
                 """,
-                (str(graph_id), str(user_id)),
+                (
+                    str(graph_id),
+                    str(user_id),
+                    EVIDENCE_REPORT_APPLICATION_LIMIT,
+                ),
             )
-            rows = await cur.fetchall()
+            application_rows = await cur.fetchall()
+            await cur.execute(
+                """
+                WITH owned_applications AS (
+                    SELECT a.id
+                      FROM career_graph_compilations c
+                     JOIN application_drafts a
+                        ON a.resume_version_id = c.resume_id
+                       AND a.user_id = c.user_id
+                     WHERE c.graph_id = %s AND c.user_id = %s
+                     ORDER BY a.created_at DESC, a.id
+                     LIMIT %s
+                ),
+                ranked_events AS (
+                    SELECT e.application_id, e.event_kind, e.event_source,
+                           e.changed_fields, e.from_status, e.to_status,
+                           e.from_outcome, e.to_outcome, e.submitted_at,
+                           e.submitted_via, e.interview_date, e.occurred_at,
+                           row_number() OVER (
+                               PARTITION BY e.application_id
+                               ORDER BY e.occurred_at DESC, e.id DESC
+                           ) AS event_rank,
+                           count(*) OVER (
+                               PARTITION BY e.application_id
+                           ) AS event_count
+                      FROM application_outcome_events e
+                      JOIN owned_applications owned
+                        ON owned.id = e.application_id
+                )
+                SELECT application_id, event_kind, event_source, changed_fields,
+                       from_status, to_status, from_outcome, to_outcome,
+                       submitted_at, submitted_via, interview_date, occurred_at,
+                       event_count
+                  FROM ranked_events
+                 WHERE event_rank <= %s
+                 ORDER BY application_id, occurred_at, event_rank DESC
+                """,
+                (
+                    str(graph_id),
+                    str(user_id),
+                    EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT,
+                    EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION,
+                ),
+            )
+            event_rows = await cur.fetchall()
 
+    history_by_application: dict[str, list[dict[str, Any]]] = {}
+    for row in event_rows:
+        application_id = str(row[0])
+        history_by_application.setdefault(application_id, []).append(
+            {
+                "event_kind": row[1],
+                "event_source": row[2],
+                "changed_fields": list(row[3] or []),
+                "from_status": row[4],
+                "to_status": row[5],
+                "from_outcome": row[6],
+                "to_outcome": row[7],
+                "submitted_at": row[8].isoformat() if row[8] else None,
+                "submitted_via": row[9],
+                "interview_date": row[10].isoformat() if row[10] else None,
+                "occurred_at": row[11].isoformat(),
+            }
+        )
     records: list[dict[str, Any]] = []
-    for row in rows:
-        guard_report = _coerce_json(row[4])
+    for row in application_rows:
+        application_id = str(row[0])
+        guard_report = _coerce_json(row[5])
         selected_node_ids = (
             guard_report.get("selected_node_ids") if isinstance(guard_report, dict) else []
         )
+        history = history_by_application.get(application_id, [])
+        event_count = int(row[8])
         records.append(
             {
-                "application_id": str(row[0]),
+                "application_id": application_id,
                 "status": row[1],
                 "submitted_at": row[2],
                 "interview_date": row[3],
+                "outcome": row[4],
                 "selected_node_ids": selected_node_ids,
+                "jd_fingerprint": row[6],
+                "compiler_config": _coerce_json(row[7]),
+                "furthest_observed_stage": row[9],
+                "history": history,
+                "history_event_count": event_count,
+                "history_truncated": event_count > len(history),
             }
         )
     report = aggregate_evidence_outcomes(records)
+    total_application_count = int(application_rows[0][10]) if application_rows else 0
     return {
         "graph_id": str(graph_id),
         "graph_revision": (
             graph["current_revision"]["revision"] if graph["current_revision"] else 0
         ),
+        "report_scope": {
+            "application_count_total": total_application_count,
+            "application_count_included": len(records),
+            "applications_truncated": total_application_count > len(records),
+            "application_limit": EVIDENCE_REPORT_APPLICATION_LIMIT,
+            "history_application_limit": EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT,
+            "event_limit_per_application": EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION,
+        },
         **report,
+    }
+
+
+async def record_application_transition(
+    user_id: UUID,
+    application_id: UUID,
+    *,
+    status: str,
+    evidence_source: str,
+    outcome: str | None = None,
+    interview_date: str | None = None,
+    clear_interview_date: bool = False,
+    submitted_via: str | None = None,
+) -> dict[str, Any]:
+    """Record one user/browser-observed transition on a graph-linked application."""
+
+    allowed_statuses = {
+        "draft",
+        "review",
+        "submitted",
+        "interview",
+        "rejected",
+        "offer",
+        "withdrawn",
+        "ghosted",
+        "accepted",
+        "closed",
+    }
+    allowed_evidence_sources = {
+        "user_reported",
+        "browser_confirmation",
+        "recruiter_message",
+    }
+    allowed_submit_channels = {"client_extension", "api", "manual", "email"}
+    if status not in allowed_statuses:
+        raise CareerGraphStateError("unsupported application status")
+    if evidence_source not in allowed_evidence_sources:
+        raise CareerGraphStateError("unsupported application evidence source")
+    if submitted_via is not None and submitted_via not in allowed_submit_channels:
+        raise CareerGraphStateError("unsupported submission channel")
+    if interview_date is not None and clear_interview_date:
+        raise CareerGraphStateError(
+            "interview_date and clear_interview_date cannot be used together"
+        )
+
+    assignments = ["status = %s"]
+    params: list[Any] = [status]
+    if outcome is not None:
+        assignments.append("outcome = %s")
+        params.append(outcome.strip() or None)
+    if interview_date is not None:
+        assignments.append("interview_date = %s")
+        params.append(interview_date)
+    elif clear_interview_date:
+        assignments.append("interview_date = NULL")
+    if status == "submitted":
+        assignments.extend(
+            [
+                "submitted_at = COALESCE(submitted_at, now())",
+                "submitted_via = COALESCE(submitted_via, %s)",
+            ]
+        )
+        params.append(submitted_via or "client_extension")
+
+    event_source = f"codex_mcp_{evidence_source}"
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT set_config('relay.application_event_source', %s, true)",
+                (event_source,),
+            )
+            await cur.execute(
+                f"""
+                UPDATE application_drafts a
+                   SET {", ".join(assignments)}
+                 WHERE a.id = %s
+                   AND a.user_id = %s
+                   AND EXISTS (
+                       SELECT 1
+                         FROM career_graph_compilations c
+                        WHERE c.resume_id = a.resume_version_id
+                          AND c.user_id = a.user_id
+                   )
+                RETURNING a.id, a.status, a.outcome, a.submitted_at,
+                          a.submitted_via, a.interview_date
+                """,
+                (*params, str(application_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError("Career Graph application not found")
+            await cur.execute(
+                """
+                SELECT id, event_kind, event_source, changed_fields, occurred_at
+                  FROM application_outcome_events
+                 WHERE application_id = %s AND user_id = %s
+                   AND event_source = %s
+                   AND occurred_at >= transaction_timestamp()
+                 ORDER BY occurred_at DESC, id DESC
+                 LIMIT 1
+                """,
+                (str(application_id), str(user_id), event_source),
+            )
+            event = await cur.fetchone()
+        await conn.commit()
+
+    event_is_new = event is not None
+    return {
+        "ok": True,
+        "application_id": str(row[0]),
+        "status": row[1],
+        "outcome": row[2],
+        "submitted_at": row[3].isoformat() if row[3] else None,
+        "submitted_via": row[4],
+        "interview_date": row[5].isoformat() if row[5] else None,
+        "history_event": (
+            {
+                "id": str(event[0]),
+                "event_kind": event[1],
+                "event_source": event[2],
+                "changed_fields": list(event[3] or []),
+                "occurred_at": event[4].isoformat(),
+            }
+            if event
+            else None
+        ),
+        "changed": event_is_new,
+        "facts_changed": False,
+        "requires_human_review_for_future_compilation": True,
     }
 
 
@@ -829,6 +1079,9 @@ async def create_application_draft(
 
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT set_config('relay.application_event_source', 'codex_mcp_prepare', true)"
+            )
             await cur.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 (str(compilation_id),),
