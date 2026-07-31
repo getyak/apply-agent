@@ -405,6 +405,139 @@ export interface PaginatedEnvelope<T> {
   };
 }
 
+export interface CareerGraphSummary {
+  id: string;
+  label: string;
+  source_resume_id: string | null;
+  current_revision_id: string | null;
+  revision: number;
+  node_count: number;
+  edge_count: number;
+  pending_change_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CareerGraphSourceResume {
+  id: string;
+  version: number;
+  label: string | null;
+  track: "original" | "optimized" | "tailored";
+  is_base: boolean;
+  created_at: string;
+}
+
+export interface CareerGraphEntity {
+  id: string;
+  type: string;
+  data?: Record<string, unknown>;
+  provenance?: {
+    source_type?: string;
+    source_ref?: string;
+  };
+  from?: string;
+  to?: string;
+}
+
+export interface CareerGraphEntityChange {
+  entity: "node" | "edge";
+  id: string;
+  change: "added" | "updated" | "removed";
+  before: CareerGraphEntity | null;
+  after: CareerGraphEntity | null;
+}
+
+export interface CareerGraphReviewSummary {
+  counts: {
+    added_nodes: number;
+    updated_nodes: number;
+    removed_nodes: number;
+    added_edges: number;
+    updated_edges: number;
+    removed_edges: number;
+  };
+  total_changes: number;
+  destructive: boolean;
+  nodes: CareerGraphEntityChange[];
+  edges: CareerGraphEntityChange[];
+}
+
+export interface CareerGraphChangeSet {
+  id: string;
+  graph_id: string;
+  base_revision_id: string | null;
+  summary: string;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  proposed_by: "user" | "codex" | "relay_agent" | "import";
+  decided_via: string | null;
+  created_at: string;
+  decided_at: string | null;
+  review_summary: CareerGraphReviewSummary;
+  confirmation: {
+    approve: string;
+    reject: string;
+  };
+}
+
+export interface CareerGraphOverview {
+  graphs: CareerGraphSummary[];
+  source_resumes: CareerGraphSourceResume[];
+  pending_changes: CareerGraphChangeSet[];
+  review_gate: {
+    proposal_changes_approved_graph: false;
+    exact_confirmation_required: true;
+  };
+}
+
+export const careerGraphs = {
+  overview: () => api<CareerGraphOverview>("/api/career-graphs"),
+
+  importResume: (input: {
+    resumeId: string;
+    graphId?: string;
+    graphLabel?: string;
+  }) =>
+    api<CareerGraphChangeSet & {
+      requires_human_approval: true;
+      import_report?: {
+        node_count: number;
+        edge_count: number;
+        warnings: string[];
+        upsert_only: true;
+      };
+    }>("/api/career-graphs/import", {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify(input),
+    }),
+
+  change: (changeSetId: string) =>
+    api<{ change: CareerGraphChangeSet }>(
+      `/api/career-graphs/changes/${encodeURIComponent(changeSetId)}`,
+    ),
+
+  decide: (
+    changeSetId: string,
+    decision: "approve" | "reject",
+    confirmation: string,
+  ) =>
+    api<{
+      ok: true;
+      change_set_id: string;
+      graph_id: string;
+      status: "approved" | "rejected";
+      revision?: number;
+      revision_id?: string;
+    }>(
+      `/api/career-graphs/changes/${encodeURIComponent(changeSetId)}/decision`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ decision, confirmation }),
+      },
+    ),
+};
+
 // Profile preferences mirror api/src/schemas.ts UserPreferencesSchema. NB the
 // API is camelCase + strict — unknown keys are rejected, so do NOT send
 // snake_case (target_roles etc.). All fields optional on the wire.

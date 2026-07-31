@@ -8,7 +8,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from agents.career_graph.feedback import aggregate_evidence_outcomes
-from agents.career_graph.model import apply_operations, compile_resume, empty_snapshot
+from agents.career_graph.model import (
+    apply_operations,
+    compile_resume,
+    empty_snapshot,
+    summarize_snapshot_changes,
+)
 from agents.career_graph.store import (
     CareerGraphConflictError,
     CareerGraphNotFoundError,
@@ -85,6 +90,15 @@ class InMemoryCareerGraphStore:
                     if graph["current_revision"]
                     else 0
                 ),
+                "edge_count": (
+                    len(graph["current_revision"]["snapshot"]["edges"])
+                    if graph["current_revision"]
+                    else 0
+                ),
+                "pending_change_count": sum(
+                    change["graph_id"] == graph["id"] and change["status"] == "pending"
+                    for change in self.change_sets.values()
+                ),
                 "created_at": graph["created_at"],
                 "updated_at": graph["updated_at"],
             }
@@ -105,6 +119,9 @@ class InMemoryCareerGraphStore:
         current = graph["current_revision"]
         base = current["snapshot"] if current else empty_snapshot()
         proposed = apply_operations(base, operations)
+        review_summary = summarize_snapshot_changes(base, proposed)
+        if review_summary["total_changes"] == 0:
+            raise CareerGraphStateError("proposal does not change the current Career Graph")
         change_id = str(uuid4())
         change = {
             "id": change_id,
@@ -118,6 +135,11 @@ class InMemoryCareerGraphStore:
             "decided_via": None,
             "created_at": _now(),
             "decided_at": None,
+            "review_summary": review_summary,
+            "confirmation": {
+                "approve": f"APPROVE CAREER CHANGE {change_id}",
+                "reject": f"REJECT CAREER CHANGE {change_id}",
+            },
         }
         self.change_sets[change_id] = {**change, "user_id": str(user_id)}
         return {**change, "requires_human_approval": True}
@@ -127,6 +149,25 @@ class InMemoryCareerGraphStore:
         if not change or change["user_id"] != str(user_id):
             return None
         return {key: value for key, value in change.items() if key != "user_id"}
+
+    async def list_change_sets(
+        self,
+        user_id: UUID,
+        *,
+        status: str | None = "pending",
+        graph_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in change.items() if key != "user_id"}
+            for change in sorted(
+                self.change_sets.values(),
+                key=lambda item: item["created_at"],
+                reverse=True,
+            )
+            if change["user_id"] == str(user_id)
+            and (status is None or change["status"] == status)
+            and (graph_id is None or change["graph_id"] == str(graph_id))
+        ]
 
     async def approve_change_set(
         self,
@@ -153,7 +194,7 @@ class InMemoryCareerGraphStore:
             "revision": revision,
             "snapshot": change["proposed_snapshot"],
             "change_summary": change["summary"],
-            "created_by": "codex",
+            "created_by": change["proposed_by"],
             "created_at": _now(),
         }
         graph["updated_at"] = _now()

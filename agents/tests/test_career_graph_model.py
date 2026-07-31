@@ -9,6 +9,7 @@ from agents.career_graph.model import (
     apply_operations,
     compile_resume,
     empty_snapshot,
+    summarize_snapshot_changes,
     validate_snapshot,
 )
 
@@ -133,6 +134,61 @@ def test_apply_operations_rejects_dangling_edge() -> None:
                 }
             ],
         )
+
+
+def test_change_summary_reports_exact_review_diff_without_unchanged_entities() -> None:
+    before = _snapshot()
+    after = apply_operations(
+        before,
+        [
+            {
+                "op": "upsert_node",
+                "node": _node("skill:python", "skill", {"name": "Python"}),
+            },
+            {
+                "op": "upsert_node",
+                "node": _node(
+                    "role:acme",
+                    "role",
+                    {
+                        "organization": "Acme Corp",
+                        "position": "Staff Backend Engineer",
+                        "start_date": "2021-01",
+                        "end_date": "2024-06",
+                    },
+                ),
+            },
+            {"op": "remove_node", "node_id": "skill:react"},
+        ],
+    )
+
+    summary = summarize_snapshot_changes(before, after)
+
+    assert summary["total_changes"] == 4
+    assert summary["destructive"] is True
+    assert summary["counts"] == {
+        "added_nodes": 1,
+        "updated_nodes": 1,
+        "removed_nodes": 1,
+        "added_edges": 0,
+        "updated_edges": 0,
+        "removed_edges": 1,
+    }
+    assert [item["id"] for item in summary["nodes"]] == [
+        "role:acme",
+        "skill:python",
+        "skill:react",
+    ]
+    assert summary["nodes"][0]["before"]["data"]["position"] == "Senior Backend Engineer"
+    assert summary["nodes"][0]["after"]["data"]["position"] == "Staff Backend Engineer"
+
+
+def test_change_summary_is_empty_for_identical_snapshots() -> None:
+    summary = summarize_snapshot_changes(_snapshot(), _snapshot())
+    assert summary["total_changes"] == 0
+    assert summary["destructive"] is False
+    assert summary["nodes"] == []
+    assert summary["edges"] == []
 
 
 def test_compile_selects_jd_relevant_fact_without_rewriting_it() -> None:

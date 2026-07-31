@@ -26,7 +26,7 @@ import json
 import os  # noqa: E402
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, NoReturn
 from uuid import UUID, uuid4
 
 from dotenv import load_dotenv
@@ -63,6 +63,13 @@ from pydantic import BaseModel, Field, field_validator  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from agents.api.deps import UserDep  # noqa: E402
+from agents.career_graph import store as career_graph_store  # noqa: E402
+from agents.career_graph.model import GraphValidationError  # noqa: E402
+from agents.career_graph.store import (  # noqa: E402
+    CareerGraphConflictError,
+    CareerGraphNotFoundError,
+    CareerGraphStateError,
+)
 from agents.coordinator.router import (  # noqa: E402
     cheap_intent_classifier,
     classify_intent,
@@ -766,7 +773,9 @@ async def ask_stream(
     # persistence substrate is unavailable, ``resume_enabled()`` is False
     # and this branch degrades to the pre-021 pipeline (fresh stream).
     header_cursor = last_event_id_from_headers(request.headers)
-    body_cursor = payload.last_event_id if payload.last_event_id and payload.last_event_id > 0 else None
+    body_cursor = (
+        payload.last_event_id if payload.last_event_id and payload.last_event_id > 0 else None
+    )
     cursor = header_cursor or body_cursor
     if cursor is not None and cursor > 0 and resume_enabled():
         log.info(
@@ -1446,6 +1455,134 @@ async def resume_propose_bullet_edit(
     if not result.get("ok"):
         raise HTTPException(status_code=422, detail=result)
     return result
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Career Graph — Web review gate over the canonical Python store
+# ───────────────────────────────────────────────────────────────────────
+
+
+class CareerGraphImportPayload(BaseModel):
+    resume_id: UUID
+    graph_id: UUID | None = None
+    graph_label: str = Field(default="Career Graph", min_length=1, max_length=120)
+
+    @field_validator("graph_label")
+    @classmethod
+    def normalize_graph_label(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("graph_label must not be blank")
+        return normalized
+
+
+class CareerGraphDecisionPayload(BaseModel):
+    decision: Literal["approve", "reject"]
+    confirmation: str = Field(min_length=1, max_length=200)
+
+
+def _raise_career_graph_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, CareerGraphNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, (CareerGraphConflictError, CareerGraphStateError)):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, GraphValidationError):
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "career_graph_validation_failed", "errors": exc.errors},
+        ) from exc
+    raise exc
+
+
+@app.get("/career-graphs")
+async def career_graph_overview(user_id: UserDep) -> dict[str, Any]:
+    """Return the signed-in user's graphs, import sources, and pending reviews."""
+
+    try:
+        graphs = await career_graph_store.list_graphs(user_id)
+        source_resumes = await career_graph_store.list_source_resumes(user_id)
+        pending_changes = await career_graph_store.list_change_sets(user_id)
+    except Exception as exc:  # noqa: BLE001 — translate domain errors at HTTP boundary
+        _raise_career_graph_error(exc)
+    return {
+        "graphs": graphs,
+        "source_resumes": source_resumes,
+        "pending_changes": pending_changes,
+        "review_gate": {
+            "proposal_changes_approved_graph": False,
+            "exact_confirmation_required": True,
+        },
+    }
+
+
+@app.post("/career-graphs/import")
+async def career_graph_import(
+    payload: CareerGraphImportPayload,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    """Turn a parsed PDF/DOCX/JSON résumé row into a pending graph proposal."""
+
+    try:
+        return await career_graph_store.propose_resume_import(
+            user_id,
+            payload.resume_id,
+            graph_id=payload.graph_id,
+            graph_label=payload.graph_label,
+        )
+    except Exception as exc:  # noqa: BLE001 — translate domain errors at HTTP boundary
+        _raise_career_graph_error(exc)
+
+
+@app.get("/career-graph-changes/{change_set_id}")
+async def career_graph_change(
+    change_set_id: UUID,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    change = await career_graph_store.get_change_set(user_id, change_set_id)
+    if not change:
+        raise HTTPException(status_code=404, detail="Career Graph change set not found")
+    return {"change": change}
+
+
+@app.post("/career-graph-changes/{change_set_id}/decision")
+async def career_graph_change_decision(
+    change_set_id: UUID,
+    payload: CareerGraphDecisionPayload,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    """Approve/reject only after the Web user retypes the per-change phrase."""
+
+    verb = "APPROVE" if payload.decision == "approve" else "REJECT"
+    expected = f"{verb} CAREER CHANGE {change_set_id}"
+    if payload.confirmation != expected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"exact human confirmation required: {expected}",
+        )
+    try:
+        if payload.decision == "approve":
+            result = await career_graph_store.approve_change_set(
+                user_id,
+                change_set_id,
+                decided_via="relay_web_exact_confirmation",
+            )
+        else:
+            result = await career_graph_store.reject_change_set(
+                user_id,
+                change_set_id,
+                decided_via="relay_web_exact_confirmation",
+            )
+    except Exception as exc:  # noqa: BLE001 — translate domain errors at HTTP boundary
+        _raise_career_graph_error(exc)
+    return result
+
+
+@app.get("/career-graphs/{graph_id}")
+async def career_graph_detail(graph_id: UUID, user_id: UserDep) -> dict[str, Any]:
+    graph = await career_graph_store.get_graph(user_id, graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Career Graph not found")
+    return {"graph": graph}
 
 
 # ───────────────────────────────────────────────────────────────────────

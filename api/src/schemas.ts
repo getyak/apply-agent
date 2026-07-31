@@ -63,6 +63,19 @@ export const CustomizeResumeSchema = z.object({
   jobDescription: z.string().max(20_000).optional(),
 });
 
+// ── Career Graph ────────────────────────────────────────────────────────────
+
+export const ImportCareerGraphSchema = z.object({
+  resumeId: z.string().uuid(),
+  graphId: z.string().uuid().optional(),
+  graphLabel: z.string().trim().min(1).max(120).optional(),
+});
+
+export const DecideCareerGraphChangeSchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  confirmation: z.string().min(1).max(200),
+});
+
 // ── Applications ─────────────────────────────────────────────────────────────
 
 const APPLICATION_STATUSES = [
@@ -169,6 +182,10 @@ export type CreateResume = z.infer<typeof CreateResumeSchema>;
 export type UpdateResume = z.infer<typeof UpdateResumeSchema>;
 export type ParseResume = z.infer<typeof ParseResumeSchema>;
 export type ParseResumeAsync = z.infer<typeof ParseResumeAsyncSchema>;
+export type ImportCareerGraph = z.infer<typeof ImportCareerGraphSchema>;
+export type DecideCareerGraphChange = z.infer<
+  typeof DecideCareerGraphChangeSchema
+>;
 export type PrepareApplication = z.infer<typeof PrepareApplicationSchema>;
 export type PrepareFromJD = z.infer<typeof PrepareFromJDSchema>;
 export type UpdateApplication = z.infer<typeof UpdateApplicationSchema>;

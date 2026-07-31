@@ -91,6 +91,8 @@ async def test_existing_resume_import_is_pending_and_source_provenanced() -> Non
     resume_id = listed["resumes"][0]["id"]
     proposal = await tools.propose_resume_import(resume_id=resume_id)
     assert proposal["status"] == "pending"
+    assert proposal["review_summary"]["total_changes"] > 0
+    assert proposal["confirmation"]["approve"] == f"APPROVE CAREER CHANGE {proposal['id']}"
     assert proposal["import_report"]["upsert_only"] is True
     assert proposal["import_report"]["node_count"] > 0
     change = await tools.get_career_graph_change(proposal["id"])
@@ -98,6 +100,12 @@ async def test_existing_resume_import_is_pending_and_source_provenanced() -> Non
     assert all(op["node"]["provenance"]["source_type"] == "resume_import" for op in node_ops)
     graph = await tools.get_career_graph(proposal["graph_id"])
     assert graph["current_revision"] is None
+    await tools.approve_career_graph_change(
+        change_set_id=proposal["id"],
+        confirmation=proposal["confirmation"]["approve"],
+    )
+    graph = await tools.get_career_graph(proposal["graph_id"])
+    assert graph["current_revision"]["created_by"] == "import"
 
 
 async def test_graph_change_requires_exact_confirmation() -> None:
@@ -112,6 +120,16 @@ async def test_graph_change_requires_exact_confirmation() -> None:
         )
     graphs = await tools.list_career_graphs()
     assert graphs["graphs"][0]["revision"] == 0
+
+
+async def test_identical_reproposal_is_rejected_as_noop() -> None:
+    approved = await _approved_graph()
+    with pytest.raises(CareerGraphStateError, match="does not change"):
+        await tools.propose_career_graph_changes(
+            graph_id=approved["graph_id"],
+            operations=_operations(),
+            summary="Repeat the already-approved snapshot",
+        )
 
 
 async def test_full_review_compile_handoff_publish_flow() -> None:

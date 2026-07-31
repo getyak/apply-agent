@@ -45,6 +45,7 @@
     "aiStudio": "AI Studio",
     "account": "Account",
     "resumeStudio": "Résumé studio",
+    "careerGraph": "Career Graph",
     "resumeChip": {
       "parsingLabel": "READING",
       "fallbackFile": "your résumé",
@@ -851,6 +852,81 @@
       "label": "Browser",
       "snapshotCount": "{count} {count, plural, one {snapshot} other {snapshots}}",
       "screenshotAlt": "Screenshot of {url}"
+    }
+  },
+  "careerGraph": {
+    "loading": "Loading Career Graph",
+    "eyebrow": "Structured career asset",
+    "codexNative": "Codex native",
+    "title": "Career Graph",
+    "subtitle": "Your résumé is an output. This is the evidence-backed source underneath it: stable facts, explicit relationships, immutable revisions, and a review gate before anything becomes true.",
+    "lineage": {
+      "label": "Career Graph lineage",
+      "source": "Parsed résumé evidence",
+      "proposal": "Pending fact proposal",
+      "revision": "Approved revision",
+      "compile": "JD-specific compilation"
+    },
+    "change": {
+      "added": "Added",
+      "updated": "Updated",
+      "removed": "Removed"
+    },
+    "source": {
+      "import": "Résumé import",
+      "codex": "Codex",
+      "relay_agent": "Relay agent",
+      "user": "You"
+    },
+    "asset": {
+      "title": "Approved source of truth",
+      "body": "Only approved revisions can be compiled into a tailored résumé.",
+      "select": "Career Graph",
+      "revision": "Revision",
+      "nodes": "Facts",
+      "edges": "Links",
+      "empty": "No approved Career Graph yet. Stage an import to create the first review."
+    },
+    "import": {
+      "title": "Stage résumé evidence",
+      "sourceLabel": "Source résumé",
+      "unnamed": "Untitled résumé",
+      "staging": "Staging evidence…",
+      "stage": "Stage for review",
+      "guard": "This creates a pending proposal only. Your approved graph does not change.",
+      "empty": "Upload or parse a résumé first.",
+      "openStudio": "Open Résumé Studio"
+    },
+    "queue": {
+      "title": "Review queue",
+      "count": "{count} pending",
+      "empty": "No pending changes for this graph."
+    },
+    "review": {
+      "destructive": "Contains removals",
+      "before": "Before",
+      "after": "Proposed",
+      "noDiff": "No material diff",
+      "noDiffBody": "This proposal does not change any fact or relationship.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "confirmLabel": "Type the exact confirmation phrase",
+      "confirmHint": "The phrase is bound to this one change set and this one decision.",
+      "saving": "Recording decision…",
+      "approveRevision": "Approve immutable revision",
+      "rejectProposal": "Reject proposal",
+      "emptyTitle": "Your approved graph is untouched",
+      "emptyBody": "Stage an import or ask Codex to propose a change. Every node and relationship will appear here before approval."
+    },
+    "notice": {
+      "staged": "Evidence staged. Review every fact and relationship before approval.",
+      "approved": "Approved as immutable revision {revision}.",
+      "rejected": "Proposal rejected. The approved Career Graph was not changed."
+    },
+    "errors": {
+      "load": "Couldn't load your Career Graph.",
+      "import": "Couldn't stage this résumé for review.",
+      "decision": "Couldn't record this review decision."
     }
   },
   "resume": {

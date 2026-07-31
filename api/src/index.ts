@@ -27,6 +27,7 @@ import askRoutes from "./routes/ask";
 import slashRoutes from "./routes/slash";
 import todayRoutes from "./routes/today";
 import mcpOAuthRoutes from "./routes/mcp-oauth";
+import careerGraphRoutes from "./routes/career-graphs";
 
 const app = new Hono<AppEnv>();
 
@@ -53,6 +54,9 @@ app.route("/api/auth", authRoutes);
 // pending PKCE request to the signed-in Relay user through shared PostgreSQL.
 app.route("/api/mcp-oauth", mcpOAuthRoutes);
 app.route("/api/resumes", resumeRoutes);
+// Career Graph logic stays in the Python agent layer; Hono only verifies the
+// Relay JWT and proxies the owner identity over the established HTTP boundary.
+app.route("/api/career-graphs", careerGraphRoutes);
 // Public résumé share links — NO auth. The token (16-byte hex) IS the
 // capability. See routes/public-resumes.ts for the security posture.
 app.route("/api/public/r", publicResumeRoutes);

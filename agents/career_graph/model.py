@@ -197,6 +197,64 @@ def apply_operations(
     return result
 
 
+def summarize_snapshot_changes(
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a stable, review-friendly node/edge diff between two snapshots."""
+
+    require_valid_snapshot(before)
+    require_valid_snapshot(after)
+
+    def entity_changes(
+        entity: str,
+        before_items: list[dict[str, Any]],
+        after_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        before_by_id = {item["id"]: item for item in before_items}
+        after_by_id = {item["id"]: item for item in after_items}
+        changes: list[dict[str, Any]] = []
+        for entity_id in sorted(before_by_id.keys() | after_by_id.keys()):
+            previous = before_by_id.get(entity_id)
+            proposed = after_by_id.get(entity_id)
+            if previous == proposed:
+                continue
+            if previous is None:
+                change = "added"
+            elif proposed is None:
+                change = "removed"
+            else:
+                change = "updated"
+            changes.append(
+                {
+                    "entity": entity,
+                    "id": entity_id,
+                    "change": change,
+                    "before": copy.deepcopy(previous),
+                    "after": copy.deepcopy(proposed),
+                }
+            )
+        return changes
+
+    node_changes = entity_changes("node", before["nodes"], after["nodes"])
+    edge_changes = entity_changes("edge", before["edges"], after["edges"])
+    counts = {
+        "added_nodes": sum(item["change"] == "added" for item in node_changes),
+        "updated_nodes": sum(item["change"] == "updated" for item in node_changes),
+        "removed_nodes": sum(item["change"] == "removed" for item in node_changes),
+        "added_edges": sum(item["change"] == "added" for item in edge_changes),
+        "updated_edges": sum(item["change"] == "updated" for item in edge_changes),
+        "removed_edges": sum(item["change"] == "removed" for item in edge_changes),
+    }
+    return {
+        "counts": counts,
+        "total_changes": sum(counts.values()),
+        "destructive": counts["removed_nodes"] > 0 or counts["removed_edges"] > 0,
+        "nodes": node_changes,
+        "edges": edge_changes,
+    }
+
+
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|[\u4e00-\u9fff]{2,}")
 
 

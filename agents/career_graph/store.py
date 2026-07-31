@@ -13,7 +13,12 @@ import psycopg
 
 from agents.career_graph.feedback import aggregate_evidence_outcomes, evidence_scores
 from agents.career_graph.importer import json_resume_to_operations
-from agents.career_graph.model import apply_operations, compile_resume, empty_snapshot
+from agents.career_graph.model import (
+    apply_operations,
+    compile_resume,
+    empty_snapshot,
+    summarize_snapshot_changes,
+)
 
 
 class CareerGraphNotFoundError(LookupError):
@@ -131,6 +136,12 @@ async def list_graphs(user_id: UUID) -> list[dict[str, Any]]:
                 """
                 SELECT g.id, g.label, g.source_resume_id, r.id, r.revision,
                        jsonb_array_length(COALESCE(r.snapshot->'nodes', '[]'::jsonb)),
+                       jsonb_array_length(COALESCE(r.snapshot->'edges', '[]'::jsonb)),
+                       (
+                           SELECT COUNT(*)::int
+                             FROM career_graph_change_sets c
+                            WHERE c.graph_id = g.id AND c.status = 'pending'
+                       ),
                        g.created_at, g.updated_at
                   FROM career_graphs g
                   LEFT JOIN career_graph_revisions r
@@ -149,8 +160,10 @@ async def list_graphs(user_id: UUID) -> list[dict[str, Any]]:
             "current_revision_id": str(row[3]) if row[3] else None,
             "revision": int(row[4]) if row[4] else 0,
             "node_count": int(row[5]) if row[5] is not None else 0,
-            "created_at": row[6].isoformat(),
-            "updated_at": row[7].isoformat(),
+            "edge_count": int(row[6]) if row[6] is not None else 0,
+            "pending_change_count": int(row[7]) if row[7] is not None else 0,
+            "created_at": row[8].isoformat(),
+            "updated_at": row[9].isoformat(),
         }
         for row in rows
     ]
@@ -263,6 +276,9 @@ async def propose_changes(
     current = graph["current_revision"]
     base_snapshot = current["snapshot"] if current else empty_snapshot()
     proposed_snapshot = apply_operations(base_snapshot, operations)
+    review_summary = summarize_snapshot_changes(base_snapshot, proposed_snapshot)
+    if review_summary["total_changes"] == 0:
+        raise CareerGraphStateError("proposal does not change the current Career Graph")
     change_set_id = uuid4()
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         async with conn.cursor() as cur:
@@ -293,7 +309,35 @@ async def propose_changes(
         "status": "pending",
         "operations": operations,
         "proposed_snapshot": proposed_snapshot,
+        "review_summary": review_summary,
+        "confirmation": {
+            "approve": f"APPROVE CAREER CHANGE {change_set_id}",
+            "reject": f"REJECT CAREER CHANGE {change_set_id}",
+        },
         "requires_human_approval": True,
+    }
+
+
+def _public_change_set(row: tuple[Any, ...]) -> dict[str, Any]:
+    base_snapshot = _coerce_json(row[11]) if row[11] else empty_snapshot()
+    proposed_snapshot = _coerce_json(row[4])
+    return {
+        "id": str(row[0]),
+        "graph_id": str(row[1]),
+        "base_revision_id": str(row[2]) if row[2] else None,
+        "operations": _coerce_json(row[3]),
+        "proposed_snapshot": proposed_snapshot,
+        "summary": row[5],
+        "status": row[6],
+        "proposed_by": row[7],
+        "decided_via": row[8],
+        "created_at": row[9].isoformat(),
+        "decided_at": row[10].isoformat() if row[10] else None,
+        "review_summary": summarize_snapshot_changes(base_snapshot, proposed_snapshot),
+        "confirmation": {
+            "approve": f"APPROVE CAREER CHANGE {row[0]}",
+            "reject": f"REJECT CAREER CHANGE {row[0]}",
+        },
     }
 
 
@@ -302,30 +346,56 @@ async def get_change_set(user_id: UUID, change_set_id: UUID) -> dict[str, Any] |
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT id, graph_id, base_revision_id, operations,
-                       proposed_snapshot, summary, status, proposed_by,
-                       decided_via, created_at, decided_at
-                  FROM career_graph_change_sets
-                 WHERE id = %s AND user_id = %s
+                SELECT c.id, c.graph_id, c.base_revision_id, c.operations,
+                       c.proposed_snapshot, c.summary, c.status, c.proposed_by,
+                       c.decided_via, c.created_at, c.decided_at, b.snapshot
+                  FROM career_graph_change_sets c
+                  LEFT JOIN career_graph_revisions b
+                    ON b.id = c.base_revision_id
+                 WHERE c.id = %s AND c.user_id = %s
                 """,
                 (str(change_set_id), str(user_id)),
             )
             row = await cur.fetchone()
     if not row:
         return None
-    return {
-        "id": str(row[0]),
-        "graph_id": str(row[1]),
-        "base_revision_id": str(row[2]) if row[2] else None,
-        "operations": _coerce_json(row[3]),
-        "proposed_snapshot": _coerce_json(row[4]),
-        "summary": row[5],
-        "status": row[6],
-        "proposed_by": row[7],
-        "decided_via": row[8],
-        "created_at": row[9].isoformat(),
-        "decided_at": row[10].isoformat() if row[10] else None,
-    }
+    return _public_change_set(row)
+
+
+async def list_change_sets(
+    user_id: UUID,
+    *,
+    status: str | None = "pending",
+    graph_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    """List owner-scoped review items with exact node/edge diffs."""
+
+    clauses = ["c.user_id = %s"]
+    params: list[str] = [str(user_id)]
+    if status is not None:
+        clauses.append("c.status = %s")
+        params.append(status)
+    if graph_id is not None:
+        clauses.append("c.graph_id = %s")
+        params.append(str(graph_id))
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                SELECT c.id, c.graph_id, c.base_revision_id, c.operations,
+                       c.proposed_snapshot, c.summary, c.status, c.proposed_by,
+                       c.decided_via, c.created_at, c.decided_at, b.snapshot
+                  FROM career_graph_change_sets c
+                  LEFT JOIN career_graph_revisions b
+                    ON b.id = c.base_revision_id
+                 WHERE {" AND ".join(clauses)}
+                 ORDER BY c.created_at DESC
+                """,
+                tuple(params),
+            )
+            rows = await cur.fetchall()
+    return [_public_change_set(row) for row in rows]
 
 
 async def approve_change_set(
@@ -341,7 +411,7 @@ async def approve_change_set(
             await cur.execute(
                 """
                 SELECT c.graph_id, c.base_revision_id, c.proposed_snapshot,
-                       c.summary, c.status, g.current_revision_id,
+                       c.summary, c.status, c.proposed_by, g.current_revision_id,
                        COALESCE(r.revision, 0)
                   FROM career_graph_change_sets c
                   JOIN career_graphs g
@@ -362,6 +432,7 @@ async def approve_change_set(
                 proposed_snapshot,
                 summary,
                 status,
+                proposed_by,
                 current_revision_id,
                 current_revision,
             ) = row
@@ -378,7 +449,7 @@ async def approve_change_set(
                 """
                 INSERT INTO career_graph_revisions (
                     id, graph_id, revision, snapshot, change_summary, created_by
-                ) VALUES (%s, %s, %s, %s, %s, 'codex')
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     str(revision_id),
@@ -386,6 +457,7 @@ async def approve_change_set(
                     next_revision,
                     _json(_coerce_json(proposed_snapshot)),
                     summary,
+                    proposed_by,
                 ),
             )
             await cur.execute(

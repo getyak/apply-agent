@@ -16,6 +16,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Network,
 } from "lucide-react";
 import { useVantage } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
@@ -25,13 +26,21 @@ import { QuotaPanel } from "./quota-panel";
 
 // Ask Vantage is intentionally NOT in this nav anymore — the persistent dock
 // (mounted by AppLayout) is its sole surface, per vantage-ui-mapping.md §1.
-type NavId = "today" | "apps" | "interviews" | "builder" | "mock" | "settings";
+type NavId =
+  | "today"
+  | "apps"
+  | "interviews"
+  | "builder"
+  | "careerGraph"
+  | "mock"
+  | "settings";
 
 const ROUTES: Record<NavId, string> = {
   today: "/app/today",
   apps: "/app/applications",
   interviews: "/app/applications",
   builder: "/app/studio/resume",
+  careerGraph: "/app/studio/career-graph",
   mock: "/app/studio/mock",
   settings: "/app/settings",
 };
@@ -132,6 +141,7 @@ export function Sidebar() {
     if (id === "today") return pathname === "/app/today";
     if (id === "apps") return pathname === "/app/applications";
     if (id === "builder") return pathname === "/app/studio/resume" || pathname === "/app/resume";
+    if (id === "careerGraph") return pathname === "/app/studio/career-graph";
     if (id === "mock") return pathname === "/app/studio/mock";
     if (id === "settings") return pathname === "/app/settings";
     return false;
@@ -382,6 +392,17 @@ export function Sidebar() {
             </Link>
           );
         })()}
+        <Link
+          href={ROUTES.careerGraph}
+          className={navItem(active("careerGraph"))}
+          onClick={() => onNavClick("careerGraph")}
+          title={collapsed ? t("careerGraph") : undefined}
+          aria-current={active("careerGraph") ? "page" : undefined}
+          data-active={active("careerGraph") ? "true" : undefined}
+        >
+          <Network data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          {!collapsed && <span>{t("careerGraph")}</span>}
+        </Link>
         <Link
           href={ROUTES.mock}
           className={navItem(active("mock"))}

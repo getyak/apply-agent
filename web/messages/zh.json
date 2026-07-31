@@ -45,6 +45,7 @@
     "aiStudio": "AI 工作室",
     "account": "账户",
     "resumeStudio": "简历工作室",
+    "careerGraph": "经历图谱",
     "resumeChip": {
       "parsingLabel": "读取中",
       "fallbackFile": "你的简历",
@@ -851,6 +852,81 @@
       "label": "浏览器",
       "snapshotCount": "{count} 张快照",
       "screenshotAlt": "{url} 的截图"
+    }
+  },
+  "careerGraph": {
+    "loading": "正在加载经历图谱",
+    "eyebrow": "结构化职业资产",
+    "codexNative": "Codex 原生支持",
+    "title": "经历图谱",
+    "subtitle": "简历只是输出，这里才是它下面有证据支撑的事实源：稳定事实、明确关系、不可变版本，以及任何内容成为事实之前的人工审阅闸门。",
+    "lineage": {
+      "label": "经历图谱数据链路",
+      "source": "已解析的简历证据",
+      "proposal": "待审阅事实提案",
+      "revision": "已批准不可变版本",
+      "compile": "针对 JD 现场编译"
+    },
+    "change": {
+      "added": "新增",
+      "updated": "更新",
+      "removed": "移除"
+    },
+    "source": {
+      "import": "简历导入",
+      "codex": "Codex",
+      "relay_agent": "Relay 智能体",
+      "user": "你"
+    },
+    "asset": {
+      "title": "已批准的事实源",
+      "body": "只有已批准的版本才能被编译成定制简历。",
+      "select": "经历图谱",
+      "revision": "版本",
+      "nodes": "事实",
+      "edges": "关系",
+      "empty": "还没有已批准的经历图谱。先暂存一次导入，创建第一份审阅。"
+    },
+    "import": {
+      "title": "暂存简历证据",
+      "sourceLabel": "来源简历",
+      "unnamed": "未命名简历",
+      "staging": "正在暂存证据…",
+      "stage": "暂存并审阅",
+      "guard": "这里只会创建待审阅提案，不会改变已批准图谱。",
+      "empty": "请先上传或解析一份简历。",
+      "openStudio": "打开简历工作室"
+    },
+    "queue": {
+      "title": "审阅队列",
+      "count": "{count} 项待审",
+      "empty": "这份图谱当前没有待审变更。"
+    },
+    "review": {
+      "destructive": "包含移除操作",
+      "before": "变更前",
+      "after": "提案内容",
+      "noDiff": "没有实质差异",
+      "noDiffBody": "这份提案没有改变任何事实或关系。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "confirmLabel": "输入完整确认短语",
+      "confirmHint": "确认短语仅绑定这一份变更和这一次决定。",
+      "saving": "正在记录决定…",
+      "approveRevision": "批准为不可变版本",
+      "rejectProposal": "拒绝提案",
+      "emptyTitle": "已批准图谱保持不变",
+      "emptyBody": "暂存一次导入，或让 Codex 提出修改。批准前，每个事实节点和关系都会在这里展示。"
+    },
+    "notice": {
+      "staged": "证据已暂存。批准前请逐项审阅事实与关系。",
+      "approved": "已批准为不可变版本 {revision}。",
+      "rejected": "提案已拒绝，已批准的经历图谱没有变化。"
+    },
+    "errors": {
+      "load": "无法加载你的经历图谱。",
+      "import": "无法暂存这份简历以供审阅。",
+      "decision": "无法记录这次审阅决定。"
     }
   },
   "resume": {

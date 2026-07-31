@@ -1,7 +1,7 @@
 # Codex × Career Graph 原生集成
 
-> 状态：Career Graph 本地闭环、远程 OAuth 身份和 Greenhouse/Lever/Ashby
-> 目标站 fill-only 回归已实现；现有简历导入审阅 UI 和真实用户最终提交仍在
+> 状态：Career Graph 本地闭环、远程 OAuth 身份、现有简历导入审阅 UI 和
+> Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；真实用户最终提交仍在
 > 后续范围内。
 >
 > 核心决定：Relay 拥有 Career Graph、编译和反馈；Codex 拥有交互式编排与
@@ -192,7 +192,7 @@ v1 同时使用三层保证：
 | 针对 JD 现场编译 | `compile_resume` + selection manifest | ✅ v1（选择/排序） |
 | 不编造经历 | provenance 必填 + source-only compiler | ✅ 编译路径 |
 | 版本追踪 | immutable revisions + optimistic base check | ✅ |
-| 现有简历导入 | JSON Resume → upsert-only pending change | ✅ 本地 |
+| 现有简历导入 | JSON Resume → pending change → Web node/edge diff → exact-confirmation revision | ✅ |
 | MCP 暴露给 Codex | STDIO + OAuth Streamable HTTP | ✅ |
 | Repo skill 编排 | `manage-career-graph` | ✅ |
 | 人工确认闸门 | change / compilation / publish 独立确认 | ✅ |
@@ -206,14 +206,12 @@ v1 同时使用三层保证：
 
 ## 7. 下一段必须完成的工作
 
-1. **导入审阅 UI**：JSON Resume 已能转换成 pending graph change set；仍需在
-   Web 中提供 node/edge diff 审批，并接入 PDF/DOCX 解析结果。
-2. **编译质量**：在不改变事实的前提下增加版式、长度预算、语言和 ATS profile；
+1. **编译质量**：在不改变事实的前提下增加版式、长度预算、语言和 ATS profile；
    可把“措辞建议”作为单独 change proposal，不能直接污染 graph。
-3. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
+2. **反馈质量**：v1 已把 compilation résumé 所关联的投递阶段映射为 evidence
    ranking；下一步补 application status history、样本置信区间和跨 JD cohort，
    仍不得自动改写事实或把相关性冒充因果。
-4. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
+3. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
 
@@ -225,6 +223,10 @@ v1 同时使用三层保证：
   8/8 通过。
 - Python 单元与 MCP 协议测试覆盖 proposal 不落地、精确确认、不可变 revision、
   source-only 编译、反馈次级排序、发布确认和浏览器交接边界。
+- Relay Web 的 Career Graph 页面通过 Hono → FastAPI → PostgreSQL 真实链路
+  导入两份隔离测试 résumé，逐项展示 node/edge 的 before/after 与 provenance；
+  错误确认短语被拒绝，正确短语把 pending change 推进到 immutable revision 2，
+  审阅队列归零。浏览器控制台无错误，隔离测试用户随后已级联清理。
 - 使用本机 ChatGPT 登录态的 Codex CLI 做了真实多轮回归：读取已有 résumé、
   生成 pending import、以独立用户消息批准 graph revision、按 JD 生成 draft、
   独立批准 compilation，最后生成 `user_browser_only` handoff。
