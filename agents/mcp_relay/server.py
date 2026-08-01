@@ -34,7 +34,9 @@ INSTRUCTIONS = (
     "ranking signals that never rewrite facts. Record "
     "application progress only from a user report, browser confirmation, or recruiter message; "
     "never infer submission from a visible button. Publishing is public and always requires "
-    "confirmation. "
+    "confirmation. Updating a published résumé preserves the URL but requires a separately "
+    "approved target compilation and an exact update phrase; revocation has its own exact phrase "
+    "and never deletes the immutable artifact. "
     "Track applications locally before handoff. Download the application-bound artifact "
     "locally through its Relay page immediately before upload; never require public résumé "
     "publication or paste its code into a job site. Check the returned Chrome upload "
@@ -116,6 +118,12 @@ LOCAL_WRITE = ToolAnnotations(
 PUBLIC_WRITE = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+DESTRUCTIVE_PUBLIC_WRITE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
     idempotentHint=False,
     openWorldHint=True,
 )
@@ -439,6 +447,68 @@ async def publish_resume_compilation(
     return await tools.publish_resume_compilation(
         compilation_id=compilation_id,
         confirmation=confirmation,
+    )
+
+
+@mcp.tool(
+    title="Update a published résumé version",
+    description=(
+        "Atomically move an existing stable public URL from one active published "
+        "compilation to a different approved compilation in the same Career Graph. "
+        "The source artifact remains immutable and the action requires the exact phrase "
+        "UPDATE PUBLIC RESUME <source> TO <target>."
+    ),
+    annotations=PUBLIC_WRITE,
+)
+async def update_published_resume(
+    source_compilation_id: str,
+    target_compilation_id: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    return await tools.update_published_resume(
+        source_compilation_id=source_compilation_id,
+        target_compilation_id=target_compilation_id,
+        confirmation=confirmation,
+    )
+
+
+@mcp.tool(
+    title="Revoke a published résumé link",
+    description=(
+        "Immediately disable one active Career Graph public résumé URL without deleting "
+        "the immutable compilation or its history. Requires the exact phrase "
+        "REVOKE PUBLIC RESUME <compilation_id>."
+    ),
+    annotations=DESTRUCTIVE_PUBLIC_WRITE,
+)
+async def revoke_published_resume(
+    compilation_id: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    return await tools.revoke_published_resume(
+        compilation_id=compilation_id,
+        confirmation=confirmation,
+    )
+
+
+@mcp.tool(
+    title="Get résumé publication history",
+    description=(
+        "Read append-only publication, stable-URL update, and revocation events for one "
+        "owner-scoped Career Graph plus its currently active public versions. Raw public "
+        "token digests are never returned."
+    ),
+    annotations=READ_ONLY,
+)
+async def get_resume_publication_history(
+    graph_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    return await tools.get_resume_publication_history(
+        graph_id=graph_id,
+        limit=limit,
+        offset=offset,
     )
 
 

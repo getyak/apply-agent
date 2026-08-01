@@ -43,6 +43,7 @@ class InMemoryCareerGraphStore:
         self.compilations: dict[str, dict[str, Any]] = {}
         self.application_drafts: dict[str, dict[str, Any]] = {}
         self.artifact_delivery_grants: dict[str, dict[str, Any]] = {}
+        self.publication_events: list[dict[str, Any]] = []
 
     async def get_or_create_graph(
         self,
@@ -550,16 +551,186 @@ class InMemoryCareerGraphStore:
             raise CareerGraphStateError(f"explicit confirmation required: {expected}")
         if compilation["status"] != "approved":
             raise CareerGraphStateError("only an approved compilation can be published")
+        if compilation["publish_token"]:
+            raise CareerGraphStateError(
+                "compilation already owns an active public résumé link; "
+                "use the update or revoke workflow"
+            )
         token = uuid4().hex
         compilation["status"] = "published"
         compilation["publish_token"] = token
         compilation["published_at"] = _now()
+        event = self._append_publication_event(
+            user_id=user_id,
+            graph_id=compilation["graph_id"],
+            event_kind="published",
+            from_compilation_id=None,
+            to_compilation_id=str(compilation_id),
+            token=token,
+        )
         return {
             "ok": True,
             "compilation_id": str(compilation_id),
             "resume_id": compilation["resume_id"],
             "status": "published",
             "public_url": f"{public_base_url.rstrip('/')}/r/{token}",
+            "publication_active": True,
+            "publication_event": {
+                "id": event["id"],
+                "event_kind": event["event_kind"],
+                "occurred_at": event["occurred_at"],
+            },
+        }
+
+    async def update_published_compilation(
+        self,
+        user_id: UUID,
+        source_compilation_id: UUID,
+        target_compilation_id: UUID,
+        *,
+        confirmation: str,
+        public_base_url: str,
+    ) -> dict[str, Any]:
+        expected = f"UPDATE PUBLIC RESUME {source_compilation_id} TO {target_compilation_id}"
+        if confirmation != expected:
+            raise CareerGraphStateError(f"explicit confirmation required: {expected}")
+        if source_compilation_id == target_compilation_id:
+            raise CareerGraphStateError("source and target compilations must be different")
+        source = self._owned_compilation(user_id, source_compilation_id)
+        target = self._owned_compilation(user_id, target_compilation_id)
+        if source["graph_id"] != target["graph_id"]:
+            raise CareerGraphStateError(
+                "public résumé updates must stay within the same Career Graph"
+            )
+        if source["resume_id"] == target["resume_id"]:
+            raise CareerGraphStateError(
+                "source and target must reference different immutable résumé artifacts"
+            )
+        if not source["publish_token"]:
+            raise CareerGraphStateError(
+                "source compilation does not own an active public résumé link"
+            )
+        if target["status"] != "approved" or target["publish_token"] is not None:
+            raise CareerGraphStateError(
+                "target compilation must be approved and not already published"
+            )
+        token = source["publish_token"]
+        source["publish_token"] = None
+        target["publish_token"] = token
+        target["status"] = "published"
+        target["published_at"] = _now()
+        event = self._append_publication_event(
+            user_id=user_id,
+            graph_id=source["graph_id"],
+            event_kind="updated",
+            from_compilation_id=str(source_compilation_id),
+            to_compilation_id=str(target_compilation_id),
+            token=token,
+        )
+        return {
+            "ok": True,
+            "source_compilation_id": str(source_compilation_id),
+            "target_compilation_id": str(target_compilation_id),
+            "resume_id": target["resume_id"],
+            "status": "published",
+            "public_url": f"{public_base_url.rstrip('/')}/r/{token}",
+            "link_preserved": True,
+            "source_artifact_immutable": True,
+            "source_publication_active": False,
+            "target_publication_active": True,
+            "publication_event": {
+                "id": event["id"],
+                "event_kind": event["event_kind"],
+                "occurred_at": event["occurred_at"],
+            },
+        }
+
+    async def revoke_published_compilation(
+        self,
+        user_id: UUID,
+        compilation_id: UUID,
+        *,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        expected = f"REVOKE PUBLIC RESUME {compilation_id}"
+        if confirmation != expected:
+            raise CareerGraphStateError(f"explicit confirmation required: {expected}")
+        compilation = self._owned_compilation(user_id, compilation_id)
+        token = compilation["publish_token"]
+        if not token:
+            raise CareerGraphStateError("compilation does not own an active public résumé link")
+        compilation["publish_token"] = None
+        event = self._append_publication_event(
+            user_id=user_id,
+            graph_id=compilation["graph_id"],
+            event_kind="revoked",
+            from_compilation_id=str(compilation_id),
+            to_compilation_id=None,
+            token=token,
+        )
+        return {
+            "ok": True,
+            "compilation_id": str(compilation_id),
+            "resume_id": compilation["resume_id"],
+            "status": compilation["status"],
+            "publication_active": False,
+            "public_url": None,
+            "artifact_deleted": False,
+            "publication_event": {
+                "id": event["id"],
+                "event_kind": event["event_kind"],
+                "occurred_at": event["occurred_at"],
+            },
+        }
+
+    async def get_publication_history(
+        self,
+        user_id: UUID,
+        graph_id: UUID,
+        *,
+        limit: int = 51,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        self._owned_graph(user_id, graph_id)
+        events = [
+            {
+                key: value
+                for key, value in event.items()
+                if key not in {"user_id", "public_token_digest", "graph_id"}
+            }
+            for event in sorted(
+                self.publication_events,
+                key=lambda item: item["occurred_at"],
+                reverse=True,
+            )
+            if event["user_id"] == str(user_id) and event["graph_id"] == str(graph_id)
+        ]
+        active = [
+            compilation
+            for compilation in sorted(
+                self.compilations.values(),
+                key=lambda item: item["published_at"] or "",
+                reverse=True,
+            )
+            if compilation["user_id"] == str(user_id)
+            and compilation["graph_id"] == str(graph_id)
+            and compilation["publish_token"] is not None
+        ]
+        return {
+            "graph_id": str(graph_id),
+            "events": events[offset : offset + limit],
+            "active_publications": [
+                {
+                    "compilation_id": compilation["id"],
+                    "resume_id": compilation["resume_id"],
+                    "graph_revision": compilation["graph_revision"],
+                    "resume_version": compilation["resume_version"],
+                    "publish_token": compilation["publish_token"],
+                    "published_at": compilation["published_at"],
+                }
+                for compilation in active[:100]
+            ],
+            "active_publications_truncated": len(active) > 100,
         }
 
     async def application_handoff(
@@ -803,6 +974,30 @@ class InMemoryCareerGraphStore:
         if not compilation or compilation["user_id"] != str(user_id):
             raise CareerGraphNotFoundError("compilation not found")
         return compilation
+
+    def _append_publication_event(
+        self,
+        *,
+        user_id: UUID,
+        graph_id: str,
+        event_kind: str,
+        from_compilation_id: str | None,
+        to_compilation_id: str | None,
+        token: str,
+    ) -> dict[str, Any]:
+        event = {
+            "id": str(uuid4()),
+            "user_id": str(user_id),
+            "graph_id": graph_id,
+            "event_kind": event_kind,
+            "event_source": "codex_mcp_explicit_confirmation",
+            "from_compilation_id": from_compilation_id,
+            "to_compilation_id": to_compilation_id,
+            "public_token_digest": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "occurred_at": _now(),
+        }
+        self.publication_events.append(event)
+        return event
 
     @staticmethod
     def _public_graph(graph: dict[str, Any]) -> dict[str, Any]:

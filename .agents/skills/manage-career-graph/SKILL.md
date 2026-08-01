@@ -102,10 +102,35 @@ Approval remains per compilation; never silently approve a batch.
 
 Publish only when the user explicitly asks for a public read-only link.
 
-1. Require an approved compilation.
+1. Require an approved compilation and confirm its inventory entry has
+   `publication_active=false`. An active token is authoritative even on legacy
+   rows whose lifecycle status is not `published`; use update or revoke instead
+   of rotating it through another publish.
 2. Explain that the URL is public to anyone holding it.
 3. Ask the user to type `PUBLISH <compilation_id>`.
 4. Call `publish_resume_compilation` only after the exact phrase.
+
+To update an existing public link:
+
+1. Call `get_resume_publication_history` and identify the currently active
+   source compilation. Never infer it from `status=published` alone because a
+   superseded or revoked historical compilation remains immutable and keeps
+   that lifecycle status.
+2. Require a different target compilation from the same Career Graph. It must
+   already have passed real-file review and its own `APPROVE RESUME` gate.
+3. Show the source and target compilation IDs, graph revisions, quality
+   summaries, and that the existing URL will immediately serve the target
+   artifact.
+4. Ask the user to type exactly
+   `UPDATE PUBLIC RESUME <source_compilation_id> TO <target_compilation_id>`.
+5. Call `update_published_resume` only after that exact current-message phrase.
+   Verify `link_preserved=true`, then read publication history again.
+
+To disable an active link, explain that the immutable artifact and audit
+history remain but the URL will immediately return 404. Ask the user to type
+exactly `REVOKE PUBLIC RESUME <compilation_id>`, then call
+`revoke_published_resume` only after that phrase and verify no active
+publication remains for that compilation.
 
 Publishing a résumé is not submitting a job application.
 

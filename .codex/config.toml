@@ -72,6 +72,12 @@ approval_mode = "prompt"
 [mcp_servers.relay-career.tools.publish_resume_compilation]
 approval_mode = "prompt"
 
+[mcp_servers.relay-career.tools.update_published_resume]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.revoke_published_resume]
+approval_mode = "prompt"
+
 [mcp_servers.relay-career.tools.prepare_resume_artifact_review]
 approval_mode = "prompt"
 
@@ -103,6 +109,12 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.relay-career-remote.tools.publish_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.update_published_resume]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.revoke_published_resume]
 approval_mode = "prompt"
 
 [mcp_servers.relay-career-remote.tools.prepare_resume_artifact_review]

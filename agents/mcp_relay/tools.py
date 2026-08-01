@@ -129,8 +129,12 @@ def _validate_page(*, limit: int, offset: int) -> None:
         raise CareerGraphStateError("offset must be a non-negative integer")
 
 
-def _compilation_next_actions(status: str) -> list[str]:
-    return {
+def _compilation_next_actions(
+    status: str,
+    *,
+    publication_active: bool,
+) -> list[str]:
+    actions = {
         "draft": [
             "get_resume_compilation",
             "prepare_resume_artifact_review",
@@ -145,6 +149,15 @@ def _compilation_next_actions(status: str) -> list[str]:
             "create_application_draft",
         ],
     }.get(status, [])
+    if publication_active:
+        actions = [
+            "get_resume_compilation",
+            "update_published_resume",
+            "revoke_published_resume",
+        ]
+        if status in {"approved", "published"}:
+            actions.append("create_application_draft")
+    return actions
 
 
 def _artifact_delivery_api_base_url() -> str:
@@ -242,7 +255,8 @@ async def relay_status() -> dict[str, Any]:
             "read non-causal evidence outcome signals",
             "compile draft for one JD",
             "human approves compiled résumé",
-            "optionally publish or create a tracked browser handoff",
+            "optionally publish/update/revoke a stable public link",
+            "or create a tracked browser handoff",
         ],
         "server_side_submission": False,
     }
@@ -302,8 +316,20 @@ async def list_resume_compilations(
     for row in rows[:limit]:
         item = dict(row)
         publish_token = item.pop("publish_token", None)
+        publication_active = bool(publish_token)
         item["public_url"] = f"{public_base_url}/r/{publish_token}" if publish_token else None
-        item["next_actions"] = _compilation_next_actions(item["status"])
+        item["publication_active"] = publication_active
+        item["publication_state"] = (
+            "active"
+            if publication_active
+            else "historical"
+            if item["status"] == "published"
+            else "not_published"
+        )
+        item["next_actions"] = _compilation_next_actions(
+            item["status"],
+            publication_active=publication_active,
+        )
         compilations.append(item)
     return {
         "compilations": compilations,
@@ -615,6 +641,95 @@ async def publish_resume_compilation(
         confirmation=confirmation,
         public_base_url=os.environ.get("RELAY_PUBLIC_BASE_URL", "http://localhost:3000"),
     )
+
+
+async def update_published_resume(
+    *,
+    source_compilation_id: str,
+    target_compilation_id: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Preserve one public URL while moving it to a new approved version."""
+
+    _require_scope("resume:publish")
+    expected = f"UPDATE PUBLIC RESUME {source_compilation_id} TO {target_compilation_id}"
+    _require_confirmation(confirmation, expected)
+    return await _store_call(
+        "update_published_compilation",
+        current_user_id(),
+        _uuid(source_compilation_id, "source_compilation_id"),
+        _uuid(target_compilation_id, "target_compilation_id"),
+        confirmation=confirmation,
+        public_base_url=os.environ.get(
+            "RELAY_PUBLIC_BASE_URL",
+            "http://localhost:3000",
+        ),
+    )
+
+
+async def revoke_published_resume(
+    *,
+    compilation_id: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Revoke a public link without deleting its immutable compilation."""
+
+    _require_scope("resume:publish")
+    expected = f"REVOKE PUBLIC RESUME {compilation_id}"
+    _require_confirmation(confirmation, expected)
+    return await _store_call(
+        "revoke_published_compilation",
+        current_user_id(),
+        _uuid(compilation_id, "compilation_id"),
+        confirmation=confirmation,
+    )
+
+
+async def get_resume_publication_history(
+    *,
+    graph_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Read stable-link history without exposing raw publication tokens."""
+
+    _require_scope("career:read")
+    _validate_page(limit=limit, offset=offset)
+    history = await _store_call(
+        "get_publication_history",
+        current_user_id(),
+        _uuid(graph_id, "graph_id"),
+        limit=limit + 1,
+        offset=offset,
+    )
+    events = history["events"]
+    has_more = len(events) > limit
+    public_base_url = os.environ.get(
+        "RELAY_PUBLIC_BASE_URL",
+        "http://localhost:3000",
+    ).rstrip("/")
+    active_publications: list[dict[str, Any]] = []
+    for row in history["active_publications"]:
+        item = dict(row)
+        publish_token = item.pop("publish_token")
+        item["public_url"] = f"{public_base_url}/r/{publish_token}"
+        item["publication_active"] = True
+        active_publications.append(item)
+    return {
+        "graph_id": graph_id,
+        "events": events[:limit],
+        "active_publications": active_publications,
+        "active_publications_truncated": history["active_publications_truncated"],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "returned": min(len(events), limit),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        },
+        "contains_public_token_digest": False,
+        "publication_changes_require_exact_confirmation": True,
+    }
 
 
 async def create_application_draft(

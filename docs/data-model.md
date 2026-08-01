@@ -92,6 +92,27 @@ cascade for privacy deletion. Career Graph feedback uses the furthest observed
 stage, never silently classifies free-text outcomes, and labels small cohorts
 as insufficient rather than causal evidence.
 
+### CareerGraphPublicationEvent
+```sql
+CareerGraphPublicationEvent {
+  id                    UUID PRIMARY KEY,
+  user_id               UUID,
+  graph_id              UUID,
+  event_kind            TEXT,       -- baseline | published | updated | revoked
+  event_source          TEXT,       -- migration_backfill | codex_mcp_*
+  from_compilation_id   UUID,
+  to_compilation_id     UUID,
+  public_token_digest   TEXT,       -- SHA-256 only; never the bearer token
+  occurred_at           TIMESTAMP
+}
+```
+
+Career Graph public updates transfer the same `resumes.publish_token` from an
+old immutable compilation artifact to a different, separately approved
+compilation in one transaction. The public URL therefore remains stable while
+the event table records the version transition. Revocation clears the active
+token but preserves the compilation and append-only history.
+
 ### InterviewSession + InterviewQuestion ⭐(数据飞轮核心)
 ```sql
 InterviewSession {

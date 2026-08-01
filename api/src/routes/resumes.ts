@@ -740,6 +740,24 @@ function attachmentHeader(filename: string): string {
 //
 // Public read path lives in routes/public-resumes.ts (no auth, no PII leak —
 // just the JSON Resume content for the published version).
+async function rejectUntrackedCareerGraphPublication(
+  resumeId: string,
+  userId: string,
+): Promise<void> {
+  const managed = await query<{ id: string }>(
+    `SELECT id
+       FROM career_graph_compilations
+       WHERE resume_id = $1 AND user_id = $2
+       LIMIT 1`,
+    [resumeId, userId],
+  );
+  if (managed.rows.length > 0) {
+    throw new ConflictError(
+      "Career Graph compiled résumés must use the review-gated publication workflow",
+    );
+  }
+}
+
 const publishLimiter = rateLimit({
   scope: "resume_publish",
   limit: 5,
@@ -750,6 +768,7 @@ app.post("/:id/publish", publishLimiter, async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id")!; // present by route definition
   await requireOwnership("resumes", id, userId, "id"); // 404 if not owned
+  await rejectUntrackedCareerGraphPublication(id, userId);
   const token = randomBytes(16).toString("hex");
   const result = await query<{
     publish_token: string;
@@ -774,6 +793,7 @@ app.delete("/:id/publish", async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id");
   await requireOwnership("resumes", id, userId, "id"); // 404 if not owned
+  await rejectUntrackedCareerGraphPublication(id, userId);
   await query(
     "UPDATE resumes SET publish_token = NULL WHERE id = $1 AND user_id = $2",
     [id, userId],

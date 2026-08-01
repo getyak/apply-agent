@@ -49,6 +49,9 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "record_application_progress",
                 "prepare_application_batch",
                 "publish_resume_compilation",
+                "update_published_resume",
+                "revoke_published_resume",
+                "get_resume_publication_history",
                 "prepare_application_handoff",
             }.issubset(by_name)
             for tool in listed.tools:
@@ -74,6 +77,9 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             assert by_name["list_resume_compilations"].annotations.readOnlyHint is True
             assert by_name["list_tracked_applications"].annotations.readOnlyHint is True
             assert by_name["publish_resume_compilation"].annotations.openWorldHint is True
+            assert by_name["update_published_resume"].annotations.openWorldHint is True
+            assert by_name["revoke_published_resume"].annotations.destructiveHint is True
+            assert by_name["get_resume_publication_history"].annotations.readOnlyHint is True
             assert by_name["prepare_resume_artifact_review"].annotations.readOnlyHint is False
             assert by_name["prepare_resume_artifact_review"].annotations.openWorldHint is True
             assert by_name["prepare_application_handoff"].annotations.readOnlyHint is False

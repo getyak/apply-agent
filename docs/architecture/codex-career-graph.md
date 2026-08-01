@@ -1,7 +1,7 @@
 # Codex × Career Graph 原生集成
 
 > 状态：Career Graph 本地闭环、远程 OAuth 身份、现有简历导入审阅 UI、
-> 可复现 PDF/DOCX 导出、短期审阅/上传文件交付和
+> 可复现 PDF/DOCX 导出、稳定公共链接版本更新、短期审阅/上传文件交付和
 > Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；真实用户最终提交仍在
 > 后续范围内。
 >
@@ -64,7 +64,8 @@ pending change set ──人工批准──► immutable Career Graph revision
 
 迁移 `022_career_graph` 新增四类实体，迁移
 `024_career_graph_compiler_profiles` 为 compilation 固定编译器配置和质量报告，
-迁移 `026_resume_artifact_delivery_grants` 提供短期私有文件交付：
+迁移 `026_resume_artifact_delivery_grants` 提供短期私有文件交付，迁移
+`027_career_graph_publication_history` 提供稳定公共链接版本历史：
 
 - `career_graphs`：用户拥有的图谱入口，只指向一个当前已批准 revision。
 - `career_graph_revisions`：不可变 node/edge snapshot。
@@ -75,6 +76,8 @@ pending change set ──人工批准──► immutable Career Graph revision
   有界下载次数。`compilation_review` 可在 draft 阶段审阅真实文件；
   `application_upload` 必须绑定同 owner 的 application 与 approved/published
   compilation。
+- `career_graph_publication_events`：append-only 记录 published / updated /
+  revoked；只存 public token 的 SHA-256 摘要，不复制 bearer token。
 
 节点有稳定 ID、类型、事实数据和 provenance；边表达 role → achievement、
 achievement → skill 等关系。编译器只选择和排序节点文本，不根据 JD 生成新事实。
@@ -116,6 +119,8 @@ MCP 使用当前 Python SDK 的 `FastMCP` 和 typed structured output，并为�
 - graph change：`APPROVE CAREER CHANGE <id>`
 - résumé compilation：`APPROVE RESUME <id>`
 - public publish：`PUBLISH <id>`
+- stable public update：`UPDATE PUBLIC RESUME <source> TO <target>`
+- public revoke：`REVOKE PUBLIC RESUME <id>`
 
 调用方不能传 `user_id`。本地 STDIO 模式只从 MCP server 环境读取
 `RELAY_USER_ID`；远程模式只信任经过 bearer middleware 验证的 OAuth
@@ -227,6 +232,17 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
 025 trigger 追加历史事件。按钮可见或已点击不算完成；只有确认页、用户明确报告
 或招聘方消息才允许 `record_application_progress` 追加观察。
 
+公开简历更新不改写已发布 résumé row。目标 compilation 必须属于同一 graph、
+已独立批准且尚未发布；MCP 在一个事务中把原 128-bit token 从 source résumé
+转移到 target résumé，因此 `/r/<token>` 保持不变，但立即读取新版本。source
+artifact、原 publication 时间和 application attribution 均保留。baseline /
+published / updated / revoked 事件追加到 migration 027 的历史表，事件只保存
+token digest。活动 token 是当前公开状态的权威来源；这也让迁移前状态字段不一致
+的旧链接仍能被发现、更新或撤销，而不会被再次 publish 静默轮换。
+通用 Hono résumé publish/revoke 路径会拒绝 Career Graph compilation，数据库
+trigger 也拒绝未声明 review-gated writer 的 token 变更，避免绕过 MCP 精确确认。
+撤销只清空活动 token，不删除 immutable compilation。
+
 需要上传本地文件的表单使用连接的 Chrome；Codex 内置 Browser 当前不能自动完成
 文件上传。Chrome 无法访问本地下载文件时，交还用户完成一次上传，不把文件转交给
 服务器端投递器。
@@ -242,11 +258,11 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
 | 现有简历导入 | JSON Resume → pending change → Web node/edge diff → exact-confirmation revision | ✅ |
 | MCP 暴露给 Codex | STDIO + OAuth Streamable HTTP | ✅ |
 | Repo skill 编排 | `manage-career-graph` | ✅ |
-| 人工确认闸门 | change / compilation / publish 独立确认 | ✅ |
+| 人工确认闸门 | change / compilation / publish / public update / revoke 独立确认 | ✅ |
 | Codex 登录 | ChatGPT 登录态 → skill → live MCP → PG 多轮验证 | ✅ Codex 侧 |
 | Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
 | 跨 Codex 会话恢复 | 只读 compilation/application inventory；分页、过滤且不返回 capability | ✅ v1 |
-| 简历公开发布 | approved compilation → `/r/<token>` | ✅ |
+| 简历公开发布与更新 | approved compilation → stable `/r/<token>` → exact-confirmation version transfer/revoke | ✅ v2 |
 | 一/两页文件导出 | compiler profile → A4 PDF/DOCX；PDF 返回实测页数审计 | ✅ v1 |
 | 批准前真实文件审阅 | draft compilation → 短期 PDF/DOCX review grant → 页面级检查 | ✅ v1 |
 | 真实浏览器预填 | Greenhouse/Lever/Ashby 目标站合成身份 fill-only | ✅ 未提交 |
@@ -326,6 +342,17 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
   次数，批准后同一 application-bound grant 才可下载。下载码仅以 SHA-256 摘要
   入库，PDF 实际解析为 1 页且保留姓名/PostgreSQL 文本哨兵，DOCX 为有效 ZIP
   容器，两份成功交付各原子计数一次。
+- migration 027 在隔离 PostgreSQL 中通过完整 001→027、027 down、027 up
+  往返；迁移前 active token 被回填为只含 64 字符 SHA-256 digest 的 baseline。
+  真实 store 调用验证旧 `approved + active token` 不会被重复 publish，原 URL
+  可原子转移到另一已批准 artifact，随后可撤销并另行发布新链接；历史依次保留
+  baseline / updated / revoked / published。跨 owner résumé、跨 graph 事件、
+  未声明 writer 的 token 变更及 event update 均被数据库拒绝。隔离库已删除。
+- 真实 Hono public route 在稳定 token 更新前后分别返回 version 1 / version 2，
+  URL 未变化；撤销后同一路径返回 404，两份 immutable artifact 均保留。原生
+  Codex CLI 0.146.0 使用 ChatGPT 登录态在 ephemeral read-only 会话中只调用
+  publication history inventory，确认 1 个 active publication、完整 published
+  事件且结果不含 token digest；隔离数据库和本地服务均已清理。
 - 同一交付页经连接的真实 Chrome 执行表单：POST 代码后 303 到路径限定 cookie
   GET，Chrome 将唯一命名的合成 PDF 保存到本机 Downloads。离线复核文件为
   99,487 bytes、1 页，姓名与“without a job submission”哨兵完整；未打开招聘

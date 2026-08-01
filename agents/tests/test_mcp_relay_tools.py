@@ -161,8 +161,12 @@ async def test_inventory_restores_versions_and_outcomes_without_capabilities() -
     assert version["quality_summary"]["ats_ready"] is True
     assert version["tracked_application_count"] == 1
     assert version["public_url"].startswith("http://localhost:3000/r/")
+    assert version["publication_active"] is True
+    assert version["publication_state"] == "active"
     assert version["next_actions"] == [
         "get_resume_compilation",
+        "update_published_resume",
+        "revoke_published_resume",
         "create_application_draft",
     ]
     assert "publish_token" not in version
@@ -206,6 +210,197 @@ async def test_inventory_rejects_invalid_filters_before_store_access() -> None:
         await tools.list_tracked_applications(offset=-1)
     assert tools.FAKE_STORE.compilations == {}
     assert tools.FAKE_STORE.application_drafts == {}
+
+
+async def test_publication_update_preserves_url_and_appends_history() -> None:
+    approved = await _approved_graph()
+    source = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer v1",
+    )
+    target = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer v2",
+        ats_profile="strict",
+    )
+    for compilation in (source, target):
+        await tools.approve_resume_compilation(
+            compilation_id=compilation["id"],
+            confirmation=f"APPROVE RESUME {compilation['id']}",
+        )
+
+    published = await tools.publish_resume_compilation(
+        compilation_id=source["id"],
+        confirmation=f"PUBLISH {source['id']}",
+    )
+    assert published["publication_active"] is True
+    assert published["publication_event"]["event_kind"] == "published"
+    stable_url = published["public_url"]
+
+    with pytest.raises(CareerGraphStateError, match="human confirmation"):
+        await tools.update_published_resume(
+            source_compilation_id=source["id"],
+            target_compilation_id=target["id"],
+            confirmation="update it",
+        )
+    assert len(tools.FAKE_STORE.publication_events) == 1
+    assert tools.FAKE_STORE.compilations[source["id"]]["publish_token"] is not None
+    assert tools.FAKE_STORE.compilations[target["id"]]["publish_token"] is None
+
+    updated = await tools.update_published_resume(
+        source_compilation_id=source["id"],
+        target_compilation_id=target["id"],
+        confirmation=f"UPDATE PUBLIC RESUME {source['id']} TO {target['id']}",
+    )
+    assert updated["public_url"] == stable_url
+    assert updated["link_preserved"] is True
+    assert updated["source_artifact_immutable"] is True
+    assert updated["source_publication_active"] is False
+    assert updated["target_publication_active"] is True
+    assert updated["publication_event"]["event_kind"] == "updated"
+
+    versions = await tools.list_resume_compilations(graph_id=approved["graph_id"])
+    versions_by_id = {item["id"]: item for item in versions["compilations"]}
+    assert versions_by_id[source["id"]]["publication_state"] == "historical"
+    assert versions_by_id[source["id"]]["public_url"] is None
+    assert versions_by_id[target["id"]]["publication_state"] == "active"
+    assert versions_by_id[target["id"]]["public_url"] == stable_url
+
+    history = await tools.get_resume_publication_history(graph_id=approved["graph_id"])
+    assert [event["event_kind"] for event in history["events"]] == [
+        "updated",
+        "published",
+    ]
+    assert history["active_publications"][0]["compilation_id"] == target["id"]
+    assert history["active_publications"][0]["public_url"] == stable_url
+    assert history["contains_public_token_digest"] is False
+    assert "publish_token" not in history["active_publications"][0]
+    assert all("public_token_digest" not in event for event in history["events"])
+
+    with pytest.raises(CareerGraphStateError, match="human confirmation"):
+        await tools.revoke_published_resume(
+            compilation_id=target["id"],
+            confirmation="revoke",
+        )
+    revoked = await tools.revoke_published_resume(
+        compilation_id=target["id"],
+        confirmation=f"REVOKE PUBLIC RESUME {target['id']}",
+    )
+    assert revoked["publication_active"] is False
+    assert revoked["public_url"] is None
+    assert revoked["artifact_deleted"] is False
+    assert revoked["publication_event"]["event_kind"] == "revoked"
+
+    history = await tools.get_resume_publication_history(graph_id=approved["graph_id"])
+    assert history["active_publications"] == []
+    assert [event["event_kind"] for event in history["events"]] == [
+        "revoked",
+        "updated",
+        "published",
+    ]
+    assert (await tools.get_resume_compilation(source["id"]))["status"] == "published"
+    assert (await tools.get_resume_compilation(target["id"]))["status"] == "published"
+
+
+async def test_legacy_active_tokens_can_be_discovered_updated_and_revoked() -> None:
+    approved = await _approved_graph()
+    legacy_source = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Legacy public résumé",
+    )
+    target = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Replacement public résumé",
+    )
+    legacy_revoke = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Legacy public résumé to revoke",
+    )
+    for compilation in (legacy_source, target, legacy_revoke):
+        await tools.approve_resume_compilation(
+            compilation_id=compilation["id"],
+            confirmation=f"APPROVE RESUME {compilation['id']}",
+        )
+
+    tools.FAKE_STORE.compilations[legacy_source["id"]]["publish_token"] = "a" * 32
+    tools.FAKE_STORE.compilations[legacy_revoke["id"]]["publish_token"] = "b" * 32
+
+    versions = await tools.list_resume_compilations(graph_id=approved["graph_id"])
+    versions_by_id = {item["id"]: item for item in versions["compilations"]}
+    assert versions_by_id[legacy_source["id"]]["status"] == "approved"
+    assert versions_by_id[legacy_source["id"]]["publication_state"] == "active"
+    assert versions_by_id[legacy_source["id"]]["next_actions"] == [
+        "get_resume_compilation",
+        "update_published_resume",
+        "revoke_published_resume",
+        "create_application_draft",
+    ]
+    legacy_history = await tools.get_resume_publication_history(graph_id=approved["graph_id"])
+    legacy_active = {item["compilation_id"]: item for item in legacy_history["active_publications"]}
+    assert legacy_active[legacy_source["id"]]["published_at"] is None
+    assert legacy_active[legacy_source["id"]]["public_url"].endswith("/" + ("a" * 32))
+    with pytest.raises(CareerGraphStateError, match="already owns an active"):
+        await tools.publish_resume_compilation(
+            compilation_id=legacy_source["id"],
+            confirmation=f"PUBLISH {legacy_source['id']}",
+        )
+
+    updated = await tools.update_published_resume(
+        source_compilation_id=legacy_source["id"],
+        target_compilation_id=target["id"],
+        confirmation=(f"UPDATE PUBLIC RESUME {legacy_source['id']} TO {target['id']}"),
+    )
+    assert updated["link_preserved"] is True
+    assert updated["public_url"].endswith("/" + ("a" * 32))
+
+    revoked = await tools.revoke_published_resume(
+        compilation_id=legacy_revoke["id"],
+        confirmation=f"REVOKE PUBLIC RESUME {legacy_revoke['id']}",
+    )
+    assert revoked["status"] == "approved"
+    assert revoked["publication_active"] is False
+
+
+async def test_publication_update_rejects_invalid_version_relationships() -> None:
+    first_graph = await _approved_graph()
+    source = await tools.compile_resume_for_jd(
+        graph_id=first_graph["graph_id"],
+        jd_text="Backend engineer",
+    )
+    await tools.approve_resume_compilation(
+        compilation_id=source["id"],
+        confirmation=f"APPROVE RESUME {source['id']}",
+    )
+    await tools.publish_resume_compilation(
+        compilation_id=source["id"],
+        confirmation=f"PUBLISH {source['id']}",
+    )
+
+    second_proposal = await tools.propose_career_graph_changes(
+        operations=_operations(),
+        summary="Second graph",
+        graph_label="Second Career Graph",
+    )
+    second_graph = await tools.approve_career_graph_change(
+        change_set_id=second_proposal["id"],
+        confirmation=f"APPROVE CAREER CHANGE {second_proposal['id']}",
+    )
+    other_graph_target = await tools.compile_resume_for_jd(
+        graph_id=second_graph["graph_id"],
+        jd_text="Backend engineer v2",
+    )
+    await tools.approve_resume_compilation(
+        compilation_id=other_graph_target["id"],
+        confirmation=f"APPROVE RESUME {other_graph_target['id']}",
+    )
+
+    with pytest.raises(CareerGraphStateError, match="same Career Graph"):
+        await tools.update_published_resume(
+            source_compilation_id=source["id"],
+            target_compilation_id=other_graph_target["id"],
+            confirmation=(f"UPDATE PUBLIC RESUME {source['id']} TO {other_graph_target['id']}"),
+        )
+    assert len(tools.FAKE_STORE.publication_events) == 1
 
 
 async def test_existing_resume_import_is_pending_and_source_provenanced() -> None:

@@ -130,3 +130,18 @@ describe("resumes.ts — Career Graph compilation immutability", () => {
     expect(SRC).toContain("create and approve a new compilation");
   });
 });
+
+describe("resumes.ts — Career Graph publication audit boundary", () => {
+  it("blocks both generic publish and revoke paths for compiled artifacts", () => {
+    expect(SRC).toContain("Career Graph compiled résumés must use the review-gated");
+    expect(
+      SRC.match(/await rejectUntrackedCareerGraphPublication\(id, userId\);/g)?.length,
+    ).toBe(2);
+  });
+
+  it("uses an owner-scoped compilation lookup", () => {
+    expect(SRC).toMatch(
+      /FROM career_graph_compilations\s+WHERE resume_id = \$1 AND user_id = \$2\s+LIMIT 1/,
+    );
+  });
+});

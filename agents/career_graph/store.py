@@ -1331,23 +1331,41 @@ async def publish_compilation(
         raise CareerGraphStateError(f"explicit confirmation required: {expected}")
 
     token = secrets.token_hex(16)
+    token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT resume_id, status
-                  FROM career_graph_compilations
-                 WHERE id = %s AND user_id = %s
-                 FOR UPDATE
+                SELECT compilation.resume_id, compilation.status,
+                       compilation.graph_id, resume.publish_token
+                  FROM career_graph_compilations compilation
+                  JOIN resumes resume ON resume.id = compilation.resume_id
+                 WHERE compilation.id = %s
+                   AND compilation.user_id = %s
+                 FOR UPDATE OF compilation, resume
                 """,
                 (str(compilation_id), str(user_id)),
             )
             row = await cur.fetchone()
             if not row:
                 raise CareerGraphNotFoundError("compilation not found")
-            resume_id, status = row
+            resume_id, status, graph_id, active_token = row
             if status != "approved":
                 raise CareerGraphStateError("only an approved compilation can be published")
+            if active_token:
+                raise CareerGraphStateError(
+                    "compilation already owns an active public résumé link; "
+                    "use the update or revoke workflow"
+                )
+            await cur.execute(
+                """
+                SELECT set_config(
+                    'relay.career_graph_publication_writer',
+                    'codex_mcp_publish',
+                    true
+                )
+                """
+            )
             await cur.execute(
                 """
                 UPDATE resumes
@@ -1364,13 +1382,342 @@ async def publish_compilation(
                 """,
                 (str(compilation_id),),
             )
+            await cur.execute(
+                """
+                INSERT INTO career_graph_publication_events (
+                    user_id, graph_id, event_kind, event_source,
+                    from_compilation_id, to_compilation_id,
+                    public_token_digest
+                ) VALUES (
+                    %s, %s, 'published', 'codex_mcp_explicit_confirmation',
+                    NULL, %s, %s
+                )
+                RETURNING id, occurred_at
+                """,
+                (
+                    str(user_id),
+                    str(graph_id),
+                    str(compilation_id),
+                    token_digest,
+                ),
+            )
+            event = await cur.fetchone()
         await conn.commit()
+    if not event:
+        raise RuntimeError("failed to record Career Graph publication")
     return {
         "ok": True,
         "compilation_id": str(compilation_id),
         "resume_id": str(resume_id),
         "status": "published",
         "public_url": f"{public_base_url.rstrip('/')}/r/{token}",
+        "publication_active": True,
+        "publication_event": {
+            "id": str(event[0]),
+            "event_kind": "published",
+            "occurred_at": event[1].isoformat(),
+        },
+    }
+
+
+async def update_published_compilation(
+    user_id: UUID,
+    source_compilation_id: UUID,
+    target_compilation_id: UUID,
+    *,
+    confirmation: str,
+    public_base_url: str,
+) -> dict[str, Any]:
+    """Move one stable public URL to a new approved immutable compilation."""
+
+    expected = f"UPDATE PUBLIC RESUME {source_compilation_id} TO {target_compilation_id}"
+    if confirmation != expected:
+        raise CareerGraphStateError(f"explicit confirmation required: {expected}")
+    if source_compilation_id == target_compilation_id:
+        raise CareerGraphStateError("source and target compilations must be different")
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT compilation.id, compilation.graph_id,
+                       compilation.resume_id, compilation.status,
+                       resume.publish_token
+                  FROM career_graph_compilations compilation
+                  JOIN resumes resume ON resume.id = compilation.resume_id
+                 WHERE compilation.user_id = %s
+                   AND compilation.id IN (%s, %s)
+                 ORDER BY compilation.id
+                 FOR UPDATE OF compilation, resume
+                """,
+                (
+                    str(user_id),
+                    str(source_compilation_id),
+                    str(target_compilation_id),
+                ),
+            )
+            rows = await cur.fetchall()
+            by_id = {str(row[0]): row for row in rows}
+            source = by_id.get(str(source_compilation_id))
+            target = by_id.get(str(target_compilation_id))
+            if not source or not target:
+                raise CareerGraphNotFoundError("publication compilation not found")
+            if source[1] != target[1]:
+                raise CareerGraphStateError(
+                    "public résumé updates must stay within the same Career Graph"
+                )
+            if source[2] == target[2]:
+                raise CareerGraphStateError(
+                    "source and target must reference different immutable résumé artifacts"
+                )
+            if not source[4]:
+                raise CareerGraphStateError(
+                    "source compilation does not own an active public résumé link"
+                )
+            if target[3] != "approved" or target[4] is not None:
+                raise CareerGraphStateError(
+                    "target compilation must be approved and not already published"
+                )
+
+            token = source[4]
+            token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            await cur.execute(
+                """
+                SELECT set_config(
+                    'relay.career_graph_publication_writer',
+                    'codex_mcp_update',
+                    true
+                )
+                """
+            )
+            await cur.execute(
+                """
+                UPDATE resumes
+                   SET publish_token = NULL
+                 WHERE id = %s AND user_id = %s
+                """,
+                (str(source[2]), str(user_id)),
+            )
+            await cur.execute(
+                """
+                UPDATE resumes
+                   SET publish_token = %s, published_at = now()
+                 WHERE id = %s AND user_id = %s
+                """,
+                (token, str(target[2]), str(user_id)),
+            )
+            await cur.execute(
+                """
+                UPDATE career_graph_compilations
+                   SET status = 'published', published_at = now()
+                 WHERE id = %s AND user_id = %s
+                """,
+                (str(target_compilation_id), str(user_id)),
+            )
+            await cur.execute(
+                """
+                INSERT INTO career_graph_publication_events (
+                    user_id, graph_id, event_kind, event_source,
+                    from_compilation_id, to_compilation_id,
+                    public_token_digest
+                ) VALUES (
+                    %s, %s, 'updated', 'codex_mcp_explicit_confirmation',
+                    %s, %s, %s
+                )
+                RETURNING id, occurred_at
+                """,
+                (
+                    str(user_id),
+                    str(source[1]),
+                    str(source_compilation_id),
+                    str(target_compilation_id),
+                    token_digest,
+                ),
+            )
+            event = await cur.fetchone()
+        await conn.commit()
+    if not event:
+        raise RuntimeError("failed to record Career Graph publication update")
+    return {
+        "ok": True,
+        "source_compilation_id": str(source_compilation_id),
+        "target_compilation_id": str(target_compilation_id),
+        "resume_id": str(target[2]),
+        "status": "published",
+        "public_url": f"{public_base_url.rstrip('/')}/r/{token}",
+        "link_preserved": True,
+        "source_artifact_immutable": True,
+        "source_publication_active": False,
+        "target_publication_active": True,
+        "publication_event": {
+            "id": str(event[0]),
+            "event_kind": "updated",
+            "occurred_at": event[1].isoformat(),
+        },
+    }
+
+
+async def revoke_published_compilation(
+    user_id: UUID,
+    compilation_id: UUID,
+    *,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Revoke one active public link without deleting its immutable artifact."""
+
+    expected = f"REVOKE PUBLIC RESUME {compilation_id}"
+    if confirmation != expected:
+        raise CareerGraphStateError(f"explicit confirmation required: {expected}")
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT compilation.graph_id, compilation.resume_id,
+                       compilation.status, resume.publish_token
+                  FROM career_graph_compilations compilation
+                  JOIN resumes resume ON resume.id = compilation.resume_id
+                 WHERE compilation.id = %s
+                   AND compilation.user_id = %s
+                 FOR UPDATE OF compilation, resume
+                """,
+                (str(compilation_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError("publication compilation not found")
+            graph_id, resume_id, status, token = row
+            if not token:
+                raise CareerGraphStateError("compilation does not own an active public résumé link")
+            token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            await cur.execute(
+                """
+                SELECT set_config(
+                    'relay.career_graph_publication_writer',
+                    'codex_mcp_revoke',
+                    true
+                )
+                """
+            )
+            await cur.execute(
+                """
+                UPDATE resumes
+                   SET publish_token = NULL
+                 WHERE id = %s AND user_id = %s
+                """,
+                (str(resume_id), str(user_id)),
+            )
+            await cur.execute(
+                """
+                INSERT INTO career_graph_publication_events (
+                    user_id, graph_id, event_kind, event_source,
+                    from_compilation_id, to_compilation_id,
+                    public_token_digest
+                ) VALUES (
+                    %s, %s, 'revoked', 'codex_mcp_explicit_confirmation',
+                    %s, NULL, %s
+                )
+                RETURNING id, occurred_at
+                """,
+                (
+                    str(user_id),
+                    str(graph_id),
+                    str(compilation_id),
+                    token_digest,
+                ),
+            )
+            event = await cur.fetchone()
+        await conn.commit()
+    if not event:
+        raise RuntimeError("failed to record Career Graph publication revocation")
+    return {
+        "ok": True,
+        "compilation_id": str(compilation_id),
+        "resume_id": str(resume_id),
+        "status": status,
+        "publication_active": False,
+        "public_url": None,
+        "artifact_deleted": False,
+        "publication_event": {
+            "id": str(event[0]),
+            "event_kind": "revoked",
+            "occurred_at": event[1].isoformat(),
+        },
+    }
+
+
+async def get_publication_history(
+    user_id: UUID,
+    graph_id: UUID,
+    *,
+    limit: int = 51,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Read append-only public-link history and current active versions."""
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM career_graphs WHERE id = %s AND user_id = %s",
+                (str(graph_id), str(user_id)),
+            )
+            if not await cur.fetchone():
+                raise CareerGraphNotFoundError("Career Graph not found")
+            await cur.execute(
+                """
+                SELECT id, event_kind, event_source,
+                       from_compilation_id, to_compilation_id, occurred_at
+                  FROM career_graph_publication_events
+                 WHERE graph_id = %s AND user_id = %s
+                 ORDER BY occurred_at DESC, id DESC
+                 LIMIT %s OFFSET %s
+                """,
+                (str(graph_id), str(user_id), limit, offset),
+            )
+            event_rows = await cur.fetchall()
+            await cur.execute(
+                """
+                SELECT compilation.id, compilation.resume_id,
+                       revision.revision, resume.version,
+                       resume.publish_token, resume.published_at
+                  FROM career_graph_compilations compilation
+                  JOIN career_graph_revisions revision
+                    ON revision.id = compilation.graph_revision_id
+                  JOIN resumes resume ON resume.id = compilation.resume_id
+                 WHERE compilation.graph_id = %s
+                   AND compilation.user_id = %s
+                   AND resume.publish_token IS NOT NULL
+                 ORDER BY resume.published_at DESC, compilation.id DESC
+                 LIMIT 101
+                """,
+                (str(graph_id), str(user_id)),
+            )
+            active_rows = await cur.fetchall()
+    return {
+        "graph_id": str(graph_id),
+        "events": [
+            {
+                "id": str(row[0]),
+                "event_kind": row[1],
+                "event_source": row[2],
+                "from_compilation_id": str(row[3]) if row[3] else None,
+                "to_compilation_id": str(row[4]) if row[4] else None,
+                "occurred_at": row[5].isoformat(),
+            }
+            for row in event_rows
+        ],
+        "active_publications": [
+            {
+                "compilation_id": str(row[0]),
+                "resume_id": str(row[1]),
+                "graph_revision": int(row[2]),
+                "resume_version": int(row[3]),
+                "publish_token": row[4],
+                "published_at": row[5].isoformat() if row[5] else None,
+            }
+            for row in active_rows[:100]
+        ],
+        "active_publications_truncated": len(active_rows) > 100,
     }
 
 
