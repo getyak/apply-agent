@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
 from agents.career_graph.store import CareerGraphStateError
@@ -84,6 +86,126 @@ async def test_evidence_report_is_owner_scoped_and_explains_ranking_policy() -> 
     assert report["linked_application_count"] == 0
     assert report["ranking_policy"]["jd_relevance_precedes_outcome_signal"] is True
     assert report["ranking_policy"]["rejection_penalty"] == 0
+
+
+async def test_inventory_restores_versions_and_outcomes_without_capabilities() -> None:
+    approved = await _approved_graph()
+    draft = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Python platform engineer " + ("x" * 300),
+    )
+    assert "_jd_text" not in draft
+    published = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="PostgreSQL backend engineer",
+        ats_profile="strict",
+    )
+    compilation_id = published["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    application = await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example",
+        role_title="Backend Engineer",
+        job_url="https://jobs.example.test/backend",
+    )
+    await tools.publish_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"PUBLISH {compilation_id}",
+    )
+    await tools.record_application_progress(
+        application_id=application["application_id"],
+        status="submitted",
+        evidence_source="browser_confirmation",
+        submitted_via="client_extension",
+    )
+    await tools.record_application_progress(
+        application_id=application["application_id"],
+        status="interview",
+        evidence_source="recruiter_message",
+        interview_date="2026-08-15",
+    )
+
+    first_page = await tools.list_resume_compilations(
+        graph_id=approved["graph_id"],
+        limit=1,
+    )
+    assert first_page["page"] == {
+        "limit": 1,
+        "offset": 0,
+        "returned": 1,
+        "has_more": True,
+        "next_offset": 1,
+    }
+    assert first_page["contains_resume_content"] is False
+    assert first_page["contains_download_capabilities"] is False
+    assert first_page["jd_preview_is_untrusted_source_text"] is True
+    second_page = await tools.list_resume_compilations(
+        graph_id=approved["graph_id"],
+        limit=1,
+        offset=1,
+    )
+    assert second_page["page"]["has_more"] is False
+    assert second_page["page"]["next_offset"] is None
+    assert [item["id"] for item in second_page["compilations"]] == [draft["id"]]
+    assert len(second_page["compilations"][0]["jd_preview"]) == 240
+    assert second_page["compilations"][0]["jd_preview_truncated"] is True
+
+    published_versions = await tools.list_resume_compilations(status="published")
+    assert len(published_versions["compilations"]) == 1
+    version = published_versions["compilations"][0]
+    assert version["id"] == compilation_id
+    assert version["graph_revision"] == 1
+    assert version["quality_summary"]["ats_ready"] is True
+    assert version["tracked_application_count"] == 1
+    assert version["public_url"].startswith("http://localhost:3000/r/")
+    assert version["next_actions"] == [
+        "get_resume_compilation",
+        "create_application_draft",
+    ]
+    assert "publish_token" not in version
+    assert "resume" not in version
+    assert "download_code" not in version
+
+    applications = await tools.list_tracked_applications(
+        graph_id=approved["graph_id"],
+        status="interview",
+    )
+    assert applications["server_side_submission"] is False
+    assert applications["contains_form_answers"] is False
+    assert applications["contains_download_capabilities"] is False
+    assert len(applications["applications"]) == 1
+    tracked = applications["applications"][0]
+    assert tracked["application_id"] == application["application_id"]
+    assert tracked["compilation_id"] == compilation_id
+    assert tracked["job"]["role_title"] == "Backend Engineer"
+    assert tracked["history_event_count"] == 3
+    assert tracked["latest_history_event"]["event_source"] == ("codex_mcp_recruiter_message")
+    assert tracked["latest_history_event"]["to_status"] == "interview"
+    assert "form_answers" not in tracked
+    assert "resume" not in tracked
+    assert "download_code" not in tracked
+
+    other_user = UUID("00000000-0000-4000-8000-000000000777")
+    assert await tools.FAKE_STORE.list_compilations(other_user) == []
+    assert await tools.FAKE_STORE.list_tracked_applications(other_user) == []
+    drafts = await tools.list_resume_compilations(status="draft")
+    assert [item["id"] for item in drafts["compilations"]] == [draft["id"]]
+
+
+async def test_inventory_rejects_invalid_filters_before_store_access() -> None:
+    with pytest.raises(CareerGraphStateError, match="compilation status"):
+        await tools.list_resume_compilations(status="submitted")
+    with pytest.raises(CareerGraphStateError, match="application status"):
+        await tools.list_tracked_applications(status="published")
+    with pytest.raises(CareerGraphStateError, match="limit"):
+        await tools.list_resume_compilations(limit=101)
+    with pytest.raises(CareerGraphStateError, match="offset"):
+        await tools.list_tracked_applications(offset=-1)
+    assert tools.FAKE_STORE.compilations == {}
+    assert tools.FAKE_STORE.application_drafts == {}
 
 
 async def test_existing_resume_import_is_pending_and_source_provenanced() -> None:

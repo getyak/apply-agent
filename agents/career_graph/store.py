@@ -205,6 +205,231 @@ async def list_source_resumes(user_id: UUID) -> list[dict[str, Any]]:
     ]
 
 
+def _compilation_quality_summary(value: Any) -> dict[str, Any]:
+    report = _coerce_json(value)
+    if not isinstance(report, dict):
+        return {}
+    ats = report.get("ats")
+    length = report.get("length")
+    coverage = report.get("jd_coverage")
+    selection = report.get("selection")
+    warnings = report.get("warnings")
+    return {
+        "quality_status": report.get("quality_status"),
+        "warning_count": len(warnings) if isinstance(warnings, list) else 0,
+        "ats_ready": ats.get("ready") if isinstance(ats, dict) else None,
+        "length_budget": length.get("budget") if isinstance(length, dict) else None,
+        "target_pages": length.get("target_pages") if isinstance(length, dict) else None,
+        "estimated_pages": (length.get("estimated_pages") if isinstance(length, dict) else None),
+        "within_estimated_budget": (
+            length.get("within_budget") if isinstance(length, dict) else None
+        ),
+        "jd_coverage_ratio": (
+            coverage.get("coverage_ratio") if isinstance(coverage, dict) else None
+        ),
+        "selected_node_count": (
+            selection.get("selected_node_count") if isinstance(selection, dict) else None
+        ),
+        "omitted_node_count": (
+            selection.get("omitted_node_count") if isinstance(selection, dict) else None
+        ),
+    }
+
+
+def _text_preview(value: str, *, limit: int = 240) -> tuple[str, bool]:
+    normalized = " ".join(value.split())
+    return normalized[:limit], len(normalized) > limit
+
+
+async def list_compilations(
+    user_id: UUID,
+    *,
+    graph_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = 21,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List compact owner-scoped compilation versions for session recovery."""
+
+    graph_filter = str(graph_id) if graph_id else None
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT c.id, c.graph_id, c.graph_revision_id, revision.revision,
+                       c.job_id, c.jd_fingerprint, c.jd_text, c.resume_id,
+                       resume.version, c.status, c.compiler_config,
+                       c.quality_report, resume.publish_token, c.created_at,
+                       c.approved_at, c.published_at, job.company,
+                       job.role_title, job.url,
+                       (
+                           SELECT count(*)::int
+                             FROM application_drafts application
+                            WHERE application.user_id = c.user_id
+                              AND application.resume_version_id = c.resume_id
+                       ) AS tracked_application_count
+                  FROM career_graph_compilations c
+                  JOIN career_graph_revisions revision
+                    ON revision.id = c.graph_revision_id
+                  JOIN resumes resume ON resume.id = c.resume_id
+                  LEFT JOIN jobs job ON job.id = c.job_id
+                 WHERE c.user_id = %s
+                   AND (%s::uuid IS NULL OR c.graph_id = %s::uuid)
+                   AND (%s::text IS NULL OR c.status = %s::text)
+                 ORDER BY c.created_at DESC, c.id DESC
+                 LIMIT %s OFFSET %s
+                """,
+                (
+                    str(user_id),
+                    graph_filter,
+                    graph_filter,
+                    status,
+                    status,
+                    limit,
+                    offset,
+                ),
+            )
+            rows = await cur.fetchall()
+    return [
+        {
+            "id": str(row[0]),
+            "graph_id": str(row[1]),
+            "graph_revision_id": str(row[2]),
+            "graph_revision": int(row[3]),
+            "job_id": str(row[4]) if row[4] else None,
+            "jd_fingerprint": row[5],
+            "jd_preview": _text_preview(row[6])[0],
+            "jd_preview_truncated": _text_preview(row[6])[1],
+            "resume_id": str(row[7]),
+            "resume_version": int(row[8]),
+            "status": row[9],
+            "compiler_config": _coerce_json(row[10]),
+            "quality_summary": _compilation_quality_summary(row[11]),
+            "publish_token": row[12],
+            "created_at": row[13].isoformat(),
+            "approved_at": row[14].isoformat() if row[14] else None,
+            "published_at": row[15].isoformat() if row[15] else None,
+            "job": (
+                {
+                    "company": row[16],
+                    "role_title": row[17],
+                    "url": row[18],
+                }
+                if row[16] is not None or row[17] is not None or row[18] is not None
+                else None
+            ),
+            "tracked_application_count": int(row[19]),
+        }
+        for row in rows
+    ]
+
+
+async def list_tracked_applications(
+    user_id: UUID,
+    *,
+    graph_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = 21,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List Career Graph applications without form answers or file capabilities."""
+
+    graph_filter = str(graph_id) if graph_id else None
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT application.id, compilation.id, compilation.graph_id,
+                       compilation.graph_revision_id, revision.revision,
+                       compilation.jd_fingerprint, application.resume_version_id,
+                       resume.version, application.status, application.outcome,
+                       application.submitted_at, application.submitted_via,
+                       application.interview_date, application.created_at,
+                       application.updated_at, job.id, job.company, job.role_title,
+                       job.url, COALESCE(history.event_count, 0),
+                       latest.event_kind, latest.event_source, latest.changed_fields,
+                       latest.to_status, latest.occurred_at
+                  FROM application_drafts application
+                  JOIN career_graph_compilations compilation
+                    ON compilation.user_id = application.user_id
+                   AND compilation.resume_id = application.resume_version_id
+                  JOIN career_graph_revisions revision
+                    ON revision.id = compilation.graph_revision_id
+                  JOIN resumes resume ON resume.id = application.resume_version_id
+                  JOIN jobs job ON job.id = application.job_id
+                  LEFT JOIN LATERAL (
+                      SELECT count(*)::int AS event_count
+                        FROM application_outcome_events event
+                       WHERE event.user_id = application.user_id
+                         AND event.application_id = application.id
+                  ) history ON true
+                  LEFT JOIN LATERAL (
+                      SELECT event_kind, event_source, changed_fields,
+                             to_status, occurred_at
+                        FROM application_outcome_events event
+                       WHERE event.user_id = application.user_id
+                         AND event.application_id = application.id
+                       ORDER BY occurred_at DESC, id DESC
+                       LIMIT 1
+                  ) latest ON true
+                 WHERE application.user_id = %s
+                   AND (%s::uuid IS NULL OR compilation.graph_id = %s::uuid)
+                   AND (%s::text IS NULL OR application.status = %s::text)
+                 ORDER BY application.updated_at DESC, application.id DESC
+                 LIMIT %s OFFSET %s
+                """,
+                (
+                    str(user_id),
+                    graph_filter,
+                    graph_filter,
+                    status,
+                    status,
+                    limit,
+                    offset,
+                ),
+            )
+            rows = await cur.fetchall()
+    return [
+        {
+            "application_id": str(row[0]),
+            "compilation_id": str(row[1]),
+            "graph_id": str(row[2]),
+            "graph_revision_id": str(row[3]),
+            "graph_revision": int(row[4]),
+            "jd_fingerprint": row[5],
+            "resume_id": str(row[6]),
+            "resume_version": int(row[7]),
+            "status": row[8],
+            "outcome": row[9],
+            "submitted_at": row[10].isoformat() if row[10] else None,
+            "submitted_via": row[11],
+            "interview_date": row[12].isoformat() if row[12] else None,
+            "created_at": row[13].isoformat(),
+            "updated_at": row[14].isoformat(),
+            "job": {
+                "id": str(row[15]),
+                "company": row[16],
+                "role_title": row[17],
+                "url": row[18],
+            },
+            "history_event_count": int(row[19]),
+            "latest_history_event": (
+                {
+                    "event_kind": row[20],
+                    "event_source": row[21],
+                    "changed_fields": list(row[22] or []),
+                    "to_status": row[23],
+                    "occurred_at": row[24].isoformat(),
+                }
+                if row[20]
+                else None
+            ),
+            "server_side_submission": False,
+        }
+        for row in rows
+    ]
+
+
 def _unwrap_resume_content(content: Any) -> dict[str, Any]:
     value = _coerce_json(content)
     if not isinstance(value, dict):

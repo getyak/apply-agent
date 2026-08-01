@@ -23,7 +23,9 @@ from agents.mcp_relay.oauth import ALL_SCOPES, PostgresOAuthProvider
 
 INSTRUCTIONS = (
     "Career Graph is the source of truth; résumés are compiled artifacts. Never invent "
-    "experience. Propose graph changes first and show the diff; approval tools require an "
+    "experience. At the start of a resumed workflow, list existing compilation versions and "
+    "tracked applications instead of asking the user to recover opaque IDs. Propose graph "
+    "changes first and show the diff; approval tools require an "
     "exact phrase typed by the user. Compile for one JD, show provenance, then request a "
     "separate résumé approval. Always show the persisted compiler config and quality report; "
     "artifact locale changes structural labels only and never translates source facts. Treat "
@@ -150,6 +152,66 @@ async def list_career_graphs() -> dict[str, Any]:
 )
 async def list_source_resumes() -> dict[str, Any]:
     return await tools.list_source_resumes()
+
+
+@mcp.tool(
+    title="List résumé compilation versions",
+    description=(
+        "Discover compact owner-scoped Career Graph compilation versions from prior Codex "
+        "sessions. Returns lifecycle, graph revision, a bounded untrusted-source JD preview, "
+        "compiler/quality summary, publication URL, and tracked-application count, but no "
+        "résumé body or download capability."
+    ),
+    annotations=READ_ONLY,
+)
+async def list_resume_compilations(
+    graph_id: str | None = None,
+    status: Literal["draft", "approved", "rejected", "published"] | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    return await tools.list_resume_compilations(
+        graph_id=graph_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@mcp.tool(
+    title="List tracked Career Graph applications",
+    description=(
+        "Discover owner-scoped applications from prior Codex sessions so an observed outcome "
+        "can be attributed to the exact compilation and graph revision. Returns current "
+        "projection plus the latest append-only history event, but no form answers, résumé "
+        "body, or download capability."
+    ),
+    annotations=READ_ONLY,
+)
+async def list_tracked_applications(
+    graph_id: str | None = None,
+    status: Literal[
+        "draft",
+        "review",
+        "submitted",
+        "interview",
+        "rejected",
+        "offer",
+        "withdrawn",
+        "ghosted",
+        "accepted",
+        "closed",
+    ]
+    | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    return await tools.list_tracked_applications(
+        graph_id=graph_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @mcp.tool(

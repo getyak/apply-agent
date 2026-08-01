@@ -22,6 +22,8 @@ from agents.career_graph.store import (
     CareerGraphConflictError,
     CareerGraphNotFoundError,
     CareerGraphStateError,
+    _compilation_quality_summary,
+    _text_preview,
 )
 
 
@@ -110,6 +112,131 @@ class InMemoryCareerGraphStore:
             for graph in self.graphs.values()
             if graph["user_id"] == str(user_id)
         ]
+
+    async def list_compilations(
+        self,
+        user_id: UUID,
+        *,
+        graph_id: UUID | None = None,
+        status: str | None = None,
+        limit: int = 21,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for compilation in sorted(
+            self.compilations.values(),
+            key=lambda item: item["created_at"],
+            reverse=True,
+        ):
+            if compilation["user_id"] != str(user_id):
+                continue
+            if graph_id is not None and compilation["graph_id"] != str(graph_id):
+                continue
+            if status is not None and compilation["status"] != status:
+                continue
+            applications = [
+                item
+                for item in self.application_drafts.values()
+                if item["user_id"] == str(user_id) and item["compilation_id"] == compilation["id"]
+            ]
+            application = applications[0] if applications else None
+            rows.append(
+                {
+                    "id": compilation["id"],
+                    "graph_id": compilation["graph_id"],
+                    "graph_revision_id": compilation["graph_revision_id"],
+                    "graph_revision": compilation["graph_revision"],
+                    "job_id": application["job_id"] if application else None,
+                    "jd_fingerprint": compilation["jd_fingerprint"],
+                    "jd_preview": _text_preview(compilation["_jd_text"])[0],
+                    "jd_preview_truncated": _text_preview(compilation["_jd_text"])[1],
+                    "resume_id": compilation["resume_id"],
+                    "resume_version": compilation["resume_version"],
+                    "status": compilation["status"],
+                    "compiler_config": compilation["compiler_config"],
+                    "quality_summary": _compilation_quality_summary(compilation["quality_report"]),
+                    "publish_token": compilation["publish_token"],
+                    "created_at": compilation["created_at"],
+                    "approved_at": compilation["approved_at"],
+                    "published_at": compilation["published_at"],
+                    "job": (
+                        {
+                            "company": application["company"],
+                            "role_title": application["role_title"],
+                            "url": application["job_url"],
+                        }
+                        if application
+                        else None
+                    ),
+                    "tracked_application_count": len(applications),
+                }
+            )
+        return rows[offset : offset + limit]
+
+    async def list_tracked_applications(
+        self,
+        user_id: UUID,
+        *,
+        graph_id: UUID | None = None,
+        status: str | None = None,
+        limit: int = 21,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for application in sorted(
+            self.application_drafts.values(),
+            key=lambda item: item["updated_at"],
+            reverse=True,
+        ):
+            if application["user_id"] != str(user_id):
+                continue
+            compilation = self.compilations.get(application["compilation_id"])
+            if not compilation:
+                continue
+            if graph_id is not None and compilation["graph_id"] != str(graph_id):
+                continue
+            if status is not None and application["status"] != status:
+                continue
+            latest = application["history"][-1] if application["history"] else None
+            rows.append(
+                {
+                    "application_id": application["id"],
+                    "compilation_id": compilation["id"],
+                    "graph_id": compilation["graph_id"],
+                    "graph_revision_id": compilation["graph_revision_id"],
+                    "graph_revision": compilation["graph_revision"],
+                    "jd_fingerprint": compilation["jd_fingerprint"],
+                    "resume_id": compilation["resume_id"],
+                    "resume_version": compilation["resume_version"],
+                    "status": application["status"],
+                    "outcome": application["outcome"],
+                    "submitted_at": application["submitted_at"],
+                    "submitted_via": application["submitted_via"],
+                    "interview_date": application["interview_date"],
+                    "created_at": application["created_at"],
+                    "updated_at": application["updated_at"],
+                    "job": {
+                        "id": application["job_id"],
+                        "company": application["company"],
+                        "role_title": application["role_title"],
+                        "url": application["job_url"],
+                    },
+                    "history_event_count": len(application["history"]),
+                    "latest_history_event": (
+                        {
+                            "event_kind": latest["event_kind"],
+                            "event_source": latest["event_source"],
+                            "changed_fields": latest["changed_fields"],
+                            "to_status": latest["to_status"],
+                            "occurred_at": latest["occurred_at"],
+                        }
+                        if latest
+                        else None
+                    ),
+                    "server_side_submission": False,
+                }
+            )
+        return rows[offset : offset + limit]
 
     async def propose_changes(
         self,
@@ -275,6 +402,7 @@ class InMemoryCareerGraphStore:
             "resume_id": resume_id,
             "resume_version": len(self.compilations) + 1,
             "jd_fingerprint": fingerprint,
+            "_jd_text": jd_text,
             **compiled,
             "publish_token": None,
             "created_at": _now(),
@@ -282,9 +410,11 @@ class InMemoryCareerGraphStore:
             "published_at": None,
         }
         self.compilations[compilation_id] = compilation
-        return {key: value for key, value in compilation.items() if key != "user_id"} | {
-            "requires_human_approval": True
-        }
+        return {
+            key: value
+            for key, value in compilation.items()
+            if key != "user_id" and not key.startswith("_")
+        } | {"requires_human_approval": True}
 
     async def get_evidence_outcome_report(
         self,
@@ -335,7 +465,11 @@ class InMemoryCareerGraphStore:
         compilation = self.compilations.get(str(compilation_id))
         if not compilation or compilation["user_id"] != str(user_id):
             return None
-        return {key: value for key, value in compilation.items() if key != "user_id"}
+        return {
+            key: value
+            for key, value in compilation.items()
+            if key != "user_id" and not key.startswith("_")
+        }
 
     async def approve_compilation(self, user_id: UUID, compilation_id: UUID) -> dict[str, Any]:
         compilation = self._owned_compilation(user_id, compilation_id)
@@ -510,6 +644,8 @@ class InMemoryCareerGraphStore:
                 "submitted_at": None,
                 "submitted_via": None,
                 "interview_date": None,
+                "created_at": _now(),
+                "updated_at": _now(),
                 "history": [
                     {
                         "event_kind": "created",
@@ -627,6 +763,7 @@ class InMemoryCareerGraphStore:
 
         event = None
         if changed_fields:
+            application["updated_at"] = _now()
             event = {
                 "event_kind": "changed",
                 "event_source": f"codex_mcp_{evidence_source}",
@@ -638,7 +775,7 @@ class InMemoryCareerGraphStore:
                 "submitted_at": application.get("submitted_at"),
                 "submitted_via": application.get("submitted_via"),
                 "interview_date": application.get("interview_date"),
-                "occurred_at": _now(),
+                "occurred_at": application["updated_at"],
             }
             application["history"].append(event)
         return {

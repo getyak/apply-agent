@@ -121,6 +121,14 @@ MCP 使用当前 Python SDK 的 `FastMCP` 和 typed structured output，并为�
 `RELAY_USER_ID`；远程模式只信任经过 bearer middleware 验证的 OAuth
 `subject`，并把它解析为 Relay user UUID。模型参数无法切换 owner。
 
+真实使用不能依赖上一段对话保存 UUID。`list_resume_compilations` 和
+`list_tracked_applications` 提供 owner-scoped、分页且可按 graph/status 过滤的
+跨会话恢复入口：前者返回 graph revision、compiler/quality 摘要、发布状态和
+application 数量，并用最长 240 字符、明确标记为 untrusted source text 的 JD
+preview 帮助辨认无 job 绑定的 draft；后者返回 job、当前状态和最新 append-only
+history event。两个工具都不返回 résumé 正文、表单答案、下载码或文件
+capability，发现既有版本也不会改变任何状态。
+
 远程授权由 Python FastMCP 提供 OAuth 协议端点、动态客户端注册、PKCE 和令牌
 校验；Relay Web/Hono 继续负责用户登录与 consent。两层只通过共享 PostgreSQL
 交换短期状态：
@@ -237,6 +245,7 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
 | 人工确认闸门 | change / compilation / publish 独立确认 | ✅ |
 | Codex 登录 | ChatGPT 登录态 → skill → live MCP → PG 多轮验证 | ✅ Codex 侧 |
 | Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
+| 跨 Codex 会话恢复 | 只读 compilation/application inventory；分页、过滤且不返回 capability | ✅ v1 |
 | 简历公开发布 | approved compilation → `/r/<token>` | ✅ |
 | 一/两页文件导出 | compiler profile → A4 PDF/DOCX；PDF 返回实测页数审计 | ✅ v1 |
 | 批准前真实文件审阅 | draft compilation → 短期 PDF/DOCX review grant → 页面级检查 | ✅ v1 |
@@ -338,6 +347,16 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
   `record_application_progress` 写入 recruiter-message interview，再读取 evidence
   report：返回 append-only 事件、Wilson 区间和非因果警告；Career Graph revision
   与事实原文未变化，也没有发布、打开招聘站或提交。
+- 跨会话 inventory 在独立的 001→026 PostgreSQL 数据库中创建两个 compilation
+  版本和一份进入 interview 的 application：graph/status 过滤、limit/offset
+  分页、publication URL 恢复、application→compilation 关联、三条历史事件及最新
+  recruiter-message 事件均通过；另一 owner 查询为空，结果不含 résumé 正文、
+  form answers、publish token、下载码或 artifact capability。MCP/工具回归
+  21/21 通过。随后本机 ChatGPT 登录态的 Codex CLI 0.146.0 在 ephemeral、
+  read-only 新会话中只调用两个 inventory 工具，独立确认 2 个 draft/published
+  版本、1 个 interview application、最新 recruiter-message 事件以及
+  `server_side_submission=false`。另一次真实 PG 映射回归确认无 job 的长 JD
+  preview 严格截为 240 字符且不会导致后续列错位；所有隔离数据库均已删除。
 - 2026-08-01 使用 Playwright 对
   [Greenhouse / Genius AI](https://job-boards.greenhouse.io/glossgenius/jobs/6681936003)、
   [Lever / Until](https://jobs.lever.co/until/8c0ae3cf-6bb0-44de-b054-c3acba5a2926/apply)

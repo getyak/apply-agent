@@ -44,6 +44,21 @@ FAKE_SOURCE_RESUME = {
     "skills": [{"name": "PostgreSQL"}, {"name": "Python"}],
 }
 FAKE_STORE = InMemoryCareerGraphStore()
+COMPILATION_STATUSES = frozenset({"draft", "approved", "rejected", "published"})
+APPLICATION_STATUSES = frozenset(
+    {
+        "draft",
+        "review",
+        "submitted",
+        "interview",
+        "rejected",
+        "offer",
+        "withdrawn",
+        "ghosted",
+        "accepted",
+        "closed",
+    }
+)
 
 
 def fake_mode() -> bool:
@@ -105,6 +120,31 @@ def _require_confirmation(actual: str, expected: str) -> None:
         raise CareerGraphStateError(
             f"human confirmation required. Ask the user to type exactly: {expected}"
         )
+
+
+def _validate_page(*, limit: int, offset: int) -> None:
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+        raise CareerGraphStateError("limit must be an integer from 1 to 100")
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise CareerGraphStateError("offset must be a non-negative integer")
+
+
+def _compilation_next_actions(status: str) -> list[str]:
+    return {
+        "draft": [
+            "get_resume_compilation",
+            "prepare_resume_artifact_review",
+        ],
+        "approved": [
+            "get_resume_compilation",
+            "publish_resume_compilation_or_create_application_draft",
+        ],
+        "rejected": ["compile_resume_for_jd"],
+        "published": [
+            "get_resume_compilation",
+            "create_application_draft",
+        ],
+    }.get(status, [])
 
 
 def _artifact_delivery_api_base_url() -> str:
@@ -229,6 +269,92 @@ async def list_source_resumes() -> dict[str, Any]:
         }
     return {
         "resumes": await pg_store.list_source_resumes(current_user_id()),
+    }
+
+
+async def list_resume_compilations(
+    *,
+    graph_id: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Recover immutable compilation versions without returning résumé bodies."""
+
+    _require_scope("career:read")
+    _validate_page(limit=limit, offset=offset)
+    if status is not None and status not in COMPILATION_STATUSES:
+        raise CareerGraphStateError("unsupported résumé compilation status")
+    rows = await _store_call(
+        "list_compilations",
+        current_user_id(),
+        graph_id=_uuid(graph_id, "graph_id") if graph_id else None,
+        status=status,
+        limit=limit + 1,
+        offset=offset,
+    )
+    has_more = len(rows) > limit
+    public_base_url = os.environ.get(
+        "RELAY_PUBLIC_BASE_URL",
+        "http://localhost:3000",
+    ).rstrip("/")
+    compilations: list[dict[str, Any]] = []
+    for row in rows[:limit]:
+        item = dict(row)
+        publish_token = item.pop("publish_token", None)
+        item["public_url"] = f"{public_base_url}/r/{publish_token}" if publish_token else None
+        item["next_actions"] = _compilation_next_actions(item["status"])
+        compilations.append(item)
+    return {
+        "compilations": compilations,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "returned": len(compilations),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        },
+        "contains_resume_content": False,
+        "contains_download_capabilities": False,
+        "jd_preview_is_untrusted_source_text": True,
+    }
+
+
+async def list_tracked_applications(
+    *,
+    graph_id: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Recover tracked Career Graph applications for later evidence updates."""
+
+    _require_scope("career:read")
+    _validate_page(limit=limit, offset=offset)
+    if status is not None and status not in APPLICATION_STATUSES:
+        raise CareerGraphStateError("unsupported tracked application status")
+    rows = await _store_call(
+        "list_tracked_applications",
+        current_user_id(),
+        graph_id=_uuid(graph_id, "graph_id") if graph_id else None,
+        status=status,
+        limit=limit + 1,
+        offset=offset,
+    )
+    has_more = len(rows) > limit
+    applications = rows[:limit]
+    return {
+        "applications": applications,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "returned": len(applications),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        },
+        "contains_form_answers": False,
+        "contains_download_capabilities": False,
+        "server_side_submission": False,
     }
 
 
