@@ -1,6 +1,6 @@
 import type { SupportedLocale } from "./locale";
 
-export const RESUME_ARTIFACT_RENDERER_VERSION = 1;
+export const RESUME_ARTIFACT_RENDERER_VERSION = 2;
 
 export const RESUME_ARTIFACT_AUDIT_HEADER_NAMES = [
   "x-relay-artifact-renderer-version",
@@ -42,6 +42,9 @@ export interface ResumeArtifactProfile {
     sectionSizePt: number;
     roleSizePt: number;
     bulletIndentMm: number;
+    sectionBeforeMm: number;
+    paragraphAfterMm: number;
+    bulletAfterMm: number;
   };
 }
 
@@ -49,7 +52,14 @@ const PROFILE_TOKENS: Record<
   ResumeLengthBudget,
   Pick<
     ResumeArtifactProfile["typography"],
-    "bodySizePt" | "bodyLineHeight" | "nameSizePt" | "sectionSizePt" | "roleSizePt"
+    | "bodySizePt"
+    | "bodyLineHeight"
+    | "nameSizePt"
+    | "sectionSizePt"
+    | "roleSizePt"
+    | "sectionBeforeMm"
+    | "paragraphAfterMm"
+    | "bulletAfterMm"
   >
 > = {
   one_page: {
@@ -58,13 +68,19 @@ const PROFILE_TOKENS: Record<
     nameSizePt: 20,
     sectionSizePt: 10.25,
     roleSizePt: 9.75,
+    sectionBeforeMm: 2.8,
+    paragraphAfterMm: 0.9,
+    bulletAfterMm: 0.45,
   },
   two_page: {
     bodySizePt: 10.5,
-    bodyLineHeight: 1.28,
+    bodyLineHeight: 1.2,
     nameSizePt: 21,
     sectionSizePt: 11,
     roleSizePt: 10.5,
+    sectionBeforeMm: 3.4,
+    paragraphAfterMm: 1,
+    bulletAfterMm: 0.55,
   },
 };
 

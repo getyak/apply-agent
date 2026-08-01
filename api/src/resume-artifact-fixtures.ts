@@ -5,6 +5,7 @@ export interface ResumeArtifactCalibrationCase {
   locale: "en" | "zh";
   lengthBudget: "one_page" | "two_page";
   expectedPages: 1 | 2;
+  officeTextSentinels: readonly string[];
   resume: JsonResume;
 }
 
@@ -397,6 +398,11 @@ export const RESUME_ARTIFACT_CALIBRATION_CASES: readonly ResumeArtifactCalibrati
       locale: "en",
       lengthBudget: "one_page",
       expectedPages: 1,
+      officeTextSentinels: [
+        "Avery Lin",
+        "Northstar Systems",
+        "Example Institute of Technology",
+      ],
       resume: EN_ONE_PAGE,
     },
     {
@@ -404,6 +410,11 @@ export const RESUME_ARTIFACT_CALIBRATION_CASES: readonly ResumeArtifactCalibrati
       locale: "en",
       lengthBudget: "two_page",
       expectedPages: 2,
+      officeTextSentinels: [
+        "Jordan Rivera",
+        "Orchard Software",
+        "Example Cloud Security Professional",
+      ],
       resume: EN_TWO_PAGE,
     },
     {
@@ -411,6 +422,7 @@ export const RESUME_ARTIFACT_CALIBRATION_CASES: readonly ResumeArtifactCalibrati
       locale: "zh",
       lengthBudget: "one_page",
       expectedPages: 1,
+      officeTextSentinels: ["林安然", "海港云", "示例理工大学"],
       resume: ZH_ONE_PAGE,
     },
     {
@@ -418,6 +430,7 @@ export const RESUME_ARTIFACT_CALIBRATION_CASES: readonly ResumeArtifactCalibrati
       locale: "zh",
       lengthBudget: "two_page",
       expectedPages: 2,
+      officeTextSentinels: ["周景明", "果园软件", "可靠性交付奖"],
       resume: ZH_TWO_PAGE,
     },
   ];

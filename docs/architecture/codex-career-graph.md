@@ -223,10 +223,11 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
 
 ## 7. 下一段必须完成的工作
 
-1. **真实 Office 分页兼容矩阵**：PDF 已完成 `en/zh × one/two_page` 全页回归；
-   DOCX 已通过 Pandoc 重建校验、文本无损提取和 macOS Office Quick Look 预览，
-   运行时仍诚实返回未知页数。后续需要在 Word/Pages/LibreOffice 中逐页建立兼容
-   矩阵，不能把字符估算或 DOCX 压缩包元数据冒充实际页数。
+1. **真实 Office 分页兼容矩阵**：PDF 与 LibreOffice DOCX 已完成
+   `en/zh × one/two_page` 全页回归；DOCX 另通过 Pandoc 重建校验、文本无损提取
+   和 macOS Office Quick Look 预览，运行时仍诚实返回未知页数。后续还需要在
+   Word/Pages 中逐页建立兼容矩阵，不能把字符估算或 DOCX 压缩包元数据冒充实际
+   页数。
 2. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
@@ -302,7 +303,7 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
   ats_profile=strict)`；随后独立读取 compilation，确认 profile version 1、
   `ready_for_human_review`、ATS ready、估算 1 页及 `source_only=true` 均已持久化。
   该验证只创建 draft，没有批准、发布或投递。
-- 2026-08-01 新增 renderer profile v1：A4、固定 12/14 mm 边距、单/双页独立
+- 2026-08-01 新增 renderer profile v2：A4、固定 12/14 mm 边距、单/双页独立
   字号密度、无表格/图标/远程资源的 ATS 样式；PDF 渲染禁用 JavaScript 和网络，
   原始 HTML、危险协议链接及远程图片都会变成被动内容。API 使用 PDF parser
   读取实际页数，并在 `x-relay-artifact-*` 响应头返回 renderer version、目标页数、
@@ -313,8 +314,16 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
   问题。DOCX reference assets 可由
   `scripts/build-resume-reference-docx.py --check` 确定性重建，输出经 Mammoth
   验证姓名、经历和项目无丢失，并把 Pandoc 私有 Symbol bullet 规范为标准
-  Unicode OOXML numbering。由于本机无 Word/LibreOffice，DOCX 页数未伪造，
-  API 和 skill 均要求用真实 Office renderer 打开后再批准交付格式。
+  Unicode OOXML numbering。API 运行时不内置 Office renderer，DOCX 页数不会
+  被伪造，API 和 skill 均要求用真实 Office renderer 打开后再批准交付格式。
+- LibreOffice 校准使用每次转换独立的用户 profile、HOME 与临时目录，避免并发
+  请求共享锁或机器级配置。CI 强制把四份 DOCX 重新渲染为 PDF，验证实际页数分别
+  为 1/2/1/2，并从每份首部、中部和末部提取文本哨兵；校准产物保留 Office PDF，
+  供全页 PNG 视觉审阅。LibreOffice 不进入生产镜像，运行时 DOCX 审计继续返回
+  `pageCount=null`，不把 CI 渲染器的结论冒充用户本机 Word/Pages 的页数。
+  本地 QA 使用 Linux arm64 上的 LibreOffice 25.2.3.2 逐页审阅全部 6 页，并据此
+  修复了 Pandoc 版本间列表缩进差异、中文双页溢出和跨页孤立职位标题；另在
+  Ubuntu 24.04 amd64 / LibreOffice 24.2.7.2 上复核四案例仍为 1/2/1/2 页。
 - 生产 `deploy/Dockerfile.api` 已从 Alpine 切换到 Playwright 支持的 Debian Bun
   镜像，并固定安装 Pandoc、Chromium headless shell、Latin/CJK 字体；同一四案例
   校准脚本已在最终 Linux 容器内通过。API CI 现在安装相同渲染器后运行测试，

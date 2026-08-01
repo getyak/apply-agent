@@ -36,13 +36,13 @@ PROFILES = {
     },
     "two_page": {
         "body_size": 10.5,
-        "body_line": 1.28,
+        "body_line": 1.2,
         "name_size": 21,
         "section_size": 11,
         "role_size": 10.5,
-        "section_before_mm": 4.2,
-        "paragraph_after_mm": 1.3,
-        "bullet_after_mm": 0.8,
+        "section_before_mm": 3.4,
+        "paragraph_after_mm": 1.0,
+        "bullet_after_mm": 0.55,
     },
 }
 
@@ -55,6 +55,14 @@ def _set_font(style, *, size: float, bold: bool | None = None) -> None:
     style.font.color.rgb = RGBColor(0x11, 0x11, 0x11)
     r_pr = style.element.get_or_add_rPr()
     r_fonts = r_pr.get_or_add_rFonts()
+    # python-docx updates w:sz but can leave the template's w:szCs behind.
+    # Keep both explicit so complex-script runs do not silently inherit Word's
+    # larger default heading sizes.
+    complex_size = r_pr.find(qn("w:szCs"))
+    if complex_size is None:
+        complex_size = OxmlElement("w:szCs")
+        r_pr.append(complex_size)
+    complex_size.set(qn("w:val"), str(round(size * 2)))
     for attribute, value in (
         ("ascii", "Arial"),
         ("hAnsi", "Arial"),

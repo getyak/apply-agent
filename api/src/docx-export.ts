@@ -67,21 +67,34 @@ const DOCX_ARCHIVE_TIME = new Date("2025-01-01T00:00:00Z");
  * display only the indentation. Normalize the package to a standard Unicode
  * bullet while retaining native OOXML numbering semantics.
  */
-export function normalizeDocxListFormatting(docx: Uint8Array): Uint8Array {
+export function normalizeDocxFormatting(docx: Uint8Array): Uint8Array {
   const files = unzipSync(docx);
   const numbering = files["word/numbering.xml"];
-  if (!numbering) return docx;
+  const document = files["word/document.xml"];
+  if (!numbering || !document) return docx;
 
-  const normalized = strFromU8(numbering)
+  const normalizedNumbering = strFromU8(numbering)
     .replaceAll("\uf0b7", "•")
     .replaceAll('w:ascii="Symbol"', 'w:ascii="Arial"')
     .replaceAll('w:hAnsi="Symbol"', 'w:hAnsi="Arial"')
     .replaceAll('w:cs="Symbol"', 'w:cs="Arial"')
     .replace(
-      /<w:ind w:left="720" w:hanging="360"\s*\/>/g,
+      /<w:ind w:left="720" w:hanging="(?:360|480)"\s*\/>/g,
       '<w:ind w:left="272" w:hanging="125" />',
     );
-  files["word/numbering.xml"] = strToU8(normalized);
+  files["word/numbering.xml"] = strToU8(normalizedNumbering);
+
+  // Pandoc gives role dates the generic FirstParagraph style. Make only the
+  // FirstParagraph immediately after a Heading3 keep with its following
+  // paragraph, so a role title + date cannot be stranded at a page bottom.
+  // This stays local to each generated package instead of changing every
+  // FirstParagraph in the reference DOCX (summary/contact paragraphs should
+  // remain independently pageable).
+  const normalizedDocument = strFromU8(document).replace(
+    /(<w:pStyle w:val="Heading3"\s*\/>[\s\S]*?<\/w:p>\s*<w:p\b[^>]*>\s*<w:pPr>\s*<w:pStyle w:val="FirstParagraph"\s*\/>)/g,
+    "$1<w:keepNext />",
+  );
+  files["word/document.xml"] = strToU8(normalizedDocument);
   return zipSync(files, { level: 9, mtime: DOCX_ARCHIVE_TIME });
 }
 
@@ -91,7 +104,9 @@ export function normalizeDocxListFormatting(docx: Uint8Array): Uint8Array {
  * caller then returns 501 with a friendly message rather than 500-ing.
  * Never throws on a missing binary; only unexpected I/O errors propagate.
  *
- * Hard timeout: 20s. A wedged Pandoc never hangs the request.
+ * Hard timeout: 30s. This leaves headroom when Chromium and LibreOffice
+ * calibration share a constrained CI runner while still bounding a wedged
+ * Pandoc process.
  */
 export async function renderResumeDocx(
   markdown: string,
@@ -133,7 +148,7 @@ export async function renderResumeDocx(
     const timer = setTimeout(() => {
       p.kill("SIGKILL");
       finish(null);
-    }, 20_000);
+    }, 30_000);
 
     p.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     p.stderr.on("data", (chunk: Buffer) => {
@@ -145,7 +160,7 @@ export async function renderResumeDocx(
     p.on("exit", (code) => {
       if (code === 0 && chunks.length > 0) {
         finish({
-          bytes: normalizeDocxListFormatting(
+          bytes: normalizeDocxFormatting(
             new Uint8Array(Buffer.concat(chunks)),
           ),
           audit: {

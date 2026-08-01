@@ -1,7 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { strFromU8, unzipSync } from "fflate";
 import { extractRawText } from "mammoth";
+import { extractText, getDocumentProxy } from "unpdf";
 import { docxExportAvailable, renderResumeDocx } from "./docx-export";
+import {
+  convertDocxToPdf,
+  docxPreviewAvailable,
+} from "./docx-preview";
 import { RESUME_ARTIFACT_CALIBRATION_CASES } from "./resume-artifact-fixtures";
 import { resolveResumeArtifactProfile } from "./resume-artifact-profile";
 import { jsonResumeToMarkdown } from "./resume-markdown";
@@ -13,6 +18,7 @@ import {
 
 const hasPdfRenderer = await pdfRenderAvailable();
 const hasDocxRenderer = await docxExportAvailable();
+const hasOfficeRenderer = await docxPreviewAvailable();
 
 describe.if(hasPdfRenderer)("resume PDF calibration", () => {
   afterAll(async () => {
@@ -65,9 +71,13 @@ describe.if(hasDocxRenderer)("resume DOCX calibration", () => {
       expect(artifact!.audit.pageCount).toBeNull();
       const archive = unzipSync(artifact!.bytes);
       const numbering = strFromU8(archive["word/numbering.xml"]);
+      const document = strFromU8(archive["word/document.xml"]);
       expect(numbering).toContain('w:lvlText w:val="•"');
       expect(numbering).not.toContain('w:ascii="Symbol"');
       expect(numbering).toContain('w:left="272" w:hanging="125"');
+      expect(document).toContain(
+        '<w:pStyle w:val="FirstParagraph" /><w:keepNext />',
+      );
       const extracted = await extractRawText({
         buffer: Buffer.from(artifact!.bytes),
       });
@@ -78,3 +88,43 @@ describe.if(hasDocxRenderer)("resume DOCX calibration", () => {
     20_000,
   );
 });
+
+describe.if(hasDocxRenderer && hasOfficeRenderer)(
+  "resume DOCX LibreOffice calibration",
+  () => {
+    for (const calibrationCase of RESUME_ARTIFACT_CALIBRATION_CASES) {
+      test(
+        `${calibrationCase.id} preserves its page budget and text`,
+        async () => {
+          const markdown = jsonResumeToMarkdown(calibrationCase.resume, {
+            locale: calibrationCase.locale,
+          });
+          const docx = await renderResumeDocx(
+            markdown,
+            resolveResumeArtifactProfile({
+              profile_version: 1,
+              artifact_locale: calibrationCase.locale,
+              length_budget: calibrationCase.lengthBudget,
+              ats_profile: "strict",
+            }),
+          );
+          expect(docx).not.toBeNull();
+
+          const pdfBytes = await convertDocxToPdf(docx!.bytes);
+          expect(pdfBytes).not.toBeNull();
+          const pdf = await getDocumentProxy(new Uint8Array(pdfBytes!));
+          try {
+            expect(pdf.numPages).toBe(calibrationCase.expectedPages);
+            const { text } = await extractText(pdf, { mergePages: true });
+            for (const sentinel of calibrationCase.officeTextSentinels) {
+              expect(text).toContain(sentinel);
+            }
+          } finally {
+            await pdf.destroy();
+          }
+        },
+        45_000,
+      );
+    }
+  },
+);

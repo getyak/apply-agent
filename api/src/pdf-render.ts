@@ -14,7 +14,7 @@
 // exist". The export endpoint catches this and returns 501 + a friendly
 // "PDF requires a server upgrade" message.
 
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDocumentProxy } from "unpdf";
@@ -81,7 +81,6 @@ async function loadCss(): Promise<string> {
 
 function profileCss(profile: ResumeArtifactProfile): string {
   const type = profile.typography;
-  const isOnePage = profile.lengthBudget === "one_page";
   return [
     ":root{",
     `--artifact-margin-top:${profile.page.marginTopMm}mm;`,
@@ -94,9 +93,9 @@ function profileCss(profile: ResumeArtifactProfile): string {
     `--artifact-section-size:${type.sectionSizePt}pt;`,
     `--artifact-role-size:${type.roleSizePt}pt;`,
     `--artifact-bullet-indent:${type.bulletIndentMm}mm;`,
-    `--artifact-section-before:${isOnePage ? 2.8 : 4.2}mm;`,
-    `--artifact-paragraph-after:${isOnePage ? 0.9 : 1.3}mm;`,
-    `--artifact-bullet-after:${isOnePage ? 0.45 : 0.8}mm;`,
+    `--artifact-section-before:${type.sectionBeforeMm}mm;`,
+    `--artifact-paragraph-after:${type.paragraphAfterMm}mm;`,
+    `--artifact-bullet-after:${type.bulletAfterMm}mm;`,
     "}",
   ].join("");
 }
@@ -189,15 +188,16 @@ function buildPrintHtml(
 }
 
 /**
- * Probe whether Chromium is installed. Cheap — checks the executable path
- * exists, launches nothing. Used by the export endpoint to decide between
- * 200 (render) and 501 (graceful "PDF not available" message).
+ * Probe whether Chromium can actually launch. Playwright may install only its
+ * headless shell to save image space; in that configuration executablePath()
+ * can still point at the intentionally absent full browser even though a
+ * normal headless launch succeeds. Reuse the shared browser so a successful
+ * capability check adds no second process to the export request.
  */
 export async function pdfRenderAvailable(): Promise<boolean> {
   try {
-    const path = chromium.executablePath();
-    if (!path) return false;
-    await stat(path);
+    await getBrowser();
+    bumpIdleTimer();
     return true;
   } catch {
     return false;

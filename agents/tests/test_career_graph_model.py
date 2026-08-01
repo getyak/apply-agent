@@ -290,7 +290,7 @@ def test_one_page_profile_caps_sections_and_reports_omitted_evidence() -> None:
         "structural_labels_only_source_facts_unchanged"
     )
     assert compiled["quality_report"]["length"]["estimate_model_version"] == 2
-    assert compiled["quality_report"]["length"]["calibrated_artifact_renderer_version"] == 1
+    assert compiled["quality_report"]["length"]["calibrated_artifact_renderer_version"] == 2
     assert compiled["quality_report"]["length"]["estimate_only"] is True
     assert compiled["quality_report"]["length"]["requires_export_verification"] is True
     assert compiled["quality_report"]["selection"]["omitted_node_count"] > 0

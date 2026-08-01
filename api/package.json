@@ -9,6 +9,7 @@
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
     "calibrate:resume-artifacts": "bun run src/scripts/calibrate-resume-artifacts.ts",
+    "calibrate:resume-artifacts:office": "bun run src/scripts/calibrate-resume-artifacts.ts --require-libreoffice",
     "reconcile:next-action": "bun run src/scripts/reconcile-next-action.ts"
   },
   "dependencies": {

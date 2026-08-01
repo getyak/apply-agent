@@ -16,7 +16,7 @@ describe("resolveResumeArtifactProfile", () => {
     });
 
     expect(profile).toMatchObject({
-      rendererVersion: 1,
+      rendererVersion: 2,
       compilerProfileVersion: 3,
       artifactLocale: "zh",
       lengthBudget: "one_page",
@@ -30,6 +30,12 @@ describe("resolveResumeArtifactProfile", () => {
         marginRightMm: 14,
         marginBottomMm: 12,
         marginLeftMm: 14,
+      },
+      typography: {
+        bodyLineHeight: 1.2,
+        sectionBeforeMm: 2.8,
+        paragraphAfterMm: 0.9,
+        bulletAfterMm: 0.45,
       },
     });
     expect(profile.namedOverrides).toEqual([
@@ -55,6 +61,12 @@ describe("resolveResumeArtifactProfile", () => {
       lengthBudget: "two_page",
       atsProfile: "standard",
       targetPages: 2,
+      typography: {
+        bodyLineHeight: 1.2,
+        sectionBeforeMm: 3.4,
+        paragraphAfterMm: 1,
+        bulletAfterMm: 0.55,
+      },
     });
   });
 });
