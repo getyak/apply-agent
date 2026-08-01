@@ -66,14 +66,23 @@ compilations, publication, and browser handoff.
    Use `two_page` + `standard` when the user gives no preference. Do not use
    `max_achievements_per_role` unless the user asks for a specific override.
 4. Call `get_resume_compilation`.
-5. Present the draft, graph revision, `compiler_config`, selected and omitted
+5. Before requesting approval, open
+   `/app/resume/<resume_id>` in the user's signed-in Relay browser. Export the
+   PDF from Operations, inspect every page, and compare the actual page count
+   with `compiler_config.target_pages`. When response headers are available,
+   treat `x-relay-artifact-page-count` and
+   `x-relay-artifact-within-budget` as the measured result. DOCX page count is
+   intentionally unknown until a real office renderer opens it; inspect DOCX
+   too when that is the requested delivery format. Recompile or explain the
+   overflow instead of approving an unreviewed or over-budget artifact.
+6. Present the draft, graph revision, `compiler_config`, selected and omitted
    evidence, `quality_report`, and `guard_report`. Call out failed ATS checks,
-   estimated-page overflow, and unmatched JD tokens. Page count is an estimate,
-   not proof of final PDF pagination. Do not rewrite the compiled facts outside
-   Relay.
-6. Ask the user to type exactly `APPROVE RESUME <compilation_id>` or
+   estimated-page overflow, actual artifact pagination, and unmatched JD
+   tokens. The quality report's character estimate is not proof of final file
+   pagination. Do not rewrite the compiled facts outside Relay.
+7. Ask the user to type exactly `APPROVE RESUME <compilation_id>` or
    `REJECT RESUME <compilation_id>`.
-7. Call the decision tool only after the exact user-authored phrase.
+8. Call the decision tool only after the exact user-authored phrase.
 
 For multiple JDs, compile all drafts first and present a compact comparison.
 Approval remains per compilation; never silently approve a batch.

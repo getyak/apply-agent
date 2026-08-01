@@ -1,12 +1,9 @@
-// Résumé → PDF rendering pipeline.
+// Résumé → deterministic ATS PDF rendering pipeline.
 //
-// Pipeline: canonical Markdown → marked (HTML) → Playwright Chromium → PDF.
-// The CSS injected at render time is a verbatim copy of the web app's
-// .resume-prose theme (api/src/resume-print.css ← web/src/components/studio/
-// resume-markdown.css), so "what the user sees in the browser preview" ===
-// "what comes out of the PDF". That equivalence is the contract — when the
-// CSS changes, this file's copy must change too. (Future: serve the CSS file
-// over a build step instead of copying. For now the copy is small and stable.)
+// Pipeline: canonical Markdown → safe Marked HTML → profile CSS → Chromium PDF
+// → parsed page-count audit. The interactive studio remains spacious; file
+// export uses a compact, closed renderer profile so one_page/two_page means the
+// same thing on every request.
 //
 // Browser lifecycle: one shared Chromium instance, lazily launched, auto-
 // closes after 60 seconds of idle to release ~300MB RAM. Each request gets
@@ -20,12 +17,18 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Marked } from "marked";
+import { getDocumentProxy } from "unpdf";
 import {
   chromium,
   type Browser,
   type BrowserContext,
 } from "playwright";
+import {
+  type ResumeArtifactAudit,
+  type ResumeArtifactProfile,
+  resolveResumeArtifactProfile,
+} from "./resume-artifact-profile";
+import { markdownToSafeArtifactHtml } from "./resume-artifact-markdown";
 
 const IDLE_SHUTDOWN_MS = 60_000;
 
@@ -43,6 +46,9 @@ async function getBrowser(): Promise<Browser> {
         "--disable-gpu",
         "--disable-dev-shm-usage",
       ],
+    }).catch((error) => {
+      browserPromise = null;
+      throw error;
     });
   }
   return browserPromise;
@@ -61,9 +67,7 @@ function bumpIdleTimer(): void {
   shutdownTimer.unref?.();
 }
 
-// Module-scope CSS load. resume-print.css is a verbatim copy of the web app's
-// .resume-prose theme — see the file's own header. Read once at startup, kept
-// in memory (~12 KB) so we don't hit the disk per request.
+// Dedicated file-export CSS. Read once at startup so requests do no disk churn.
 let cssPromise: Promise<string> | null = null;
 async function loadCss(): Promise<string> {
   if (!cssPromise) {
@@ -75,40 +79,81 @@ async function loadCss(): Promise<string> {
   return cssPromise;
 }
 
-function renderMarkdown(md: string): string {
-  const marked = new Marked({ gfm: true, breaks: false });
-  return marked.parse(md, { async: false }) as string;
+function profileCss(profile: ResumeArtifactProfile): string {
+  const type = profile.typography;
+  const isOnePage = profile.lengthBudget === "one_page";
+  return [
+    ":root{",
+    `--artifact-margin-top:${profile.page.marginTopMm}mm;`,
+    `--artifact-margin-right:${profile.page.marginRightMm}mm;`,
+    `--artifact-margin-bottom:${profile.page.marginBottomMm}mm;`,
+    `--artifact-margin-left:${profile.page.marginLeftMm}mm;`,
+    `--artifact-body-size:${type.bodySizePt}pt;`,
+    `--artifact-body-line-height:${type.bodyLineHeight};`,
+    `--artifact-name-size:${type.nameSizePt}pt;`,
+    `--artifact-section-size:${type.sectionSizePt}pt;`,
+    `--artifact-role-size:${type.roleSizePt}pt;`,
+    `--artifact-bullet-indent:${type.bulletIndentMm}mm;`,
+    `--artifact-section-before:${isOnePage ? 2.8 : 4.2}mm;`,
+    `--artifact-paragraph-after:${isOnePage ? 0.9 : 1.3}mm;`,
+    `--artifact-bullet-after:${isOnePage ? 0.45 : 0.8}mm;`,
+    "}",
+  ].join("");
+}
+
+export interface RenderedResumePdf {
+  bytes: Buffer;
+  audit: ResumeArtifactAudit;
 }
 
 /**
  * Render a résumé Markdown document to a PDF byte stream.
  *
- * Returns a Buffer rather than a stream because `page.pdf()` returns a
- * Buffer — turning it back into a stream just to hand it to Hono adds
- * complexity with no memory win (PDFs are well under 1 MB for a résumé).
+ * Returns bytes plus an actual parsed page-count audit. Turning the bytes back
+ * into a stream just to hand them to Hono adds complexity with no memory win.
  *
  * Errors propagate as-is so the caller can map "browser not installed" to a
  * 501, and any rendering error to a 500.
  */
-export async function renderResumePdf(markdown: string): Promise<Buffer> {
-  const html = buildPrintHtml(renderMarkdown(markdown), await loadCss());
+export async function renderResumePdf(
+  markdown: string,
+  profile: ResumeArtifactProfile = resolveResumeArtifactProfile({}),
+): Promise<RenderedResumePdf> {
+  const html = buildPrintHtml(
+    markdownToSafeArtifactHtml(markdown),
+    await loadCss(),
+    profile,
+  );
 
   const browser = await getBrowser();
   let context: BrowserContext | null = null;
   try {
-    context = await browser.newContext();
+    context = await browser.newContext({ javaScriptEnabled: false });
     const page = await context.newPage();
-    // `domcontentloaded` is enough — we inject all CSS inline and load no
-    // external scripts or fonts. Waiting for `load` would block on Google
-    // Fonts the offline stylesheet doesn't try to fetch anyway.
+    await page.route("**/*", (route) => route.abort());
     await page.setContent(html, { waitUntil: "domcontentloaded" });
+    await page.emulateMedia({ media: "print" });
     const pdf = await page.pdf({
-      format: "A4",
       printBackground: true,
-      margin: { top: "12mm", bottom: "12mm", left: "14mm", right: "14mm" },
-      preferCSSPageSize: false,
+      preferCSSPageSize: true,
     });
-    return pdf;
+    const bytes = Buffer.from(pdf);
+    const document = await getDocumentProxy(new Uint8Array(bytes));
+    const pageCount = document.numPages;
+    await document.destroy();
+    return {
+      bytes,
+      audit: {
+        rendererVersion: profile.rendererVersion,
+        format: "pdf",
+        artifactLocale: profile.artifactLocale,
+        lengthBudget: profile.lengthBudget,
+        atsProfile: profile.atsProfile,
+        targetPages: profile.targetPages,
+        pageCount,
+        withinBudget: pageCount <= profile.targetPages,
+      },
+    };
   } finally {
     await context?.close().catch(() => {});
     bumpIdleTimer();
@@ -120,20 +165,23 @@ export async function renderResumePdf(markdown: string): Promise<Buffer> {
  * the CSS to the markdown body — mirrors web/src/components/studio/
  * resume-markdown.tsx wrapping its body in <div className="resume-prose">.
  */
-function buildPrintHtml(bodyHtml: string, css: string): string {
+function buildPrintHtml(
+  bodyHtml: string,
+  css: string,
+  profile: ResumeArtifactProfile,
+): string {
   return [
     "<!doctype html>",
-    '<html lang="en">',
+    `<html lang="${profile.artifactLocale}">`,
     "<head>",
     '<meta charset="utf-8">',
     "<title>Résumé</title>",
     "<style>",
+    profileCss(profile),
     css,
-    "html,body{margin:0;padding:0;background:#fff;}",
-    ".resume-prose{margin:0 auto;max-width:none;}",
     "</style>",
     "</head>",
-    '<body><div class="resume-prose">',
+    `<body><div class="resume-prose" data-length-budget="${profile.lengthBudget}">`,
     bodyHtml,
     "</div></body>",
     "</html>",
@@ -153,5 +201,18 @@ export async function pdfRenderAvailable(): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Close the shared browser immediately for tests and one-shot CLI scripts. */
+export async function closePdfRenderer(): Promise<void> {
+  if (shutdownTimer) {
+    clearTimeout(shutdownTimer);
+    shutdownTimer = null;
+  }
+  const pendingBrowser = browserPromise;
+  browserPromise = null;
+  if (pendingBrowser) {
+    await pendingBrowser.then((browser) => browser.close()).catch(() => {});
   }
 }

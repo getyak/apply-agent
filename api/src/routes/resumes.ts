@@ -27,6 +27,10 @@ import {
 } from "../resume-export";
 import { pdfRenderAvailable, renderResumePdf } from "../pdf-render";
 import { docxExportAvailable, renderResumeDocx } from "../docx-export";
+import {
+  artifactAuditHeaders,
+  resolveResumeArtifactProfile,
+} from "../resume-artifact-profile";
 import { createJob, getJob, runJob } from "../jobs";
 import { config } from "../config";
 import {
@@ -608,9 +612,13 @@ app.get("/:id/export", async (c) => {
   void _raw;
   void _warnings;
   void _parsedAt;
-  void _artifactLocale;
-  void _compilerConfig;
   void _source;
+  const artifactProfile = resolveResumeArtifactProfile(
+    _compilerConfig,
+    _artifactLocale === "en" || _artifactLocale === "zh"
+      ? _artifactLocale
+      : resolveLocale(c),
+  );
 
   const version = unwrapped.version ?? row.version ?? 1;
   const versionLabel = `v${version}`;
@@ -657,7 +665,8 @@ app.get("/:id/export", async (c) => {
         typeof _markdown === "string" && _markdown.length > 0
           ? _markdown
           : exportMarkdown(parsed, resolveLocale(c));
-      const pdf = await renderResumePdf(md);
+      const artifact = await renderResumePdf(md, artifactProfile);
+      const pdf = artifact.bytes;
       // pdf is a Node Buffer; copy into a fresh ArrayBuffer so it lands as
       // a BodyInit lib.dom accepts. Cheap (a single allocation + memcpy).
       const ab = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
@@ -665,6 +674,7 @@ app.get("/:id/export", async (c) => {
         "content-type": EXPORT_MIME.pdf,
         "content-disposition": attachmentHeader(filename),
         "content-length": String(ab.byteLength),
+        ...artifactAuditHeaders(artifact.audit),
       });
     }
     case "docx": {
@@ -684,13 +694,14 @@ app.get("/:id/export", async (c) => {
         typeof _markdown === "string" && _markdown.length > 0
           ? _markdown
           : exportMarkdown(parsed, resolveLocale(c));
-      const docx = await renderResumeDocx(md);
-      if (!docx) {
+      const artifact = await renderResumeDocx(md, artifactProfile);
+      if (!artifact) {
         throw new UpstreamError(
           "DOCX conversion failed",
           "pandoc returned a non-zero exit",
         );
       }
+      const docx = artifact.bytes;
       const docxAb = docx.buffer.slice(
         docx.byteOffset,
         docx.byteOffset + docx.byteLength,
@@ -699,6 +710,7 @@ app.get("/:id/export", async (c) => {
         "content-type": EXPORT_MIME.docx,
         "content-disposition": attachmentHeader(filename),
         "content-length": String(docxAb.byteLength),
+        ...artifactAuditHeaders(artifact.audit),
       });
     }
   }

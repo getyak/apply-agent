@@ -828,7 +828,16 @@ export const resumes = {
   download: async (
     resumeId: string,
     format: "md" | "json" | "pdf" | "docx",
-  ): Promise<void> => {
+  ): Promise<{
+    filename: string;
+    audit: {
+      rendererVersion: number;
+      format: "pdf" | "docx";
+      targetPages: number;
+      pageCount: number | null;
+      withinBudget: boolean | null;
+    } | null;
+  }> => {
     const token = getToken();
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -862,6 +871,49 @@ export const resumes = {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    const rendererVersionHeader = res.headers.get(
+      "x-relay-artifact-renderer-version",
+    );
+    const targetPagesHeader = res.headers.get(
+      "x-relay-artifact-target-pages",
+    );
+    const rendererVersion = Number(rendererVersionHeader);
+    const targetPages = Number(targetPagesHeader);
+    const pageCountHeader = res.headers.get("x-relay-artifact-page-count");
+    const withinBudgetHeader = res.headers.get(
+      "x-relay-artifact-within-budget",
+    );
+    const artifactFormat = res.headers.get("x-relay-artifact-format");
+    const normalizedArtifactFormat: "pdf" | "docx" | null =
+      artifactFormat === "pdf" || artifactFormat === "docx"
+        ? artifactFormat
+        : null;
+    const audit =
+      rendererVersionHeader !== null &&
+      targetPagesHeader !== null &&
+      Number.isInteger(rendererVersion) &&
+      rendererVersion >= 1 &&
+      (targetPages === 1 || targetPages === 2) &&
+      normalizedArtifactFormat
+        ? {
+            rendererVersion,
+            format: normalizedArtifactFormat,
+            targetPages,
+            pageCount:
+              pageCountHeader !== null &&
+              Number.isInteger(Number(pageCountHeader)) &&
+              Number(pageCountHeader) >= 1
+                ? Number(pageCountHeader)
+                : null,
+            withinBudget:
+              withinBudgetHeader === "true"
+                ? true
+                : withinBudgetHeader === "false"
+                  ? false
+                  : null,
+          }
+        : null;
+    return { filename, audit };
   },
 
   // ─── Publish (read-only short link) ─────────────────────────────────────

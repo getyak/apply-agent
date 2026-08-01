@@ -46,6 +46,10 @@ export function OperationsDrawer({
   const t = useTranslations("resume.operations");
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<{
+    message: string;
+    tone: "success" | "warning";
+  } | null>(null);
   const [publishToken, setPublishToken] = useState<string | null>(
     initialPublishToken ?? null,
   );
@@ -70,8 +74,37 @@ export function OperationsDrawer({
   async function handleExport(format: ExportFormat) {
     setExporting(format);
     setExportError(null);
+    setExportNotice(null);
     try {
-      await resumesApi.download(resumeId, format);
+      const result = await resumesApi.download(resumeId, format);
+      if (
+        result.audit?.format === "pdf" &&
+        result.audit.pageCount !== null &&
+        result.audit.withinBudget !== null
+      ) {
+        setExportNotice(
+          result.audit.withinBudget
+            ? {
+                message: t("export.pdfAudit", {
+                  pages: result.audit.pageCount,
+                  target: result.audit.targetPages,
+                }),
+                tone: "success",
+              }
+            : {
+                message: t("export.pdfOverflow", {
+                  pages: result.audit.pageCount,
+                  target: result.audit.targetPages,
+                }),
+                tone: "warning",
+              },
+        );
+      } else if (result.audit?.format === "docx") {
+        setExportNotice({
+          message: t("export.docxReview"),
+          tone: "warning",
+        });
+      }
     } catch (err) {
       // 501 = "PDF/DOCX requires a server upgrade" — the API's friendly copy
       // already says "try Markdown or PDF", so surface it verbatim. Other
@@ -224,6 +257,17 @@ export function OperationsDrawer({
             onClick={() => handleExport("json")}
           />
           {exportError && <p style={errorStyle}>{exportError}</p>}
+          {exportNotice && (
+            <p
+              style={
+                exportNotice.tone === "success"
+                  ? auditSuccessStyle
+                  : auditWarningStyle
+              }
+            >
+              {exportNotice.message}
+            </p>
+          )}
         </Section>
 
         <Section title={t("share.title")}>
@@ -363,6 +407,27 @@ const errorStyle: React.CSSProperties = {
   fontSize: 12,
   color: "#8B3A1F",
   margin: 0,
+};
+
+const auditBaseStyle: React.CSSProperties = {
+  fontFamily: "Inter, sans-serif",
+  fontSize: 12,
+  lineHeight: 1.5,
+  borderRadius: 6,
+  padding: "8px 10px",
+  margin: 0,
+};
+const auditSuccessStyle: React.CSSProperties = {
+  ...auditBaseStyle,
+  color: "#2A5F2A",
+  background: "#EEF5EC",
+  border: "1px solid #C9DDC5",
+};
+const auditWarningStyle: React.CSSProperties = {
+  ...auditBaseStyle,
+  color: "#8B3A1F",
+  background: "#FFF4E8",
+  border: "1px solid #E8C8A8",
 };
 const iconBtnStyle: React.CSSProperties = {
   border: "none",

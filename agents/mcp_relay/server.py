@@ -27,6 +27,7 @@ INSTRUCTIONS = (
     "exact phrase typed by the user. Compile for one JD, show provenance, then request a "
     "separate résumé approval. Always show the persisted compiler config and quality report; "
     "artifact locale changes structural labels only and never translates source facts. Treat "
+    "compiler pagination as an estimate; inspect the actual exported PDF before approval. "
     "application outcomes as non-causal ranking signals that never rewrite facts. Record "
     "application progress only from a user report, browser confirmation, or recruiter message; "
     "never infer submission from a visible button. Publishing is public and always requires "
@@ -295,7 +296,8 @@ async def compile_resume_for_jd(
     title="Review résumé compilation",
     description=(
         "Read a compiled résumé draft with its graph revision, selection manifest, and "
-        "fabrication guard report before requesting approval."
+        "fabrication guard report before requesting approval. Estimated pagination still "
+        "requires review of the actual exported PDF artifact."
     ),
     annotations=READ_ONLY,
 )

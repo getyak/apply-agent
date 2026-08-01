@@ -28,6 +28,7 @@ import slashRoutes from "./routes/slash";
 import todayRoutes from "./routes/today";
 import mcpOAuthRoutes from "./routes/mcp-oauth";
 import careerGraphRoutes from "./routes/career-graphs";
+import { RESUME_ARTIFACT_AUDIT_HEADER_NAMES } from "./resume-artifact-profile";
 
 const app = new Hono<AppEnv>();
 
@@ -45,6 +46,10 @@ app.use(
     // Echo back only allowlisted web origins + the browser extension scheme.
     origin: (origin) => resolveCorsOrigin(origin) ?? "",
     credentials: true,
+    exposeHeaders: [
+      "Content-Disposition",
+      ...RESUME_ARTIFACT_AUDIT_HEADER_NAMES,
+    ],
   }),
 );
 

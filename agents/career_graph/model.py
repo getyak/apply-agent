@@ -16,6 +16,8 @@ from typing import Any
 SCHEMA_VERSION = 1
 COMPILER_PROFILE_VERSION = 1
 QUALITY_TOKEN_SAMPLE_LIMIT = 100
+ARTIFACT_RENDERER_CALIBRATION_VERSION = 1
+LENGTH_ESTIMATE_MODEL_VERSION = 2
 ARTIFACT_LOCALES = {"en", "zh"}
 LENGTH_BUDGETS = {
     "one_page": {
@@ -492,7 +494,10 @@ def _compilation_quality_report(
             "estimated_pages": estimated_pages,
             "estimated_content_characters": character_count,
             "characters_per_page_estimate": characters_per_page,
+            "estimate_model_version": LENGTH_ESTIMATE_MODEL_VERSION,
+            "calibrated_artifact_renderer_version": (ARTIFACT_RENDERER_CALIBRATION_VERSION),
             "estimate_only": True,
+            "requires_export_verification": True,
             "within_budget": within_length_budget,
         },
         "ats": {

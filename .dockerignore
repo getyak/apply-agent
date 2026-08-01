@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+
+**/.DS_Store
+**/.next
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+**/__pycache__
+**/coverage
+**/node_modules
+
+api/scratch

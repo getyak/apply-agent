@@ -1,8 +1,8 @@
 # Codex × Career Graph 原生集成
 
-> 状态：Career Graph 本地闭环、远程 OAuth 身份、现有简历导入审阅 UI 和
-> Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；真实用户最终提交仍在
-> 后续范围内。
+> 状态：Career Graph 本地闭环、远程 OAuth 身份、现有简历导入审阅 UI、
+> 可复现 PDF/DOCX 导出和 Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；
+> 真实用户最终提交仍在后续范围内。
 >
 > 核心决定：Relay 拥有 Career Graph、编译和反馈；Codex 拥有交互式编排与
 > 用户浏览器执行。Relay 不造服务器端投递器。
@@ -215,6 +215,7 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
 | Codex 登录 | ChatGPT 登录态 → skill → live MCP → PG 多轮验证 | ✅ Codex 侧 |
 | Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
 | 简历公开发布 | approved compilation → `/r/<token>` | ✅ |
+| 一/两页文件导出 | compiler profile → A4 PDF/DOCX；PDF 返回实测页数审计 | ✅ v1 |
 | 真实浏览器预填 | Greenhouse/Lever/Ashby 目标站合成身份 fill-only | ✅ 未提交 |
 | 申请跟踪连接 | approved compilation → idempotent local draft/compact batch queue → just-in-time handoff | ✅ v1 |
 | Boss 直聘自动投递 | 命中 `_security_check`/登录即停止并手工交接 | ❌ 不自动化 |
@@ -222,9 +223,10 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
 
 ## 7. 下一段必须完成的工作
 
-1. **渲染质量**：编译器已经持久化一/两页预算、`en/zh` 结构标签、标准/严格
-   ATS profile、JD token 覆盖率和省略证据；下一步用真实 PDF/DOCX 排版回归校准
-   页数估算。可把“措辞建议”作为独立 change proposal，但不能直接污染 graph。
+1. **真实 Office 分页兼容矩阵**：PDF 已完成 `en/zh × one/two_page` 全页回归；
+   DOCX 已通过 Pandoc 重建校验、文本无损提取和 macOS Office Quick Look 预览，
+   运行时仍诚实返回未知页数。后续需要在 Word/Pages/LibreOffice 中逐页建立兼容
+   矩阵，不能把字符估算或 DOCX 压缩包元数据冒充实际页数。
 2. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
@@ -300,3 +302,21 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
   ats_profile=strict)`；随后独立读取 compilation，确认 profile version 1、
   `ready_for_human_review`、ATS ready、估算 1 页及 `source_only=true` 均已持久化。
   该验证只创建 draft，没有批准、发布或投递。
+- 2026-08-01 新增 renderer profile v1：A4、固定 12/14 mm 边距、单/双页独立
+  字号密度、无表格/图标/远程资源的 ATS 样式；PDF 渲染禁用 JavaScript 和网络，
+  原始 HTML、危险协议链接及远程图片都会变成被动内容。API 使用 PDF parser
+  读取实际页数，并在 `x-relay-artifact-*` 响应头返回 renderer version、目标页数、
+  实际页数和是否超预算。
+- 同一轮以四份只含 `example.test` 的合成 Career Graph artifact 完成
+  `en/zh × one_page/two_page` PDF 全页视觉回归，四组分别稳定输出 1/2 页；修复
+  了 header 软换行、职位摘要粘连、跨页孤立 bullet 和中文扩展章节仍显示英文的
+  问题。DOCX reference assets 可由
+  `scripts/build-resume-reference-docx.py --check` 确定性重建，输出经 Mammoth
+  验证姓名、经历和项目无丢失，并把 Pandoc 私有 Symbol bullet 规范为标准
+  Unicode OOXML numbering。由于本机无 Word/LibreOffice，DOCX 页数未伪造，
+  API 和 skill 均要求用真实 Office renderer 打开后再批准交付格式。
+- 生产 `deploy/Dockerfile.api` 已从 Alpine 切换到 Playwright 支持的 Debian Bun
+  镜像，并固定安装 Pandoc、Chromium headless shell、Latin/CJK 字体；同一四案例
+  校准脚本已在最终 Linux 容器内通过。API CI 现在安装相同渲染器后运行测试，
+  不再因缺少 Chromium/Pandoc 而静默跳过文件回归。根级 `.dockerignore` 同时
+  排除 `.env`、Git、本地依赖和校准 scratch，避免把秘密或机器状态发送到构建器。

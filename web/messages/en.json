@@ -1207,10 +1207,13 @@
         "pdfSub": "Recruiter-ready, fixed layout.",
         "docx": "DOCX",
         "docxSub": "Editable Word document.",
+        "docxReview": "DOCX exported. Open it in Word, Pages, or LibreOffice to verify its actual pagination.",
         "beta": "Beta",
         "json": "JSON Resume",
         "jsonSub": "The structured data file — for backup or import.",
-        "downloading": "Downloading…"
+        "downloading": "Downloading…",
+        "pdfAudit": "PDF verified: {pages} page(s), within the {target}-page budget.",
+        "pdfOverflow": "PDF has {pages} page(s), exceeding the {target}-page budget. Recompile before approval."
       },
       "share": {
         "title": "Share",

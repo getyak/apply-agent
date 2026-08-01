@@ -38,6 +38,7 @@ type LabelSet = {
   education: string;
   present: string;
   months: readonly string[];
+  extraHeadings: Readonly<Record<string, string>>;
 };
 
 const LABELS: Record<SupportedLocale, LabelSet> = {
@@ -49,6 +50,15 @@ const LABELS: Record<SupportedLocale, LabelSet> = {
     education: "Education",
     present: "Present",
     months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    extraHeadings: {
+      volunteer: "Volunteer",
+      awards: "Awards",
+      certificates: "Certificates",
+      publications: "Publications",
+      languages: "Languages",
+      interests: "Interests",
+      references: "References",
+    },
   },
   zh: {
     summary: "概览",
@@ -58,6 +68,15 @@ const LABELS: Record<SupportedLocale, LabelSet> = {
     education: "教育",
     present: "至今",
     months: ["1 月", "2 月", "3 月", "4 月", "5 月", "6 月", "7 月", "8 月", "9 月", "10 月", "11 月", "12 月"],
+    extraHeadings: {
+      volunteer: "志愿经历",
+      awards: "奖项",
+      certificates: "证书",
+      publications: "出版物",
+      languages: "语言",
+      interests: "兴趣",
+      references: "推荐人",
+    },
   },
 };
 
@@ -131,7 +150,7 @@ export function jsonResumeToMarkdown(
   // Forward-compat: render common JSON Resume extensions we don't model
   // explicitly (languages, awards, certificates) as simple lists so nothing
   // silently disappears from the user's upload.
-  const extras = renderExtras(resume);
+  const extras = renderExtras(resume, labels);
   if (extras) blocks.push(extras);
 
   const md = blocks.join("\n\n").trim();
@@ -144,10 +163,16 @@ function renderHeader(basics: JsonResume["basics"]): Block {
   const name = clean(basics.name);
   if (name) lines.push(`# ${name}`);
   const label = clean(basics.label);
-  if (label) lines.push(`_${label}_`);
-
   const contact = renderContact(basics);
-  if (contact) lines.push(contact);
+  if (label && contact) {
+    // Two trailing spaces are canonical Markdown's explicit line break. A
+    // plain newline is only whitespace in CommonMark and previously collapsed
+    // the role and contact details into one run in both PDF and DOCX.
+    lines.push(`_${label}_  `, contact);
+  } else {
+    if (label) lines.push(`_${label}_`);
+    if (contact) lines.push(contact);
+  }
 
   return lines.join("\n");
 }
@@ -206,7 +231,13 @@ function renderWork(work: JsonResume["work"], labels: LabelSet): Block {
     if (meta) out.push(`_${meta}_`);
 
     const wsummary = clean(w.summary);
-    if (wsummary) out.push(wsummary);
+    if (wsummary) {
+      // Keep the date metadata and prose summary as separate paragraphs. A
+      // soft newline merges them under CommonMark and makes the date hard to
+      // scan in exported artifacts.
+      if (meta) out.push("");
+      out.push(wsummary);
+    }
 
     for (const h of w.highlights ?? []) {
       const text = clean(typeof h === "string" ? h : String(h));
@@ -286,7 +317,7 @@ function renderEducation(education: JsonResume["education"], labels: LabelSet): 
  * bulleted "## Title" block. Strings/objects we can't read are skipped (the
  * structural transform never guesses).
  */
-function renderExtras(resume: JsonResume): Block {
+function renderExtras(resume: JsonResume, labels: LabelSet): Block {
   const known = new Set([
     "basics",
     "work",
@@ -299,6 +330,8 @@ function renderExtras(resume: JsonResume): Block {
     "_parsedAt",
     "_source",
     "_markdown",
+    "_artifactLocale",
+    "_compilerConfig",
   ]);
   const blocks: Block[] = [];
   for (const key of Object.keys(resume)) {
@@ -326,7 +359,7 @@ function renderExtras(resume: JsonResume): Block {
       }
     }
     if (items.length > 0) {
-      blocks.push(`## ${titleCase(key)}\n${items.join("\n")}`);
+      blocks.push(`## ${labels.extraHeadings[key] ?? titleCase(key)}\n${items.join("\n")}`);
     }
   }
   return blocks.join("\n\n");

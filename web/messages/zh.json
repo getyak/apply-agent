@@ -1207,10 +1207,13 @@
         "pdfSub": "为招聘者准备的固定排版。",
         "docx": "DOCX",
         "docxSub": "可编辑的 Word 文档。",
+        "docxReview": "DOCX 已导出。请使用 Word、Pages 或 LibreOffice 打开并核对实际页数。",
         "beta": "测试版",
         "json": "JSON Resume",
         "jsonSub": "结构化数据文件 —— 用于备份或导入。",
-        "downloading": "下载中…"
+        "downloading": "下载中…",
+        "pdfAudit": "PDF 已验证：共 {pages} 页，符合 {target} 页预算。",
+        "pdfOverflow": "PDF 共 {pages} 页，超过 {target} 页预算。批准前请重新编译。"
       },
       "share": {
         "title": "分享",

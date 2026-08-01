@@ -1,7 +1,25 @@
-FROM oven/bun:1-alpine
+FROM oven/bun:1
 WORKDIR /app
 COPY api/package.json api/bun.lock* ./api/
 RUN cd api && bun install --frozen-lockfile
+
+# File export is a production capability, not a developer-machine accident.
+# Playwright's bundled Chromium targets glibc, so use the Debian Bun image;
+# Pandoc produces native DOCX and the explicit fonts keep A4 metrics stable.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      fonts-liberation \
+      fonts-noto-cjk \
+      pandoc \
+    && cd api \
+    && bunx playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+RUN cd api \
+    && bunx playwright install --only-shell chromium \
+    && chmod -R a+rX /ms-playwright \
+    && rm -rf /root/.cache
+
 COPY api api
 WORKDIR /app/api
 ENV NODE_ENV=production

@@ -97,6 +97,13 @@ jobs:
         working-directory: api
         run: bun install --frozen-lockfile
 
+      - name: Install résumé artifact renderers
+        working-directory: api
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc fonts-liberation fonts-noto-cjk
+          bunx playwright install --with-deps --only-shell chromium
+
       - name: Lint
         working-directory: api
         run: bun run lint

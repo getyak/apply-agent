@@ -8,10 +8,12 @@
     "lint": "bunx tsc --noEmit",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
+    "calibrate:resume-artifacts": "bun run src/scripts/calibrate-resume-artifacts.ts",
     "reconcile:next-action": "bun run src/scripts/reconcile-next-action.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0",
+    "fflate": "^0.8.3",
     "hono": "^4.7",
     "ioredis": "^5.4",
     "jose": "^6.0",
