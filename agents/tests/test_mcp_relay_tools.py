@@ -185,6 +185,16 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
         f"SUBMIT APPLICATION {application['application_id']}"
     )
     assert any("CAPTCHA" in item for item in handoff["forbidden_automation"])
+    delivery = handoff["artifact_delivery"]
+    assert delivery["artifact_format"] == "pdf"
+    assert delivery["purpose"] == "application_upload"
+    assert delivery["application_id"] == application["application_id"]
+    assert len(delivery["download_code"]) == 64
+    assert delivery["download_code"] not in delivery["download_page_url"]
+    assert delivery["download_page_url"].startswith("http://localhost:3001/api/public/artifacts/")
+    assert delivery["capability_secret_in_url"] is False
+    assert delivery["public_resume_publication_required"] is False
+    assert delivery["requires_local_download_before_upload"] is True
 
     with pytest.raises(CareerGraphStateError, match="explicit confirmation"):
         await tools.publish_resume_compilation(
@@ -197,6 +207,100 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     )
     assert published["status"] == "published"
     assert published["public_url"].startswith("http://localhost:3000/r/")
+
+
+async def test_draft_artifact_review_is_separate_from_approval_and_upload() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+
+    first = await tools.prepare_resume_artifact_review(
+        compilation_id=compilation_id,
+        artifact_format="docx",
+    )
+    second = await tools.prepare_resume_artifact_review(
+        compilation_id=compilation_id,
+        artifact_format="docx",
+    )
+
+    delivery = second["artifact_delivery"]
+    first_grant = tools.FAKE_STORE.artifact_delivery_grants[first["artifact_delivery"]["grant_id"]]
+    assert first_grant["revoked"] is True
+    assert second["compilation_status"] == "draft"
+    assert second["approval_unchanged"] is True
+    assert delivery["purpose"] == "compilation_review"
+    assert delivery["application_id"] is None
+    assert delivery["requires_local_download_before_upload"] is False
+    assert delivery["public_resume_publication_required"] is False
+    assert len(delivery["download_code"]) == 64
+    assert delivery["download_code"] not in delivery["download_page_url"]
+    assert tools.FAKE_STORE.compilations[compilation_id]["status"] == "draft"
+
+    await tools.reject_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"REJECT RESUME {compilation_id}",
+    )
+    with pytest.raises(CareerGraphStateError, match="rejected compilations"):
+        await tools.prepare_resume_artifact_review(
+            compilation_id=compilation_id,
+        )
+
+
+async def test_application_handoff_rotates_delivery_grants_and_rejects_insecure_api_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    application = await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example",
+        role_title="Backend Engineer",
+        job_url="https://jobs.example.test/backend",
+    )
+
+    first = await tools.prepare_application_handoff(
+        compilation_id=compilation_id,
+        job_url="https://jobs.example.test/backend",
+        artifact_format="docx",
+    )
+    second = await tools.prepare_application_handoff(
+        compilation_id=compilation_id,
+        job_url="https://jobs.example.test/backend",
+        artifact_format="docx",
+    )
+    first_grant = tools.FAKE_STORE.artifact_delivery_grants[first["artifact_delivery"]["grant_id"]]
+    assert first["artifact_delivery"]["artifact_format"] == "docx"
+    assert first_grant["revoked"] is True
+    assert (
+        second["artifact_delivery"]["download_code"]
+        != (first["artifact_delivery"]["download_code"])
+    )
+    assert second["artifact_delivery"]["application_id"] == application["application_id"]
+
+    monkeypatch.setenv("RELAY_API_BASE_URL", "http://api.example.test")
+    with pytest.raises(CareerGraphStateError, match="loopback"):
+        await tools.prepare_application_handoff(
+            compilation_id=compilation_id,
+            job_url="https://jobs.example.test/backend",
+        )
+
+    monkeypatch.setenv("RELAY_API_BASE_URL", "https://user@api.example.test")
+    with pytest.raises(CareerGraphStateError, match="credentials"):
+        await tools.prepare_application_handoff(
+            compilation_id=compilation_id,
+            job_url="https://jobs.example.test/backend",
+        )
 
 
 async def test_compiler_profile_round_trips_through_mcp_review() -> None:
@@ -435,6 +539,7 @@ async def test_batch_prepares_each_application_without_blanket_submit_approval()
     assert all(item["handoff_ready"] is True for item in batch["applications"])
     assert all(item["next_tool"] == "prepare_application_handoff" for item in batch["applications"])
     assert all("handoff" not in item for item in batch["applications"])
+    assert tools.FAKE_STORE.artifact_delivery_grants == {}
 
 
 async def test_batch_validates_every_item_before_writing() -> None:

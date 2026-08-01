@@ -57,6 +57,7 @@ env_vars = [
     "RELAY_USER_ID",
     "RELAY_PG_DSN",
     "RELAY_PUBLIC_BASE_URL",
+    "RELAY_API_BASE_URL",
 ]
 startup_timeout_sec = 15
 tool_timeout_sec = 120
@@ -69,6 +70,12 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.relay-career.tools.publish_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.prepare_resume_artifact_review]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.prepare_application_handoff]
 approval_mode = "prompt"
 
 # Remote multi-user surface. Enable this and disable the STDIO entry above
@@ -96,6 +103,12 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.relay-career-remote.tools.publish_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.prepare_resume_artifact_review]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.prepare_application_handoff]
 approval_mode = "prompt"
 
 [features]

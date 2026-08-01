@@ -66,23 +66,27 @@ compilations, publication, and browser handoff.
    Use `two_page` + `standard` when the user gives no preference. Do not use
    `max_achievements_per_role` unless the user asks for a specific override.
 4. Call `get_resume_compilation`.
-5. Before requesting approval, open
-   `/app/resume/<resume_id>` in the user's signed-in Relay browser. Export the
-   PDF from Operations, inspect every page, and compare the actual page count
-   with `compiler_config.target_pages`. When response headers are available,
-   treat `x-relay-artifact-page-count` and
-   `x-relay-artifact-within-budget` as the measured result. DOCX page count is
-   intentionally unknown until a real office renderer opens it; inspect DOCX
-   too when that is the requested delivery format. Recompile or explain the
-   overflow instead of approving an unreviewed or over-budget artifact.
-6. Present the draft, graph revision, `compiler_config`, selected and omitted
+5. Before requesting approval, call `prepare_resume_artifact_review` for the
+   requested PDF or DOCX. This creates a short-lived review capability without
+   changing the compilation status or publishing the résumé. Open only its
+   Relay download page in the user's Chrome, enter the returned code only in
+   that page, and save the file locally. Never put the code in a URL, job site,
+   or public message.
+6. Inspect the actual downloaded artifact. For PDF, inspect every page and
+   compare the measured page count with `compiler_config.target_pages`; use
+   `x-relay-artifact-page-count` and `x-relay-artifact-within-budget` when
+   available. DOCX page count is intentionally unknown until a real Office
+   renderer opens it, so inspect it with Word/Pages when DOCX is the requested
+   delivery format. Recompile or explain overflow instead of approving an
+   unreviewed or over-budget artifact.
+7. Present the draft, graph revision, `compiler_config`, selected and omitted
    evidence, `quality_report`, and `guard_report`. Call out failed ATS checks,
    estimated-page overflow, actual artifact pagination, and unmatched JD
    tokens. The quality report's character estimate is not proof of final file
    pagination. Do not rewrite the compiled facts outside Relay.
-7. Ask the user to type exactly `APPROVE RESUME <compilation_id>` or
+8. Ask the user to type exactly `APPROVE RESUME <compilation_id>` or
    `REJECT RESUME <compilation_id>`.
-8. Call the decision tool only after the exact user-authored phrase.
+9. Call the decision tool only after the exact user-authored phrase.
 
 For multiple JDs, compile all drafts first and present a compact comparison.
 Approval remains per compilation; never silently approve a batch.
@@ -107,30 +111,38 @@ Publishing a résumé is not submitting a job application.
    outcome feedback attributable; neither path submits anything.
 2. Work through a batch one item at a time. Call `prepare_application_handoff`
    just before filling that item, and verify it returns the queued
-   `application_id`. Do not retain full handoff packages for the whole batch.
-3. Open the exact job URL, then call `assess_application_browser_checkpoint`
+   `application_id` and an `application_upload` artifact capability bound to
+   the same application and approved compilation. Do not retain full handoff
+   packages or download codes for the whole batch.
+3. In Chrome, open the returned Relay download page, enter the code only there,
+   and download the file locally immediately before upload. Public résumé
+   publication is not required. Never put the code or Relay page URL into a
+   job-platform field, and upload only this exact downloaded file.
+4. Open the exact job URL, then call `assess_application_browser_checkpoint`
    with `stage=before_fill`, the observed URL, and only the visible checkpoint
    text needed to detect login, CAPTCHA, security checks, or a stale posting.
    Stop the whole batch when it returns `status=stop`.
-4. Use the connected Codex Chrome or Browser capability so execution happens
-   in the user's logged-in browser. Do not use a server-side application
-   submitter.
-5. Never request, store, reveal, or type a job-platform password. Let the user
+5. Use the connected Codex Chrome capability for forms that upload a local
+   résumé. The in-app Browser cannot automate file uploads. If Chrome cannot
+   access the downloaded file, ask the user to enable the extension's local
+   file access or perform that one upload manually. Do not use a server-side
+   application submitter.
+6. Never request, store, reveal, or type a job-platform password. Let the user
    log in directly.
-6. Never solve or bypass CAPTCHA or anti-bot challenges.
-7. Fill only fields supported by the approved package or facts the user
+7. Never solve or bypass CAPTCHA or anti-bot challenges.
+8. Fill only fields supported by the approved package or facts the user
    supplies in the current conversation.
-8. Stop on unsupported demographic, legal, salary, sponsorship, or
+9. Stop on unsupported demographic, legal, salary, sponsorship, or
    eligibility questions and ask the user.
-9. Immediately before the final click, call
+10. Immediately before the final click, call
    `assess_application_browser_checkpoint` again with `stage=before_submit`.
    A visible or enabled DOM button is never authorization.
-10. Show the platform, role, application ID, résumé compilation ID, generated
+11. Show the platform, role, application ID, résumé compilation ID, generated
     answers, and unresolved warnings. Ask the user to type the exact
     `submission_gate.confirmation_phrase` returned by the checkpoint.
-11. Click the final button only after that exact phrase appears in the user's
+12. Click the final button only after that exact phrase appears in the user's
     current message. Repeat the gate for every application in a batch.
-12. A click is not evidence of submission. Only after a visible post-submit
+13. A click is not evidence of submission. Only after a visible post-submit
     confirmation page, call `record_application_progress` with
     `status=submitted`, `evidence_source=browser_confirmation`, and the actual
     submission channel. If the page remains ambiguous, do not record it as

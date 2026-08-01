@@ -37,6 +37,8 @@ class CareerGraphStateError(RuntimeError):
 EVIDENCE_REPORT_APPLICATION_LIMIT = 1000
 EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT = 100
 EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION = 100
+ARTIFACT_DELIVERY_TTL_MINUTES = 10
+ARTIFACT_DELIVERY_MAX_DOWNLOADS = 5
 
 
 def _dsn() -> str:
@@ -962,6 +964,86 @@ async def get_compilation(user_id: UUID, compilation_id: UUID) -> dict[str, Any]
     }
 
 
+async def issue_compilation_artifact_review(
+    user_id: UUID,
+    compilation_id: UUID,
+    *,
+    artifact_format: str,
+) -> dict[str, Any]:
+    """Issue a short-lived artifact for reviewing a compilation draft."""
+
+    if artifact_format not in {"pdf", "docx"}:
+        raise CareerGraphStateError("artifact_format must be 'pdf' or 'docx'")
+
+    download_code = secrets.token_hex(32)
+    token_digest = hashlib.sha256(download_code.encode("utf-8")).hexdigest()
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT resume_id, status
+                  FROM career_graph_compilations
+                 WHERE id = %s AND user_id = %s
+                 FOR UPDATE
+                """,
+                (str(compilation_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError("compilation not found")
+            if row[1] == "rejected":
+                raise CareerGraphStateError("rejected compilations cannot create review artifacts")
+            await cur.execute(
+                """
+                UPDATE resume_artifact_delivery_grants
+                   SET revoked_at = now()
+                 WHERE user_id = %s
+                   AND compilation_id = %s
+                   AND purpose = 'compilation_review'
+                   AND artifact_format = %s
+                   AND revoked_at IS NULL
+                """,
+                (str(user_id), str(compilation_id), artifact_format),
+            )
+            await cur.execute(
+                """
+                INSERT INTO resume_artifact_delivery_grants (
+                    user_id, compilation_id, application_id, purpose,
+                    artifact_format, token_digest, expires_at, max_downloads
+                ) VALUES (
+                    %s, %s, NULL, 'compilation_review', %s, %s,
+                    now() + make_interval(mins => %s),
+                    %s
+                )
+                RETURNING id, expires_at, max_downloads
+                """,
+                (
+                    str(user_id),
+                    str(compilation_id),
+                    artifact_format,
+                    token_digest,
+                    ARTIFACT_DELIVERY_TTL_MINUTES,
+                    ARTIFACT_DELIVERY_MAX_DOWNLOADS,
+                ),
+            )
+            grant = await cur.fetchone()
+        await conn.commit()
+    if not grant:
+        raise RuntimeError("failed to create résumé artifact review grant")
+    return {
+        "grant_id": str(grant[0]),
+        "purpose": "compilation_review",
+        "compilation_id": str(compilation_id),
+        "compilation_status": row[1],
+        "application_id": None,
+        "resume_id": str(row[0]),
+        "artifact_format": artifact_format,
+        "download_code": download_code,
+        "expires_at": grant[1].isoformat(),
+        "max_downloads": int(grant[2]),
+    }
+
+
 async def approve_compilation(user_id: UUID, compilation_id: UUID) -> dict[str, Any]:
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         async with conn.cursor() as cur:
@@ -1239,4 +1321,99 @@ async def application_handoff(
             "CAPTCHA solving or bypass",
             "clicking the final Submit/Apply button without explicit user approval",
         ],
+    }
+
+
+async def issue_application_artifact_delivery(
+    user_id: UUID,
+    compilation_id: UUID,
+    application_id: UUID,
+    *,
+    artifact_format: str,
+) -> dict[str, Any]:
+    """Issue a short-lived file capability for one approved application.
+
+    The raw code is returned once to the owner-scoped MCP caller. PostgreSQL
+    stores only its SHA-256 digest, so a database read cannot reconstruct a
+    browser-download capability.
+    """
+
+    if artifact_format not in {"pdf", "docx"}:
+        raise CareerGraphStateError("artifact_format must be 'pdf' or 'docx'")
+
+    download_code = secrets.token_hex(32)
+    token_digest = hashlib.sha256(download_code.encode("utf-8")).hexdigest()
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT c.resume_id, c.status
+                  FROM career_graph_compilations c
+                  JOIN application_drafts a
+                    ON a.id = %s
+                   AND a.user_id = c.user_id
+                   AND a.resume_version_id = c.resume_id
+                 WHERE c.id = %s
+                   AND c.user_id = %s
+                 FOR UPDATE OF c
+                """,
+                (str(application_id), str(compilation_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphStateError(
+                    "application handoff no longer matches this résumé compilation"
+                )
+            if row[1] not in {"approved", "published"}:
+                raise CareerGraphStateError(
+                    "approve the compilation before delivering an application artifact"
+                )
+            await cur.execute(
+                """
+                UPDATE resume_artifact_delivery_grants
+                   SET revoked_at = now()
+                 WHERE user_id = %s
+                   AND application_id = %s
+                   AND purpose = 'application_upload'
+                   AND artifact_format = %s
+                   AND revoked_at IS NULL
+                """,
+                (str(user_id), str(application_id), artifact_format),
+            )
+            await cur.execute(
+                """
+                INSERT INTO resume_artifact_delivery_grants (
+                    user_id, compilation_id, application_id, purpose,
+                    artifact_format, token_digest, expires_at, max_downloads
+                ) VALUES (
+                    %s, %s, %s, 'application_upload', %s, %s,
+                    now() + make_interval(mins => %s),
+                    %s
+                )
+                RETURNING id, expires_at, max_downloads
+                """,
+                (
+                    str(user_id),
+                    str(compilation_id),
+                    str(application_id),
+                    artifact_format,
+                    token_digest,
+                    ARTIFACT_DELIVERY_TTL_MINUTES,
+                    ARTIFACT_DELIVERY_MAX_DOWNLOADS,
+                ),
+            )
+            grant = await cur.fetchone()
+        await conn.commit()
+    if not grant:
+        raise RuntimeError("failed to create résumé artifact delivery grant")
+    return {
+        "grant_id": str(grant[0]),
+        "purpose": "application_upload",
+        "compilation_id": str(compilation_id),
+        "application_id": str(application_id),
+        "resume_id": str(row[0]),
+        "artifact_format": artifact_format,
+        "download_code": download_code,
+        "expires_at": grant[1].isoformat(),
+        "max_downloads": int(grant[2]),
     }

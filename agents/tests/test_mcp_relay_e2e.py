@@ -41,6 +41,7 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "approve_career_graph_change",
                 "compile_resume_for_jd",
                 "approve_resume_compilation",
+                "prepare_resume_artifact_review",
                 "assess_application_browser_checkpoint",
                 "create_application_draft",
                 "record_application_progress",
@@ -63,8 +64,16 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             ]
             assert "submitted" in progress_schema["status"]["enum"]
             assert "accepted" in progress_schema["status"]["enum"]
+            handoff_schema = by_name["prepare_application_handoff"].inputSchema["properties"]
+            assert handoff_schema["artifact_format"]["enum"] == ["pdf", "docx"]
+            review_schema = by_name["prepare_resume_artifact_review"].inputSchema["properties"]
+            assert review_schema["artifact_format"]["enum"] == ["pdf", "docx"]
             assert by_name["relay_status"].annotations.readOnlyHint is True
             assert by_name["publish_resume_compilation"].annotations.openWorldHint is True
+            assert by_name["prepare_resume_artifact_review"].annotations.readOnlyHint is False
+            assert by_name["prepare_resume_artifact_review"].annotations.openWorldHint is True
+            assert by_name["prepare_application_handoff"].annotations.readOnlyHint is False
+            assert by_name["prepare_application_handoff"].annotations.openWorldHint is True
 
 
 async def test_status_round_trip_returns_structured_content() -> None:

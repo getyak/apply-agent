@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -39,6 +40,7 @@ class InMemoryCareerGraphStore:
         self.change_sets: dict[str, dict[str, Any]] = {}
         self.compilations: dict[str, dict[str, Any]] = {}
         self.application_drafts: dict[str, dict[str, Any]] = {}
+        self.artifact_delivery_grants: dict[str, dict[str, Any]] = {}
 
     async def get_or_create_graph(
         self,
@@ -348,6 +350,46 @@ class InMemoryCareerGraphStore:
             "status": "approved",
         }
 
+    async def issue_compilation_artifact_review(
+        self,
+        user_id: UUID,
+        compilation_id: UUID,
+        *,
+        artifact_format: str,
+    ) -> dict[str, Any]:
+        if artifact_format not in {"pdf", "docx"}:
+            raise CareerGraphStateError("artifact_format must be 'pdf' or 'docx'")
+        compilation = self._owned_compilation(user_id, compilation_id)
+        if compilation["status"] == "rejected":
+            raise CareerGraphStateError("rejected compilations cannot create review artifacts")
+        for grant in self.artifact_delivery_grants.values():
+            if (
+                grant["user_id"] == str(user_id)
+                and grant["compilation_id"] == str(compilation_id)
+                and grant["purpose"] == "compilation_review"
+                and grant["artifact_format"] == artifact_format
+                and not grant["revoked"]
+            ):
+                grant["revoked"] = True
+        grant_id = str(uuid4())
+        download_code = secrets.token_hex(32)
+        grant = {
+            "grant_id": grant_id,
+            "purpose": "compilation_review",
+            "user_id": str(user_id),
+            "compilation_id": str(compilation_id),
+            "compilation_status": compilation["status"],
+            "application_id": None,
+            "resume_id": compilation["resume_id"],
+            "artifact_format": artifact_format,
+            "download_code": download_code,
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+            "max_downloads": 5,
+            "revoked": False,
+        }
+        self.artifact_delivery_grants[grant_id] = grant
+        return {key: value for key, value in grant.items() if key not in {"user_id", "revoked"}}
+
     async def reject_compilation(self, user_id: UUID, compilation_id: UUID) -> dict[str, Any]:
         compilation = self._owned_compilation(user_id, compilation_id)
         if compilation["status"] != "draft":
@@ -496,6 +538,57 @@ class InMemoryCareerGraphStore:
             "reused": reused,
             "server_side_submission": False,
         }
+
+    async def issue_application_artifact_delivery(
+        self,
+        user_id: UUID,
+        compilation_id: UUID,
+        application_id: UUID,
+        *,
+        artifact_format: str,
+    ) -> dict[str, Any]:
+        if artifact_format not in {"pdf", "docx"}:
+            raise CareerGraphStateError("artifact_format must be 'pdf' or 'docx'")
+        compilation = self._owned_compilation(user_id, compilation_id)
+        application = self.application_drafts.get(str(application_id))
+        if (
+            not application
+            or application["user_id"] != str(user_id)
+            or application["resume_id"] != compilation["resume_id"]
+        ):
+            raise CareerGraphStateError(
+                "application handoff no longer matches this résumé compilation"
+            )
+        if compilation["status"] not in {"approved", "published"}:
+            raise CareerGraphStateError(
+                "approve the compilation before delivering an application artifact"
+            )
+        for grant in self.artifact_delivery_grants.values():
+            if (
+                grant["user_id"] == str(user_id)
+                and grant["application_id"] == str(application_id)
+                and grant["purpose"] == "application_upload"
+                and grant["artifact_format"] == artifact_format
+                and not grant["revoked"]
+            ):
+                grant["revoked"] = True
+        grant_id = str(uuid4())
+        download_code = secrets.token_hex(32)
+        grant = {
+            "grant_id": grant_id,
+            "purpose": "application_upload",
+            "user_id": str(user_id),
+            "compilation_id": str(compilation_id),
+            "application_id": str(application_id),
+            "resume_id": compilation["resume_id"],
+            "artifact_format": artifact_format,
+            "download_code": download_code,
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+            "max_downloads": 5,
+            "revoked": False,
+        }
+        self.artifact_delivery_grants[grant_id] = grant
+        return {key: value for key, value in grant.items() if key not in {"user_id", "revoked"}}
 
     async def record_application_transition(
         self,

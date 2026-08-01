@@ -15,6 +15,7 @@ import type { AppEnv } from "./types";
 import authRoutes from "./routes/auth";
 import resumeRoutes from "./routes/resumes";
 import publicResumeRoutes from "./routes/public-resumes";
+import artifactDeliveryRoutes from "./routes/artifact-deliveries";
 import jobRoutes from "./routes/jobs";
 import applicationRoutes from "./routes/applications";
 import interviewRoutes from "./routes/interviews";
@@ -48,6 +49,9 @@ app.use(
     credentials: true,
     exposeHeaders: [
       "Content-Disposition",
+      "X-Relay-Artifact-Compilation-Id",
+      "X-Relay-Artifact-Application-Id",
+      "X-Relay-Artifact-Purpose",
       ...RESUME_ARTIFACT_AUDIT_HEADER_NAMES,
     ],
   }),
@@ -65,6 +69,11 @@ app.route("/api/career-graphs", careerGraphRoutes);
 // Public résumé share links — NO auth. The token (16-byte hex) IS the
 // capability. See routes/public-resumes.ts for the security posture.
 app.route("/api/public/r", publicResumeRoutes);
+// Short-lived application-bound file delivery. The secret enters through a
+// POST body, moves to a path-scoped HttpOnly cookie for Chrome's download
+// manager, and is stored in PostgreSQL only as a digest; no public résumé
+// publish token or Relay login cookie is required.
+app.route("/api/public/artifacts", artifactDeliveryRoutes);
 app.route("/api/jobs", jobRoutes);
 app.route("/api/applications", applicationRoutes);
 app.route("/api/interviews", interviewRoutes);

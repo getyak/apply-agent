@@ -107,6 +107,58 @@ def _require_confirmation(actual: str, expected: str) -> None:
         )
 
 
+def _artifact_delivery_api_base_url() -> str:
+    """Resolve a browser-reachable API origin without allowing remote HTTP."""
+
+    raw = os.environ.get("RELAY_API_BASE_URL", "http://localhost:3001").strip().rstrip("/")
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise CareerGraphStateError("RELAY_API_BASE_URL must be an absolute http(s) API origin")
+    if parsed.username is not None or parsed.password is not None:
+        raise CareerGraphStateError("RELAY_API_BASE_URL must not contain credentials")
+    try:
+        _parsed_port = parsed.port
+    except ValueError as exc:
+        raise CareerGraphStateError("RELAY_API_BASE_URL contains an invalid port") from exc
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise CareerGraphStateError(
+            "RELAY_API_BASE_URL must be an origin without a path, query, or fragment"
+        )
+    access_token = None if fake_mode() else get_access_token()
+    if access_token is not None and parsed.scheme != "https":
+        raise CareerGraphStateError(
+            "remote OAuth artifact delivery requires an HTTPS RELAY_API_BASE_URL"
+        )
+    if parsed.scheme == "http" and (parsed.hostname or "").lower() not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise CareerGraphStateError(
+            "plain-HTTP artifact delivery is allowed only on a loopback API origin"
+        )
+    return raw
+
+
+def _artifact_delivery_payload(
+    grant: dict[str, Any],
+    *,
+    api_base_url: str,
+) -> dict[str, Any]:
+    grant_id = grant["grant_id"]
+    return {
+        **grant,
+        "download_page_url": f"{api_base_url}/api/public/artifacts/{grant_id}",
+        "capability_secret_in_url": False,
+        "public_resume_publication_required": False,
+        "requires_local_download_before_upload": grant["purpose"] == "application_upload",
+        "download_code_handling": (
+            "Enter this code only on the Relay download page. Never paste it into "
+            "the job platform or a public URL."
+        ),
+    }
+
+
 async def relay_status() -> dict[str, Any]:
     user_id = current_user_id()
     graphs = await _store_call("list_graphs", user_id)
@@ -353,6 +405,34 @@ async def get_resume_compilation(compilation_id: str) -> dict[str, Any]:
     return compilation
 
 
+async def prepare_resume_artifact_review(
+    *,
+    compilation_id: str,
+    artifact_format: str = "pdf",
+) -> dict[str, Any]:
+    """Create a temporary real-file preview without approving or publishing it."""
+
+    _require_scope("career:read")
+    artifact_api_base_url = _artifact_delivery_api_base_url()
+    grant = await _store_call(
+        "issue_compilation_artifact_review",
+        current_user_id(),
+        _uuid(compilation_id, "compilation_id"),
+        artifact_format=artifact_format,
+    )
+    return {
+        "ok": True,
+        "compilation_id": compilation_id,
+        "compilation_status": grant["compilation_status"],
+        "artifact_delivery": _artifact_delivery_payload(
+            grant,
+            api_base_url=artifact_api_base_url,
+        ),
+        "approval_unchanged": True,
+        "next_action": ("download_and_inspect_every_page_then_request_exact_resume_approval"),
+    }
+
+
 async def approve_resume_compilation(
     *,
     compilation_id: str,
@@ -492,6 +572,7 @@ async def prepare_application_handoff(
     *,
     compilation_id: str,
     job_url: str,
+    artifact_format: str = "pdf",
 ) -> dict[str, Any]:
     _require_scope("application:prepare")
     parsed = urlparse(job_url)
@@ -508,6 +589,18 @@ async def prepare_application_handoff(
         **handoff["target_site"]["submission_gate"],
         "confirmation_phrase": (f"SUBMIT APPLICATION {handoff['application_id']}"),
     }
+    artifact_api_base_url = _artifact_delivery_api_base_url()
+    grant = await _store_call(
+        "issue_application_artifact_delivery",
+        current_user_id(),
+        _uuid(compilation_id, "compilation_id"),
+        _uuid(handoff["application_id"], "application_id"),
+        artifact_format=artifact_format,
+    )
+    handoff["artifact_delivery"] = _artifact_delivery_payload(
+        grant,
+        api_base_url=artifact_api_base_url,
+    )
     return handoff
 
 
@@ -600,12 +693,6 @@ async def prepare_application_batch(
     prepared: list[dict[str, Any]] = []
     for item in normalized:
         draft = await create_application_draft(**item)
-        handoff = await prepare_application_handoff(
-            compilation_id=item["compilation_id"],
-            job_url=item["job_url"],
-        )
-        if handoff["application_id"] != draft["application_id"]:
-            raise RuntimeError("application draft and browser handoff identity diverged")
         prepared.append(
             {
                 "application_id": draft["application_id"],
@@ -614,7 +701,7 @@ async def prepare_application_batch(
                 "role_title": item["role_title"],
                 "job_url": item["job_url"],
                 "reused": draft["reused"],
-                "target_site": handoff["target_site"],
+                "target_site": classify_application_target(item["job_url"]),
                 "handoff_ready": True,
                 "next_tool": "prepare_application_handoff",
                 "status": "prepared_not_submitted",

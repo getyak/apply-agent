@@ -72,6 +72,9 @@ Env vars:
 - `RELAY_USER_ID` — trusted-local STDIO owner identity only; remote HTTP uses the OAuth subject
 - `RELAY_MCP_TRANSPORT` — `stdio` (default) or OAuth-protected `streamable-http`
 - `RELAY_MCP_ISSUER_URL` / `RELAY_MCP_PUBLIC_URL` / `RELAY_WEB_BASE_URL` — remote MCP OAuth URLs
+- `RELAY_API_BASE_URL` — browser-reachable Relay API origin used only for
+  short-lived résumé review/upload downloads; remote OAuth deployments require
+  HTTPS, while plain HTTP is restricted to loopback
 - `RELAY_MCP_FAKE=1` — hermetic MCP demo mode (no PG/OpenRouter)
 
 ## Smoke-test (first-week priority)

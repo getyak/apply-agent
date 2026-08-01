@@ -27,12 +27,15 @@ INSTRUCTIONS = (
     "exact phrase typed by the user. Compile for one JD, show provenance, then request a "
     "separate résumé approval. Always show the persisted compiler config and quality report; "
     "artifact locale changes structural labels only and never translates source facts. Treat "
-    "compiler pagination as an estimate; inspect the actual exported PDF before approval. "
-    "application outcomes as non-causal ranking signals that never rewrite facts. Record "
+    "compiler pagination as an estimate; create a short-lived review artifact and inspect "
+    "every page of the actual file before approval. Treat application outcomes as non-causal "
+    "ranking signals that never rewrite facts. Record "
     "application progress only from a user report, browser confirmation, or recruiter message; "
     "never infer submission from a visible button. Publishing is public and always requires "
     "confirmation. "
-    "Track applications locally before handoff. Application execution is browser-only: "
+    "Track applications locally before handoff. Download the application-bound artifact "
+    "locally through its Relay page immediately before upload; never require public résumé "
+    "publication or paste its code into a job site. Application execution is browser-only: "
     "assess the observed page before fill and again before submit review; stop on stale "
     "jobs, login, CAPTCHA, or security checks. An enabled DOM button is not authorization. "
     "Never enter passwords, bypass CAPTCHA, or click the final Submit/Apply button without "
@@ -306,6 +309,25 @@ async def get_resume_compilation(compilation_id: str) -> dict[str, Any]:
 
 
 @mcp.tool(
+    title="Prepare résumé artifact review",
+    description=(
+        "Create a short-lived PDF or DOCX download capability for a compilation draft. "
+        "Use it to inspect the real rendered file before asking for résumé approval. "
+        "This does not approve, publish, or submit anything."
+    ),
+    annotations=PUBLIC_WRITE,
+)
+async def prepare_resume_artifact_review(
+    compilation_id: str,
+    artifact_format: Literal["pdf", "docx"] = "pdf",
+) -> dict[str, Any]:
+    return await tools.prepare_resume_artifact_review(
+        compilation_id=compilation_id,
+        artifact_format=artifact_format,
+    )
+
+
+@mcp.tool(
     title="Approve résumé compilation",
     description=(
         "Mark a compiled résumé ready for publishing or browser handoff. Call only after the "
@@ -427,18 +449,22 @@ async def record_application_progress(
 @mcp.tool(
     title="Prepare browser application handoff",
     description=(
-        "Return an approved résumé package and browser safety contract for a job URL. This "
-        "never submits server-side and always leaves the final Submit/Apply click to the user."
+        "Return an approved résumé package, a short-lived application-bound PDF/DOCX "
+        "download capability, and the browser safety contract for a job URL. This never "
+        "publishes the résumé or submits server-side, and always leaves the final "
+        "Submit/Apply click to the user."
     ),
-    annotations=READ_ONLY,
+    annotations=PUBLIC_WRITE,
 )
 async def prepare_application_handoff(
     compilation_id: str,
     job_url: str,
+    artifact_format: Literal["pdf", "docx"] = "pdf",
 ) -> dict[str, Any]:
     return await tools.prepare_application_handoff(
         compilation_id=compilation_id,
         job_url=job_url,
+        artifact_format=artifact_format,
     )
 
 

@@ -1,8 +1,9 @@
 # Codex × Career Graph 原生集成
 
 > 状态：Career Graph 本地闭环、远程 OAuth 身份、现有简历导入审阅 UI、
-> 可复现 PDF/DOCX 导出和 Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；
-> 真实用户最终提交仍在后续范围内。
+> 可复现 PDF/DOCX 导出、短期审阅/上传文件交付和
+> Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；真实用户最终提交仍在
+> 后续范围内。
 >
 > 核心决定：Relay 拥有 Career Graph、编译和反馈；Codex 拥有交互式编排与
 > 用户浏览器执行。Relay 不造服务器端投递器。
@@ -34,6 +35,7 @@ pending change set ──人工批准──► immutable Career Graph revision
                            ┌──────────┴──────────┐
                            ▼                     ▼
                       public résumé       browser handoff
+                      （可选公开）         （短期私有文件）
                                                 │
                                            人工提交
 ```
@@ -45,6 +47,7 @@ pending change set ──人工批准──► immutable Career Graph revision
 | 经历事实、来源、关系 | ✅ | 读取/提出修改 |
 | 不可变 revision、变更审计 | ✅ | 请求批准 |
 | JD 编译、选择 manifest | ✅ | 提供 JD、解释差异 |
+| PDF/DOCX 渲染、短期交付 | ✅ | 下载、逐页审阅、上传 |
 | 简历公开链接 | ✅，批准后 | 发起明确请求 |
 | 登录招聘平台 | ❌ | 用户本人 |
 | 填表与页面导航 | ❌ | 用户授权的 Chrome/Browser |
@@ -60,13 +63,18 @@ pending change set ──人工批准──► immutable Career Graph revision
 ## 3. v1 数据模型
 
 迁移 `022_career_graph` 新增四类实体，迁移
-`024_career_graph_compiler_profiles` 为 compilation 固定编译器配置和质量报告：
+`024_career_graph_compiler_profiles` 为 compilation 固定编译器配置和质量报告，
+迁移 `026_resume_artifact_delivery_grants` 提供短期私有文件交付：
 
 - `career_graphs`：用户拥有的图谱入口，只指向一个当前已批准 revision。
 - `career_graph_revisions`：不可变 node/edge snapshot。
 - `career_graph_change_sets`：agent 提出的候选 snapshot；pending 状态不会改变图谱。
 - `career_graph_compilations`：固定 graph revision + JD + résumé row +
   selection manifest + guard report + compiler config + quality report。
+- `resume_artifact_delivery_grants`：只存下载码 SHA-256 摘要、十分钟过期时间和
+  有界下载次数。`compilation_review` 可在 draft 阶段审阅真实文件；
+  `application_upload` 必须绑定同 owner 的 application 与 approved/published
+  compilation。
 
 节点有稳定 ID、类型、事实数据和 provenance；边表达 role → achievement、
 achievement → skill 等关系。编译器只选择和排序节点文本，不根据 JD 生成新事实。
@@ -191,14 +199,29 @@ v1 同时使用三层保证：
 也不构成授权。Skill 要求用户在当前消息输入与 application ID 绑定的精确确认
 短语；一次批量授权不会被解释为无限期许可。
 
+编译后、批准前必须先调用 `prepare_resume_artifact_review`：MCP 只返回不含密钥
+的 Relay 页面 URL，并把 256-bit 下载码作为独立字段返回。页面通过 POST 接收
+下载码，再把它放入 HttpOnly、SameSite=Strict、仅限该下载路径且十分钟失效的
+cookie，通过 303 转到浏览器可重复获取的 GET attachment。URL 与请求日志不携带
+该码；数据库只保存摘要。真正投递前，
+`prepare_application_handoff` 重新签发与 application + compilation 绑定的
+`application_upload` grant，旧 grant 被撤销，文件无需先公开发布。复杂的
+owner、状态、过期和下载次数判断由 migration 026 的单条原子消费函数完成，避免
+read-then-consume 竞态。批量准备只创建紧凑的本地队列，不提前签发或丢弃整批
+下载码。
+
 用户确定要申请后，`create_application_draft` 会先幂等创建或复用 Relay 本地
 `application_drafts` 记录，并把它连接到批准的 compilation résumé。它不会打开
-网站或提交表单。后续 handoff 携带同一个 application ID，浏览器扩展在用户真正
-提交后更新该记录，使结果反馈能回到 selection manifest。提交回写不再复用只读
-`pg_query`：FastAPI 使用 owner-scoped PostgreSQL write transaction，并由
-migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点击不算完成；
-只有确认页、用户明确报告或招聘方消息才允许 MCP
-`record_application_progress` 追加观察。
+网站或提交表单。后续 handoff 携带同一个 application ID。Codex 在用户浏览器
+看到真实确认页后，才可通过 MCP 更新该记录，使结果反馈能回到 selection
+manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不再复用只读
+`pg_query`：MCP 使用 owner-scoped PostgreSQL write transaction，并由 migration
+025 trigger 追加历史事件。按钮可见或已点击不算完成；只有确认页、用户明确报告
+或招聘方消息才允许 `record_application_progress` 追加观察。
+
+需要上传本地文件的表单使用连接的 Chrome；Codex 内置 Browser 当前不能自动完成
+文件上传。Chrome 无法访问本地下载文件时，交还用户完成一次上传，不把文件转交给
+服务器端投递器。
 
 ## 6. 当前完成度审计
 
@@ -216,8 +239,9 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
 | Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
 | 简历公开发布 | approved compilation → `/r/<token>` | ✅ |
 | 一/两页文件导出 | compiler profile → A4 PDF/DOCX；PDF 返回实测页数审计 | ✅ v1 |
+| 批准前真实文件审阅 | draft compilation → 短期 PDF/DOCX review grant → 页面级检查 | ✅ v1 |
 | 真实浏览器预填 | Greenhouse/Lever/Ashby 目标站合成身份 fill-only | ✅ 未提交 |
-| 申请跟踪连接 | approved compilation → idempotent local draft/compact batch queue → just-in-time handoff | ✅ v1 |
+| 申请跟踪连接 | approved compilation → compact queue → application-bound artifact → just-in-time handoff | ✅ v1 |
 | Boss 直聘自动投递 | 命中 `_security_check`/登录即停止并手工交接 | ❌ 不自动化 |
 | 结果反馈驱动下一次编译 | append-only history → manifest → evidence tie-break + confidence-bounded cohorts | ✅ v2 |
 
@@ -284,6 +308,16 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
   owner 错配、直接 update/delete 均被拒绝，删除申请或账号仍能级联清理。down
   会把新终态映射回旧状态并把原含义保存在 outcome，再次 up 只生成明确标注的
   `migration_backfill` baseline。
+- migration 026 在隔离 PostgreSQL 中通过完整 001→026、026 down、026 up
+  往返；原子消费函数在迁移时由 PostgreSQL 解析。真实 PostgreSQL + Hono 回归
+  验证 draft review 可下载、draft application upload 以统一 404 失败且不消耗
+  次数，批准后同一 application-bound grant 才可下载。下载码仅以 SHA-256 摘要
+  入库，PDF 实际解析为 1 页且保留姓名/PostgreSQL 文本哨兵，DOCX 为有效 ZIP
+  容器，两份成功交付各原子计数一次。
+- 同一交付页经连接的真实 Chrome 执行表单：POST 代码后 303 到路径限定 cookie
+  GET，Chrome 将唯一命名的合成 PDF 保存到本机 Downloads。离线复核文件为
+  99,487 bytes、1 页，姓名与“without a job submission”哨兵完整；未打开招聘
+  站、未上传或提交。合成文件随后移入废纸篓，隔离数据库和测试服务已清理。
 - 真实 PostgreSQL + FastAPI + MCP 回归记录了
   `codex_mcp_prepare → browser_extension → codex_mcp_recruiter_message →
   codex_mcp_user_reported` 四个事件。提交端点重试没有把 interview 回退成
