@@ -10,6 +10,7 @@
     "test": "bun test",
     "calibrate:resume-artifacts": "bun run src/scripts/calibrate-resume-artifacts.ts",
     "calibrate:resume-artifacts:office": "bun run src/scripts/calibrate-resume-artifacts.ts --require-libreoffice",
+    "verify:resume-artifacts:native": "bun run src/scripts/verify-native-office-artifacts.ts",
     "reconcile:next-action": "bun run src/scripts/reconcile-next-action.ts"
   },
   "dependencies": {

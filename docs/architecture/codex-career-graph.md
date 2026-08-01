@@ -227,7 +227,23 @@ migration 025 trigger 记录 `browser_extension` 事件。按钮可见或已点�
    `en/zh × one/two_page` 全页回归；DOCX 另通过 Pandoc 重建校验、文本无损提取
    和 macOS Office Quick Look 预览，运行时仍诚实返回未知页数。后续还需要在
    Word/Pages 中逐页建立兼容矩阵，不能把字符估算或 DOCX 压缩包元数据冒充实际
-   页数。
+   页数。先用对应原生应用打开四份 DOCX 并分别导出同名 PDF，再运行下面的离线
+   校验；manifest 会把源 DOCX 与导出 PDF 的 SHA-256、实际页数和文本哨兵绑定：
+
+   ```bash
+   cd api
+   bun run calibrate:resume-artifacts
+   mkdir -p scratch/resume-artifacts/native-office/pages
+   # 用 Pages 打开四份 DOCX，将 PDF 导出到上面的目录。
+   bun run verify:resume-artifacts:native -- \
+     --renderer pages \
+     --renderer-version 14.5
+   ```
+
+   Word 使用 `--renderer word --renderer-version <实际版本>`，默认读取
+   `scratch/resume-artifacts/native-office/word`。任何缺失文件、页数漂移、文本
+   哨兵丢失、PDF 解析失败，或 PDF Creator/Producer 元数据与所声明的 Pages/Word
+   不符，都会保留失败 manifest 并以非零状态退出。
 2. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
