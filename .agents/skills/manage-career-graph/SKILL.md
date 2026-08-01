@@ -123,10 +123,15 @@ Publishing a résumé is not submitting a job application.
    text needed to detect login, CAPTCHA, security checks, or a stale posting.
    Stop the whole batch when it returns `status=stop`.
 5. Use the connected Codex Chrome capability for forms that upload a local
-   résumé. The in-app Browser cannot automate file uploads. If Chrome cannot
-   access the downloaded file, ask the user to enable the extension's local
-   file access or perform that one upload manually. Do not use a server-side
-   application submitter.
+   résumé. The in-app Browser cannot automate file uploads. Read the returned
+   `upload_preflight`; Relay cannot detect the Chrome permission in advance.
+   If `setFiles` is not allowed, stop the batch and tell the user exactly:
+   `To enable file upload, open chrome://extensions, click Details under the
+   ChatGPT browser extension, and enable "Allow access to file URLs." See
+   [here](https://developers.openai.com/codex/app/chrome-extension#upload-files)
+   for details.` The user may instead perform that one upload manually. Do not
+   use a server-side application submitter or another browser surface as a
+   bypass.
 6. Never request, store, reveal, or type a job-platform password. Let the user
    log in directly.
 7. Never solve or bypass CAPTCHA or anti-bot challenges.

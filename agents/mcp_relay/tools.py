@@ -146,7 +146,7 @@ def _artifact_delivery_payload(
     api_base_url: str,
 ) -> dict[str, Any]:
     grant_id = grant["grant_id"]
-    return {
+    payload = {
         **grant,
         "download_page_url": f"{api_base_url}/api/public/artifacts/{grant_id}",
         "capability_secret_in_url": False,
@@ -157,6 +157,19 @@ def _artifact_delivery_payload(
             "the job platform or a public URL."
         ),
     }
+    if grant["purpose"] == "application_upload":
+        payload["upload_preflight"] = {
+            "preferred_surface": "chrome_extension",
+            "built_in_browser_file_upload_supported": False,
+            "required_extension_permission": "Allow access to file URLs",
+            "settings_path": ("chrome://extensions → ChatGPT browser extension → Details"),
+            "official_setup_url": (
+                "https://developers.openai.com/codex/app/chrome-extension#upload-files"
+            ),
+            "permission_state_detectable_by_relay": False,
+            "failure_action": ("stop_batch_and_request_permission_or_user_manual_upload"),
+        }
+    return payload
 
 
 async def relay_status() -> dict[str, Any]:

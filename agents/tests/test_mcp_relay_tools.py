@@ -195,6 +195,12 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     assert delivery["capability_secret_in_url"] is False
     assert delivery["public_resume_publication_required"] is False
     assert delivery["requires_local_download_before_upload"] is True
+    upload_preflight = delivery["upload_preflight"]
+    assert upload_preflight["preferred_surface"] == "chrome_extension"
+    assert upload_preflight["built_in_browser_file_upload_supported"] is False
+    assert upload_preflight["required_extension_permission"] == "Allow access to file URLs"
+    assert upload_preflight["permission_state_detectable_by_relay"] is False
+    assert upload_preflight["failure_action"].startswith("stop_batch")
 
     with pytest.raises(CareerGraphStateError, match="explicit confirmation"):
         await tools.publish_resume_compilation(
@@ -235,6 +241,7 @@ async def test_draft_artifact_review_is_separate_from_approval_and_upload() -> N
     assert delivery["application_id"] is None
     assert delivery["requires_local_download_before_upload"] is False
     assert delivery["public_resume_publication_required"] is False
+    assert "upload_preflight" not in delivery
     assert len(delivery["download_code"]) == 64
     assert delivery["download_code"] not in delivery["download_page_url"]
     assert tools.FAKE_STORE.compilations[compilation_id]["status"] == "draft"

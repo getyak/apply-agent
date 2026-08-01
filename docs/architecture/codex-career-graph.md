@@ -270,6 +270,9 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
    不符，都会保留失败 manifest 并以非零状态退出。
 2. **真实用户提交**：目标站 fill-only 已验证；仍需由用户选择实际职位、提供
    真实身份字段并逐份批准后，验证一份真实 application 的最终点击与状态回写。
+   当前 Chrome profile 还需在 ChatGPT browser extension 的 Details 中启用
+   `Allow access to file URLs`，否则 `setFiles` 会以 `Not allowed` 失败；MCP
+   handoff 已结构化返回这个 preflight，Relay 无法替用户读取或修改该权限。
    Boss 直聘保持登录/安全检查即停止，不把账号风险当成待绕过的工程问题。
 
 在这些证据完成前，不能声称“Codex 已真实跑通 Boss 批量投递全流程”。
@@ -318,6 +321,13 @@ manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不
   GET，Chrome 将唯一命名的合成 PDF 保存到本机 Downloads。离线复核文件为
   99,487 bytes、1 页，姓名与“without a job submission”哨兵完整；未打开招聘
   站、未上传或提交。合成文件随后移入废纸篓，隔离数据库和测试服务已清理。
+- 原生 Codex CLI 0.146.0 使用 ChatGPT 登录态和真实 STDIO MCP，在 read-only
+  sandbox 中签发 `compilation_review` grant；数据库保持 draft、无 application
+  绑定。Chrome 下载所得 PDF 为 100,841 bytes、1 页，姓名和“without
+  submission”哨兵完整；一次真实保存触发两个有界 GET，后续 HEAD 探测不再消耗
+  次数。文件 chooser 已到达本地合成表单，但当前扩展因未启用本地文件访问而对
+  `setFiles` 返回 `Not allowed`；表单未提交，skill/MCP 现明确要求停止并提示权限
+  或用户手工上传。随机下载码日志已销毁，隔离库与本地服务已清理。
 - 真实 PostgreSQL + FastAPI + MCP 回归记录了
   `codex_mcp_prepare → browser_extension → codex_mcp_recruiter_message →
   codex_mcp_user_reported` 四个事件。提交端点重试没有把 interview 回退成
