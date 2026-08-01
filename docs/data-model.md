@@ -92,6 +92,32 @@ cascade for privacy deletion. Career Graph feedback uses the furthest observed
 stage, never silently classifies free-text outcomes, and labels small cohorts
 as insufficient rather than causal evidence.
 
+### ApplicationSubmissionAuthorization
+```sql
+ApplicationSubmissionAuthorization {
+  id                           UUID PRIMARY KEY,
+  user_id                      UUID,
+  application_id               UUID,
+  compilation_id               UUID,
+  expected_job_url_fingerprint TEXT, -- SHA-256 only
+  observed_url_fingerprint     TEXT, -- SHA-256 only
+  confirmation_digest          TEXT, -- SHA-256 only
+  authorization_source         TEXT, -- codex_mcp_exact_confirmation
+  authorized_at                TIMESTAMP,
+  expires_at                   TIMESTAMP,
+  consumed_at                  TIMESTAMP,
+  invalidated_at               TIMESTAMP
+}
+```
+
+This is not a submission capability. It records an owner-confirmed,
+application-bound authorization immediately before one final click in the
+user's browser. A receipt expires after five minutes, a replacement
+invalidates the prior unused receipt, and only the first
+`codex_mcp_browser_confirmation` transition to `submitted` can atomically
+consume it. The raw URL and confirmation phrase are never stored. User-reported
+manual progress and non-MCP writers remain separate evidence paths.
+
 ### CareerGraphPublicationEvent
 ```sql
 CareerGraphPublicationEvent {

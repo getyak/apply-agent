@@ -768,6 +768,7 @@ async def record_application_progress(
     interview_date: str | None = None,
     clear_interview_date: bool = False,
     submitted_via: str | None = None,
+    submission_authorization_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist a user/browser-observed lifecycle transition, never an inference."""
 
@@ -809,6 +810,17 @@ async def record_application_progress(
         raise CareerGraphStateError("unsupported submission channel")
     if status != "submitted" and submitted_via is not None:
         raise CareerGraphStateError("submitted_via is only valid for submitted status")
+    requires_submission_authorization = (
+        status == "submitted" and evidence_source == "browser_confirmation"
+    )
+    if requires_submission_authorization and submission_authorization_id is None:
+        raise CareerGraphStateError(
+            "browser-confirmed submitted status requires a submission authorization receipt"
+        )
+    if not requires_submission_authorization and submission_authorization_id is not None:
+        raise CareerGraphStateError(
+            "submission_authorization_id is only valid for a browser-confirmed submitted status"
+        )
     return await _store_call(
         "record_application_transition",
         current_user_id(),
@@ -819,6 +831,11 @@ async def record_application_progress(
         interview_date=interview_date,
         clear_interview_date=clear_interview_date,
         submitted_via=submitted_via,
+        submission_authorization_id=(
+            _uuid(submission_authorization_id, "submission_authorization_id")
+            if submission_authorization_id is not None
+            else None
+        ),
     )
 
 
@@ -902,6 +919,58 @@ async def assess_application_browser_checkpoint(
         else "fill_supported_fields_then_reassess_before_submit"
     )
     return checkpoint
+
+
+async def authorize_application_submission(
+    *,
+    compilation_id: str,
+    job_url: str,
+    observed_url: str,
+    confirmation: str,
+    visible_text: str = "",
+) -> dict[str, Any]:
+    """Issue a receipt for one final browser click after exact confirmation."""
+
+    _require_scope("application:prepare")
+    for field, value in (("job_url", job_url), ("observed_url", observed_url)):
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise CareerGraphStateError(f"{field} must be an absolute http(s) URL")
+    if len(visible_text) > 20_000:
+        raise CareerGraphStateError("visible_text must be at most 20000 characters")
+
+    compilation_uuid = _uuid(compilation_id, "compilation_id")
+    handoff = await _store_call(
+        "application_handoff",
+        current_user_id(),
+        compilation_uuid,
+        job_url=job_url,
+    )
+    checkpoint = assess_browser_checkpoint(
+        expected_job_url=job_url,
+        observed_url=observed_url,
+        visible_text=visible_text,
+        stage="before_submit",
+    )
+    if checkpoint["status"] != "review_required":
+        raise CareerGraphStateError(
+            "browser checkpoint must be review_required before submission authorization"
+        )
+
+    expected_confirmation = f"SUBMIT APPLICATION {handoff['application_id']}"
+    _require_confirmation(confirmation, expected_confirmation)
+    authorization = await _store_call(
+        "issue_application_submission_authorization",
+        current_user_id(),
+        _uuid(handoff["application_id"], "application_id"),
+        compilation_uuid,
+        job_url=job_url,
+        observed_url=observed_url,
+        confirmation=confirmation,
+    )
+    authorization["checkpoint_status"] = checkpoint["status"]
+    authorization["stop_reasons"] = checkpoint["stop_reasons"]
+    return authorization
 
 
 async def prepare_application_batch(

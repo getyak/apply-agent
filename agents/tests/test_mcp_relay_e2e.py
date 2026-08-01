@@ -45,6 +45,7 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "approve_resume_compilation",
                 "prepare_resume_artifact_review",
                 "assess_application_browser_checkpoint",
+                "authorize_application_submission",
                 "create_application_draft",
                 "record_application_progress",
                 "prepare_application_batch",
@@ -69,6 +70,17 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             ]
             assert "submitted" in progress_schema["status"]["enum"]
             assert "accepted" in progress_schema["status"]["enum"]
+            assert "submission_authorization_id" in progress_schema
+            authorization_schema = by_name["authorize_application_submission"].inputSchema[
+                "properties"
+            ]
+            assert {
+                "compilation_id",
+                "job_url",
+                "observed_url",
+                "confirmation",
+                "visible_text",
+            }.issubset(authorization_schema)
             handoff_schema = by_name["prepare_application_handoff"].inputSchema["properties"]
             assert handoff_schema["artifact_format"]["enum"] == ["pdf", "docx"]
             review_schema = by_name["prepare_resume_artifact_review"].inputSchema["properties"]
@@ -84,6 +96,8 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             assert by_name["prepare_resume_artifact_review"].annotations.openWorldHint is True
             assert by_name["prepare_application_handoff"].annotations.readOnlyHint is False
             assert by_name["prepare_application_handoff"].annotations.openWorldHint is True
+            assert by_name["authorize_application_submission"].annotations.readOnlyHint is False
+            assert by_name["authorize_application_submission"].annotations.openWorldHint is False
 
 
 async def test_status_round_trip_returns_structured_content() -> None:

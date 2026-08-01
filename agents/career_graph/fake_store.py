@@ -19,6 +19,7 @@ from agents.career_graph.store import (
     EVIDENCE_REPORT_APPLICATION_LIMIT,
     EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION,
     EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT,
+    SUBMISSION_AUTHORIZATION_TTL_MINUTES,
     CareerGraphConflictError,
     CareerGraphNotFoundError,
     CareerGraphStateError,
@@ -42,6 +43,7 @@ class InMemoryCareerGraphStore:
         self.change_sets: dict[str, dict[str, Any]] = {}
         self.compilations: dict[str, dict[str, Any]] = {}
         self.application_drafts: dict[str, dict[str, Any]] = {}
+        self.submission_authorizations: dict[str, dict[str, Any]] = {}
         self.artifact_delivery_grants: dict[str, dict[str, Any]] = {}
         self.publication_events: list[dict[str, Any]] = []
 
@@ -908,12 +910,39 @@ class InMemoryCareerGraphStore:
         interview_date: str | None = None,
         clear_interview_date: bool = False,
         submitted_via: str | None = None,
+        submission_authorization_id: UUID | None = None,
     ) -> dict[str, Any]:
         application = self.application_drafts.get(str(application_id))
         if not application or application["user_id"] != str(user_id):
             raise CareerGraphNotFoundError("Career Graph application not found")
         old_status = application["status"]
         old_outcome = application.get("outcome")
+        authorization = None
+        if submission_authorization_id is not None:
+            authorization = self.submission_authorizations.get(str(submission_authorization_id))
+            if (
+                not authorization
+                or authorization["user_id"] != str(user_id)
+                or authorization["application_id"] != str(application_id)
+            ):
+                raise CareerGraphStateError(
+                    "browser-confirmed MCP submission authorization is unavailable or expired"
+                )
+            if old_status == "submitted":
+                if authorization["consumed_at"] is None:
+                    raise CareerGraphStateError(
+                        "browser-confirmed MCP submission authorization is unavailable or expired"
+                    )
+            else:
+                if (
+                    authorization["consumed_at"] is not None
+                    or authorization["invalidated_at"] is not None
+                    or datetime.fromisoformat(authorization["expires_at"]) <= datetime.now(UTC)
+                ):
+                    raise CareerGraphStateError(
+                        "browser-confirmed MCP submission authorization is unavailable or expired"
+                    )
+                authorization["consumed_at"] = _now()
         changed_fields: list[str] = []
         if old_status != status:
             application["status"] = status
@@ -959,8 +988,97 @@ class InMemoryCareerGraphStore:
             "interview_date": application.get("interview_date"),
             "history_event": event,
             "changed": event is not None,
+            "submission_authorization": (
+                {
+                    "id": authorization["id"],
+                    "authorized_at": authorization["authorized_at"],
+                    "expires_at": authorization["expires_at"],
+                    "consumed_at": authorization["consumed_at"],
+                    "invalidated_at": authorization["invalidated_at"],
+                    "consumed": authorization["consumed_at"] is not None,
+                }
+                if authorization
+                else None
+            ),
             "facts_changed": False,
             "requires_human_review_for_future_compilation": True,
+        }
+
+    async def issue_application_submission_authorization(
+        self,
+        user_id: UUID,
+        application_id: UUID,
+        compilation_id: UUID,
+        *,
+        job_url: str,
+        observed_url: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        application = self.application_drafts.get(str(application_id))
+        compilation = self.compilations.get(str(compilation_id))
+        expected_confirmation = f"SUBMIT APPLICATION {application_id}"
+        if confirmation != expected_confirmation:
+            raise CareerGraphStateError(
+                "application submission authorization requires the exact confirmation phrase"
+            )
+        if (
+            not application
+            or not compilation
+            or application["user_id"] != str(user_id)
+            or compilation["user_id"] != str(user_id)
+            or application["compilation_id"] != str(compilation_id)
+        ):
+            raise CareerGraphNotFoundError(
+                "application and compilation authorization scope not found"
+            )
+        if application["status"] != "review":
+            raise CareerGraphStateError("only an application awaiting review can be authorized")
+        if compilation["status"] not in {"approved", "published"}:
+            raise CareerGraphStateError("approve the compilation before authorizing submission")
+        if application["job_url"] != job_url:
+            raise CareerGraphStateError("authorization must use the application's exact job URL")
+
+        for authorization in self.submission_authorizations.values():
+            if (
+                authorization["user_id"] == str(user_id)
+                and authorization["application_id"] == str(application_id)
+                and authorization["consumed_at"] is None
+                and authorization["invalidated_at"] is None
+            ):
+                authorization["invalidated_at"] = _now()
+
+        now = datetime.now(UTC)
+        authorization_id = str(uuid4())
+        authorization = {
+            "id": authorization_id,
+            "user_id": str(user_id),
+            "application_id": str(application_id),
+            "compilation_id": str(compilation_id),
+            "expected_job_url_fingerprint": hashlib.sha256(job_url.encode("utf-8")).hexdigest(),
+            "observed_url_fingerprint": hashlib.sha256(observed_url.encode("utf-8")).hexdigest(),
+            "confirmation_digest": hashlib.sha256(confirmation.encode("utf-8")).hexdigest(),
+            "authorized_at": now.isoformat(),
+            "expires_at": (
+                now + timedelta(minutes=SUBMISSION_AUTHORIZATION_TTL_MINUTES)
+            ).isoformat(),
+            "consumed_at": None,
+            "invalidated_at": None,
+        }
+        self.submission_authorizations[authorization_id] = authorization
+        return {
+            "ok": True,
+            "submission_authorization_id": authorization_id,
+            "application_id": str(application_id),
+            "compilation_id": str(compilation_id),
+            "authorized_at": authorization["authorized_at"],
+            "expires_at": authorization["expires_at"],
+            "authorization_active": True,
+            "authorization_scope": "one_application_one_final_click",
+            "one_final_click_authorized": True,
+            "server_side_submission": False,
+            "post_click_requirement": (
+                "Record submitted only after a visible post-submit confirmation."
+            ),
         }
 
     def _owned_graph(self, user_id: UUID, graph_id: UUID) -> dict[str, Any]:

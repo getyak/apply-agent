@@ -65,7 +65,8 @@ pending change set ──人工批准──► immutable Career Graph revision
 迁移 `022_career_graph` 新增四类实体，迁移
 `024_career_graph_compiler_profiles` 为 compilation 固定编译器配置和质量报告，
 迁移 `026_resume_artifact_delivery_grants` 提供短期私有文件交付，迁移
-`027_career_graph_publication_history` 提供稳定公共链接版本历史：
+`027_career_graph_publication_history` 提供稳定公共链接版本历史，迁移
+`028_application_submission_authorizations` 记录逐 application 的短期提交授权：
 
 - `career_graphs`：用户拥有的图谱入口，只指向一个当前已批准 revision。
 - `career_graph_revisions`：不可变 node/edge snapshot。
@@ -78,6 +79,9 @@ pending change set ──人工批准──► immutable Career Graph revision
   compilation。
 - `career_graph_publication_events`：append-only 记录 published / updated /
   revoked；只存 public token 的 SHA-256 摘要，不复制 bearer token。
+- `application_submission_authorizations`：绑定 owner + application +
+  compilation，保存预期 URL、观测 URL 和精确短语的 SHA-256；五分钟过期，
+  重签会废止旧票据，浏览器确认页回写 submitted 时原子消费。
 
 节点有稳定 ID、类型、事实数据和 provenance；边表达 role → achievement、
 achievement → skill 等关系。编译器只选择和排序节点文本，不根据 JD 生成新事实。
@@ -199,18 +203,23 @@ resource 和 Web URL 替换为 HTTPS，不能使用 loopback 配置。
 
 ## 5. HITL 不是一句 prompt
 
-v1 同时使用三层保证：
+当前实现同时使用四层保证：
 
 1. **状态机**：proposal、draft、approved、published 分离，未批准状态不能进入
    下游。
 2. **精确确认短语**：批准/发布工具拒绝普通 “yes”。
-3. **Codex MCP approval policy**：项目配置对写工具和关键批准工具开启 prompt。
+3. **短期授权票据**：最终点击前把当前页面、application、compilation 和精确短语
+   绑定；票据五分钟过期，重签废止旧票据，确认页回写时只能消费一次。
+4. **Codex MCP approval policy**：项目配置对写工具和关键批准工具开启 prompt。
 
 浏览器交接只返回 package，不暴露 server-side submit tool。每次 fill 前和最终
 提交审阅前都必须调用 `assess_application_browser_checkpoint`；404、跳到其他
 职位、登录、验证码或安全检查会停止整批。网页上的 Submit 按钮即使可见且 enabled
 也不构成授权。Skill 要求用户在当前消息输入与 application ID 绑定的精确确认
-短语；一次批量授权不会被解释为无限期许可。
+短语；随后必须调用 `authorize_application_submission` 获得相同 application /
+compilation 的短期票据，才可立即点击一次。一次批量授权不会被解释为无限期许可。
+票据不是 submit API，也不能证明网页已经接受申请；如果页面结果含糊，不能把
+点击当作 submitted，更不能复用旧票据盲目重试。
 
 编译后、批准前必须先调用 `prepare_resume_artifact_review`：MCP 只返回不含密钥
 的 Relay 页面 URL，并把 256-bit 下载码作为独立字段返回。页面通过 POST 接收
@@ -225,12 +234,17 @@ read-then-consume 竞态。批量准备只创建紧凑的本地队列，不提�
 
 用户确定要申请后，`create_application_draft` 会先幂等创建或复用 Relay 本地
 `application_drafts` 记录，并把它连接到批准的 compilation résumé。它不会打开
-网站或提交表单。后续 handoff 携带同一个 application ID。Codex 在用户浏览器
-看到真实确认页后，才可通过 MCP 更新该记录，使结果反馈能回到 selection
-manifest；对应事件源是 `codex_mcp_browser_confirmation`。提交回写不再复用只读
-`pg_query`：MCP 使用 owner-scoped PostgreSQL write transaction，并由 migration
-025 trigger 追加历史事件。按钮可见或已点击不算完成；只有确认页、用户明确报告
-或招聘方消息才允许 `record_application_progress` 追加观察。
+网站或提交表单。后续 handoff 携带同一个 application ID。Codex 在最终点击前把
+用户当前消息中的精确短语通过 `authorize_application_submission` 记录为五分钟
+票据；数据库不保存原短语或 URL，只保存摘要。看到真实确认页后，才可通过 MCP
+更新该记录，使结果反馈能回到 selection manifest；对应事件源是
+`codex_mcp_browser_confirmation`，并且必须携带同一票据 ID。migration 028 的
+BEFORE trigger 在状态首次进入 submitted 时原子消费
+owner/application/compilation 匹配且未过期的票据，migration 025 的 AFTER
+trigger 再追加历史事件。MCP 提交回写不再复用只读 `pg_query`。按钮可见、授权
+票据或已点击都不算完成；只有确认页、用户明确报告或招聘方消息才允许
+`record_application_progress` 追加观察。用户明确报告的手工进度与
+Web/extension writer 不会被伪装成 MCP 浏览器确认。
 
 公开简历更新不改写已发布 résumé row。目标 compilation 必须属于同一 graph、
 已独立批准且尚未发布；MCP 在一个事务中把原 128-bit token 从 source résumé
@@ -258,7 +272,7 @@ trigger 也拒绝未声明 review-gated writer 的 token 变更，避免绕过 M
 | 现有简历导入 | JSON Resume → pending change → Web node/edge diff → exact-confirmation revision | ✅ |
 | MCP 暴露给 Codex | STDIO + OAuth Streamable HTTP | ✅ |
 | Repo skill 编排 | `manage-career-graph` | ✅ |
-| 人工确认闸门 | change / compilation / publish / public update / revoke 独立确认 | ✅ |
+| 人工确认闸门 | change / compilation / publish / public update / revoke 独立确认；final click 为逐 application 精确短语 + 短期票据 | ✅ |
 | Codex 登录 | ChatGPT 登录态 → skill → live MCP → PG 多轮验证 | ✅ Codex 侧 |
 | Relay 多用户登录集成 | OAuth subject → owner scope；Web consent | ✅ |
 | 跨 Codex 会话恢复 | 只读 compilation/application inventory；分页、过滤且不返回 capability | ✅ v1 |
@@ -348,6 +362,14 @@ trigger 也拒绝未声明 review-gated writer 的 token 变更，避免绕过 M
   可原子转移到另一已批准 artifact，随后可撤销并另行发布新链接；历史依次保留
   baseline / updated / revoked / published。跨 owner résumé、跨 graph 事件、
   未声明 writer 的 token 变更及 event update 均被数据库拒绝。隔离库已删除。
+- migration 028 在隔离 PostgreSQL 中通过完整 001→028、028 down、028 up
+  往返。真实 store 回归验证：缺失、随机、过期和其他 owner 的票据都不能把 MCP
+  browser-confirmed 状态推进到 submitted；正确票据在同一事务中消费并追加事件，
+  同票据重试不重复写事件，直接修改已消费票据被拒绝。重签会同时废止过期票据和
+  仍未使用的上一张票据；数据库只持久化 URL 与确认短语摘要，
+  `server_side_submission=false` 保持不变。手工 user-reported submit 不需要伪装
+  成浏览器授权路径。直接删除票据被拒绝，但删除 owner 仍可完整级联清理
+  application、compilation 和票据；隔离数据库已删除。
 - 真实 Hono public route 在稳定 token 更新前后分别返回 version 1 / version 2，
   URL 未变化；撤销后同一路径返回 404，两份 immutable artifact 均保留。原生
   Codex CLI 0.146.0 使用 ChatGPT 登录态在 ephemeral read-only 会话中只调用

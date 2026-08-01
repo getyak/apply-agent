@@ -45,7 +45,10 @@ INSTRUCTIONS = (
     "assess the observed page before fill and again before submit review; stop on stale "
     "jobs, login, CAPTCHA, or security checks. An enabled DOM button is not authorization. "
     "Never enter passwords, bypass CAPTCHA, or click the final Submit/Apply button without "
-    "the exact per-application phrase in the user's current message."
+    "the exact per-application phrase in the user's current message. After that phrase, call "
+    "authorize_application_submission and verify its short-lived receipt before the click. "
+    "Only a visible post-submit confirmation may consume that receipt through "
+    "record_application_progress; a click alone is not submission evidence."
 )
 
 
@@ -541,7 +544,9 @@ async def create_application_draft(
         "Append an owner-scoped lifecycle observation for a Career Graph application. Use only "
         "after the user reports it, the browser shows a post-submit confirmation, or a recruiter "
         "message establishes it. This changes tracking state, never Career Graph facts, and a "
-        "visible/enabled Submit button alone is not evidence of submission."
+        "visible/enabled Submit button alone is not evidence of submission. A browser-confirmed "
+        "submitted transition must consume the receipt returned immediately before the click by "
+        "authorize_application_submission."
     ),
     annotations=LOCAL_WRITE,
 )
@@ -568,6 +573,7 @@ async def record_application_progress(
     interview_date: str | None = None,
     clear_interview_date: bool = False,
     submitted_via: Literal["client_extension", "api", "manual", "email"] | None = None,
+    submission_authorization_id: str | None = None,
 ) -> dict[str, Any]:
     return await tools.record_application_progress(
         application_id=application_id,
@@ -577,6 +583,7 @@ async def record_application_progress(
         interview_date=interview_date,
         clear_interview_date=clear_interview_date,
         submitted_via=submitted_via,
+        submission_authorization_id=submission_authorization_id,
     )
 
 
@@ -625,6 +632,32 @@ async def assess_application_browser_checkpoint(
         observed_url=observed_url,
         visible_text=visible_text,
         stage=stage,
+    )
+
+
+@mcp.tool(
+    title="Authorize one browser application submission",
+    description=(
+        "After a before-submit checkpoint and the user's exact application-bound phrase, "
+        "issue a five-minute, one-application receipt for one final click in the user's "
+        "browser. Reissuing invalidates the prior unused receipt. This never clicks, "
+        "submits server-side, or treats the click itself as submission evidence."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def authorize_application_submission(
+    compilation_id: str,
+    job_url: str,
+    observed_url: str,
+    confirmation: str,
+    visible_text: str = "",
+) -> dict[str, Any]:
+    return await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        observed_url=observed_url,
+        confirmation=confirmation,
+        visible_text=visible_text,
     )
 
 

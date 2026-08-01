@@ -177,13 +177,24 @@ Publishing a résumé is not submitting a job application.
 11. Show the platform, role, application ID, résumé compilation ID, generated
     answers, and unresolved warnings. Ask the user to type the exact
     `submission_gate.confirmation_phrase` returned by the checkpoint.
-12. Click the final button only after that exact phrase appears in the user's
-    current message. Repeat the gate for every application in a batch.
-13. A click is not evidence of submission. Only after a visible post-submit
+12. After that exact phrase appears in the user's current message, call
+    `authorize_application_submission` with the same compilation, expected job
+    URL, currently observed URL, minimal visible checkpoint text, and exact
+    phrase. Verify the returned receipt is active, matches the application and
+    compilation, has not expired, and says `server_side_submission=false`.
+    Reissuing a receipt invalidates the prior unused receipt.
+13. Click the final button at most once, immediately after that receipt. Repeat
+    the checkpoint, current-message phrase, and authorization receipt for every
+    application in a batch. If the receipt expires before the click, or a click
+    is ambiguous and a retry might be needed, do not reuse it: reassess the
+    page and request a fresh exact phrase.
+14. A click is not evidence of submission. Only after a visible post-submit
     confirmation page, call `record_application_progress` with
-    `status=submitted`, `evidence_source=browser_confirmation`, and the actual
-    submission channel. If the page remains ambiguous, do not record it as
-    submitted; hand control to the user.
+    `status=submitted`, `evidence_source=browser_confirmation`, the actual
+    submission channel, and that receipt's
+    `submission_authorization_id`. This atomically consumes the receipt while
+    appending the outcome event. If the page remains ambiguous, do not record
+    it as submitted; hand control to the user.
 
 If the site blocks automation, preserve the prepared package and hand control
 to the user. Do not evade the block.
@@ -216,5 +227,7 @@ Application history is append-only and never changes Career Graph facts.
 
 Report graph revision, compilation ID, publication URL if any, and browser
 handoff/submission status separately. When progress was recorded, include the
-application ID, event source, and whether a new history event was appended.
-Never claim “submitted” from a prepared handoff or button click alone.
+application ID, event source, whether the application-bound authorization was
+consumed, and whether a new history event was appended. Never claim
+“submitted” from a prepared handoff, authorization receipt, or button click
+alone.

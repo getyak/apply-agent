@@ -118,8 +118,8 @@ async def test_inventory_restores_versions_and_outcomes_without_capabilities() -
     await tools.record_application_progress(
         application_id=application["application_id"],
         status="submitted",
-        evidence_source="browser_confirmation",
-        submitted_via="client_extension",
+        evidence_source="user_reported",
+        submitted_via="manual",
     )
     await tools.record_application_progress(
         application_id=application["application_id"],
@@ -715,15 +715,23 @@ async def test_application_progress_builds_history_and_feedback_without_rewritin
         compilation_id=compilation_id,
         company="Example",
         role_title="Engineer",
-        job_url="https://jobs.example.test/engineer",
+        job_url="https://jobs.lever.co/example/engineer",
     )
     application_id = application["application_id"]
 
+    authorization = await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/engineer",
+        observed_url="https://jobs.lever.co/example/engineer/apply",
+        visible_text="Submit application",
+        confirmation=f"SUBMIT APPLICATION {application_id}",
+    )
     submitted = await tools.record_application_progress(
         application_id=application_id,
         status="submitted",
         evidence_source="browser_confirmation",
         submitted_via="client_extension",
+        submission_authorization_id=authorization["submission_authorization_id"],
     )
     interviewed = await tools.record_application_progress(
         application_id=application_id,
@@ -778,6 +786,13 @@ async def test_application_progress_rejects_unverifiable_inputs_before_writing()
             evidence_source="user_reported",
             submitted_via="manual",
         )
+    with pytest.raises(CareerGraphStateError, match="authorization receipt"):
+        await tools.record_application_progress(
+            application_id="00000000-0000-4000-8000-000000000123",
+            status="submitted",
+            evidence_source="browser_confirmation",
+            submitted_via="client_extension",
+        )
     assert tools.FAKE_STORE.application_drafts == {}
 
 
@@ -813,6 +828,84 @@ async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None
     )
     assert checkpoint["next_action"] == "ask_user_for_exact_confirmation_phrase"
     assert "resume" not in checkpoint
+
+    with pytest.raises(CareerGraphStateError, match="type exactly"):
+        await tools.authorize_application_submission(
+            compilation_id=compilation_id,
+            job_url="https://jobs.lever.co/example/abc",
+            observed_url="https://jobs.lever.co/example/abc/apply",
+            visible_text="Submit application",
+            confirmation="yes",
+        )
+
+    phrase = f"SUBMIT APPLICATION {application['application_id']}"
+    first_authorization = await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        visible_text="Submit application",
+        confirmation=phrase,
+    )
+    authorization = await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        visible_text="Submit application",
+        confirmation=phrase,
+    )
+    assert authorization["authorization_scope"] == "one_application_one_final_click"
+    assert authorization["one_final_click_authorized"] is True
+    assert authorization["server_side_submission"] is False
+    assert (
+        tools.FAKE_STORE.submission_authorizations[
+            first_authorization["submission_authorization_id"]
+        ]["invalidated_at"]
+        is not None
+    )
+
+    with pytest.raises(CareerGraphStateError, match="authorization receipt"):
+        await tools.record_application_progress(
+            application_id=application["application_id"],
+            status="submitted",
+            evidence_source="browser_confirmation",
+            submitted_via="client_extension",
+        )
+    with pytest.raises(CareerGraphStateError, match="unavailable or expired"):
+        await tools.record_application_progress(
+            application_id=application["application_id"],
+            status="submitted",
+            evidence_source="browser_confirmation",
+            submitted_via="client_extension",
+            submission_authorization_id=("00000000-0000-4000-8000-000000000123"),
+        )
+
+    submitted = await tools.record_application_progress(
+        application_id=application["application_id"],
+        status="submitted",
+        evidence_source="browser_confirmation",
+        submitted_via="client_extension",
+        submission_authorization_id=authorization["submission_authorization_id"],
+    )
+    assert submitted["submission_authorization"]["consumed"] is True
+    assert submitted["changed"] is True
+
+    repeated = await tools.record_application_progress(
+        application_id=application["application_id"],
+        status="submitted",
+        evidence_source="browser_confirmation",
+        submitted_via="client_extension",
+        submission_authorization_id=authorization["submission_authorization_id"],
+    )
+    assert repeated["submission_authorization"]["consumed"] is True
+    assert repeated["changed"] is False
+    with pytest.raises(CareerGraphStateError, match="unavailable or expired"):
+        await tools.record_application_progress(
+            application_id=application["application_id"],
+            status="submitted",
+            evidence_source="browser_confirmation",
+            submitted_via="client_extension",
+            submission_authorization_id=("00000000-0000-4000-8000-000000000124"),
+        )
 
 
 async def test_batch_prepares_each_application_without_blanket_submit_approval() -> None:

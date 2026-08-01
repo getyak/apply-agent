@@ -39,6 +39,7 @@ EVIDENCE_REPORT_HISTORY_APPLICATION_LIMIT = 100
 EVIDENCE_REPORT_EVENT_LIMIT_PER_APPLICATION = 100
 ARTIFACT_DELIVERY_TTL_MINUTES = 10
 ARTIFACT_DELIVERY_MAX_DOWNLOADS = 5
+SUBMISSION_AUTHORIZATION_TTL_MINUTES = 5
 
 
 def _dsn() -> str:
@@ -1027,6 +1028,7 @@ async def record_application_transition(
     interview_date: str | None = None,
     clear_interview_date: bool = False,
     submitted_via: str | None = None,
+    submission_authorization_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Record one user/browser-observed transition on a graph-linked application."""
 
@@ -1085,23 +1087,47 @@ async def record_application_transition(
                 "SELECT set_config('relay.application_event_source', %s, true)",
                 (event_source,),
             )
-            await cur.execute(
-                f"""
-                UPDATE application_drafts a
-                   SET {", ".join(assignments)}
-                 WHERE a.id = %s
-                   AND a.user_id = %s
-                   AND EXISTS (
-                       SELECT 1
-                         FROM career_graph_compilations c
-                        WHERE c.resume_id = a.resume_version_id
-                          AND c.user_id = a.user_id
-                   )
-                RETURNING a.id, a.status, a.outcome, a.submitted_at,
-                          a.submitted_via, a.interview_date
-                """,
-                (*params, str(application_id), str(user_id)),
-            )
+            if submission_authorization_id is not None:
+                await cur.execute(
+                    """
+                    SELECT
+                        set_config(
+                            'relay.application_submission_authorization_id',
+                            %s,
+                            true
+                        ),
+                        set_config(
+                            'relay.application_submission_authorization_writer',
+                            'codex_mcp_browser_confirmation',
+                            true
+                        )
+                    """,
+                    (str(submission_authorization_id),),
+                )
+            try:
+                await cur.execute(
+                    f"""
+                    UPDATE application_drafts a
+                       SET {", ".join(assignments)}
+                     WHERE a.id = %s
+                       AND a.user_id = %s
+                       AND EXISTS (
+                           SELECT 1
+                             FROM career_graph_compilations c
+                            WHERE c.resume_id = a.resume_version_id
+                              AND c.user_id = a.user_id
+                       )
+                    RETURNING a.id, a.status, a.outcome, a.submitted_at,
+                              a.submitted_via, a.interview_date
+                    """,
+                    (*params, str(application_id), str(user_id)),
+                )
+            except psycopg.errors.CheckViolation as exc:
+                if submission_authorization_id is not None:
+                    raise CareerGraphStateError(
+                        "browser-confirmed MCP submission authorization is unavailable or expired"
+                    ) from exc
+                raise
             row = await cur.fetchone()
             if not row:
                 raise CareerGraphNotFoundError("Career Graph application not found")
@@ -1118,6 +1144,27 @@ async def record_application_transition(
                 (str(application_id), str(user_id), event_source),
             )
             event = await cur.fetchone()
+            authorization = None
+            if submission_authorization_id is not None:
+                await cur.execute(
+                    """
+                    SELECT id, authorized_at, expires_at, consumed_at, invalidated_at
+                      FROM application_submission_authorizations
+                     WHERE id = %s
+                       AND user_id = %s
+                       AND application_id = %s
+                    """,
+                    (
+                        str(submission_authorization_id),
+                        str(user_id),
+                        str(application_id),
+                    ),
+                )
+                authorization = await cur.fetchone()
+                if not authorization or authorization[3] is None:
+                    raise CareerGraphStateError(
+                        "browser-confirmed MCP submission authorization is unavailable or expired"
+                    )
         await conn.commit()
 
     event_is_new = event is not None
@@ -1141,8 +1188,158 @@ async def record_application_transition(
             else None
         ),
         "changed": event_is_new,
+        "submission_authorization": (
+            {
+                "id": str(authorization[0]),
+                "authorized_at": authorization[1].isoformat(),
+                "expires_at": authorization[2].isoformat(),
+                "consumed_at": (authorization[3].isoformat() if authorization[3] else None),
+                "invalidated_at": (authorization[4].isoformat() if authorization[4] else None),
+                "consumed": authorization[3] is not None,
+            }
+            if authorization
+            else None
+        ),
         "facts_changed": False,
         "requires_human_review_for_future_compilation": True,
+    }
+
+
+async def issue_application_submission_authorization(
+    user_id: UUID,
+    application_id: UUID,
+    compilation_id: UUID,
+    *,
+    job_url: str,
+    observed_url: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Record one short-lived exact confirmation without submitting anything."""
+
+    expected_confirmation = f"SUBMIT APPLICATION {application_id}"
+    if confirmation != expected_confirmation:
+        raise CareerGraphStateError(
+            "application submission authorization requires the exact confirmation phrase"
+        )
+
+    fingerprints = {
+        "expected_job_url": hashlib.sha256(job_url.encode("utf-8")).hexdigest(),
+        "observed_url": hashlib.sha256(observed_url.encode("utf-8")).hexdigest(),
+        "confirmation": hashlib.sha256(confirmation.encode("utf-8")).hexdigest(),
+    }
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    set_config(
+                        'relay.application_submission_authorization_writer',
+                        'codex_mcp_authorize',
+                        true
+                    ),
+                    pg_advisory_xact_lock(hashtext(%s))
+                """,
+                (str(application_id),),
+            )
+            await cur.execute(
+                """
+                SELECT application.status,
+                       application.resume_version_id,
+                       job.url,
+                       compilation.resume_id,
+                       compilation.status
+                  FROM application_drafts AS application
+                  JOIN jobs AS job ON job.id = application.job_id
+                  JOIN career_graph_compilations AS compilation
+                    ON compilation.id = %s
+                   AND compilation.user_id = application.user_id
+                   AND compilation.job_id = application.job_id
+                 WHERE application.id = %s
+                   AND application.user_id = %s
+                 FOR UPDATE OF application, compilation
+                """,
+                (str(compilation_id), str(application_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError(
+                    "application and compilation authorization scope not found"
+                )
+            (
+                application_status,
+                application_resume_id,
+                expected_job_url,
+                compilation_resume_id,
+                compilation_status,
+            ) = row
+            if application_resume_id != compilation_resume_id:
+                raise CareerGraphStateError("application no longer matches this résumé compilation")
+            if application_status != "review":
+                raise CareerGraphStateError("only an application awaiting review can be authorized")
+            if compilation_status not in {"approved", "published"}:
+                raise CareerGraphStateError("approve the compilation before authorizing submission")
+            if expected_job_url != job_url:
+                raise CareerGraphStateError(
+                    "authorization must use the application's exact job URL"
+                )
+
+            await cur.execute(
+                """
+                UPDATE application_submission_authorizations
+                   SET invalidated_at = transaction_timestamp()
+                 WHERE user_id = %s
+                   AND application_id = %s
+                   AND consumed_at IS NULL
+                   AND invalidated_at IS NULL
+                """,
+                (str(user_id), str(application_id)),
+            )
+            await cur.execute(
+                """
+                INSERT INTO application_submission_authorizations (
+                    user_id,
+                    application_id,
+                    compilation_id,
+                    expected_job_url_fingerprint,
+                    observed_url_fingerprint,
+                    confirmation_digest,
+                    expires_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    transaction_timestamp() + (%s * interval '1 minute')
+                )
+                RETURNING id, authorized_at, expires_at
+                """,
+                (
+                    str(user_id),
+                    str(application_id),
+                    str(compilation_id),
+                    fingerprints["expected_job_url"],
+                    fingerprints["observed_url"],
+                    fingerprints["confirmation"],
+                    SUBMISSION_AUTHORIZATION_TTL_MINUTES,
+                ),
+            )
+            authorization = await cur.fetchone()
+            if not authorization:
+                raise RuntimeError("failed to issue application submission authorization")
+        await conn.commit()
+
+    return {
+        "ok": True,
+        "submission_authorization_id": str(authorization[0]),
+        "application_id": str(application_id),
+        "compilation_id": str(compilation_id),
+        "authorized_at": authorization[1].isoformat(),
+        "expires_at": authorization[2].isoformat(),
+        "authorization_active": True,
+        "authorization_scope": "one_application_one_final_click",
+        "one_final_click_authorized": True,
+        "server_side_submission": False,
+        "post_click_requirement": (
+            "Record submitted only after a visible post-submit confirmation."
+        ),
     }
 
 
