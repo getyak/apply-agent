@@ -92,6 +92,33 @@ cascade for privacy deletion. Career Graph feedback uses the furthest observed
 stage, never silently classifies free-text outcomes, and labels small cohorts
 as insufficient rather than causal evidence.
 
+### ApplicationQuestionnaire
+```sql
+ApplicationQuestionnaire {
+  id                UUID PRIMARY KEY,
+  user_id           UUID,
+  application_id    UUID,
+  compilation_id    UUID,
+  revision          INT,
+  status            TEXT,       -- draft | approved | rejected
+  job_identity      JSONB,      -- expected/observed company, title, ATS id
+  fields            JSONB,      -- fill/manual/skip, answer, sensitivity, evidence
+  summary           JSONB,
+  created_at        TIMESTAMP,
+  reviewed_at       TIMESTAMP,
+  approval_source   TEXT        -- codex_mcp_exact_confirmation
+}
+```
+
+This versioned artifact is the review boundary between browser inspection and
+browser filling. Fill answers require a verified reference to the approved
+résumé, approved Career Graph revision, or a current user response. The server
+forces legal, immigration, compensation, and demographic questions into the
+sensitive path even if a caller marks them otherwise. A partial unique index
+allows only one draft per application. This table deliberately does not reuse
+legacy `application_drafts.form_answers`, whose shape belongs to the
+Coordinator workflow.
+
 ### ApplicationSubmissionAuthorization
 ```sql
 ApplicationSubmissionAuthorization {
@@ -112,8 +139,8 @@ ApplicationSubmissionAuthorization {
 
 This is not a submission capability. It records an owner-confirmed,
 application-bound authorization immediately before one final click in the
-user's browser. A receipt expires after five minutes, a replacement
-invalidates the prior unused receipt, and only the first
+user's browser. A receipt expires after five minutes; a replacement or a new
+questionnaire revision invalidates the prior unused receipt, and only the first
 `codex_mcp_browser_confirmation` transition to `submitted` can atomically
 consume it. The raw URL and confirmation phrase are never stored. User-reported
 manual progress and non-MCP writers remain separate evidence paths.

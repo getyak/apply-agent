@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from collections import Counter
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlparse
 
@@ -95,6 +97,12 @@ def assess_browser_checkpoint(
     observed_url: str,
     visible_text: str = "",
     stage: BrowserCheckpointStage = "before_fill",
+    expected_company: str | None = None,
+    expected_role_title: str | None = None,
+    expected_job_id: str | None = None,
+    observed_company: str | None = None,
+    observed_role_title: str | None = None,
+    observed_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Assess an observed browser page before filling or reviewing submission.
 
@@ -109,6 +117,15 @@ def assess_browser_checkpoint(
     observed = urlparse(observed_url)
     target = classify_application_target(expected_job_url)
     reasons: list[str] = []
+    identity_required = expected_company is not None or expected_role_title is not None
+    resolved_expected_job_id = expected_job_id or extract_ats_job_id(
+        expected_job_url,
+        target["platform"],
+    )
+    resolved_observed_job_id = observed_job_id or extract_ats_job_id(
+        observed_url,
+        target["platform"],
+    )
 
     if (
         expected.scheme not in {"http", "https"}
@@ -124,6 +141,37 @@ def assess_browser_checkpoint(
             reasons.append("browser left the expected job-platform origin")
         elif not _same_job_flow(expected_job_url, observed_url, target["platform"]):
             reasons.append("browser is no longer on the expected job application")
+
+    company_matches: bool | None = None
+    role_matches: bool | None = None
+    job_id_matches: bool | None = None
+    if identity_required:
+        if expected_company:
+            if not observed_company or not observed_company.strip():
+                reasons.append("browser job company was not supplied for identity verification")
+                company_matches = False
+            else:
+                company_matches = _company_identity(expected_company) == _company_identity(
+                    observed_company
+                )
+                if not company_matches:
+                    reasons.append("browser job company does not match the tracked application")
+        if expected_role_title:
+            if not observed_role_title or not observed_role_title.strip():
+                reasons.append("browser job role title was not supplied for identity verification")
+                role_matches = False
+            else:
+                role_matches = _role_identity(expected_role_title) == _role_identity(
+                    observed_role_title
+                )
+                if not role_matches:
+                    reasons.append(
+                        "browser job role title does not match the tracked application"
+                    )
+        if resolved_expected_job_id:
+            job_id_matches = resolved_expected_job_id == resolved_observed_job_id
+            if not job_id_matches:
+                reasons.append("browser ATS job id does not match the tracked application")
 
     observed_query = parse_qs(observed.query)
     if "_security_check" in observed_query or observed.path.startswith("/napi/zpssrseo/"):
@@ -161,12 +209,87 @@ def assess_browser_checkpoint(
         "safe_to_submit": False,
         "stop_entire_batch": bool(reasons),
         "stop_reasons": reasons,
+        "job_identity": {
+            "required": identity_required,
+            "expected": {
+                "company": expected_company,
+                "role_title": expected_role_title,
+                "ats_job_id": resolved_expected_job_id,
+            },
+            "observed": {
+                "company": observed_company,
+                "role_title": observed_role_title,
+                "ats_job_id": resolved_observed_job_id,
+            },
+            "matches": {
+                "company": company_matches,
+                "role_title": role_matches,
+                "ats_job_id": job_id_matches,
+            },
+            "verified": identity_required
+            and company_matches is not False
+            and role_matches is not False
+            and job_id_matches is not False
+            and not any("identity verification" in reason for reason in reasons),
+        },
         "submission_gate": {
             "dom_button_state_is_authorization": False,
             "requires_current_turn_user_confirmation": True,
             "approval_scope": "one_application",
         },
     }
+
+
+def extract_ats_job_id(job_url: str, platform: str | None = None) -> str | None:
+    """Extract a stable public ATS job id without trusting page text."""
+
+    parsed = urlparse(job_url)
+    resolved_platform = platform or classify_application_target(job_url)["platform"]
+    parts = [part for part in parsed.path.split("/") if part]
+    if resolved_platform == "greenhouse":
+        if len(parts) >= 3 and parts[-2] == "jobs":
+            return parts[-1]
+        return None
+    if resolved_platform in {"lever", "ashby"}:
+        if len(parts) >= 2:
+            return parts[1]
+        return None
+    return None
+
+
+def _identity_tokens(value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", value).casefold().replace("&", " and ")
+    return re.findall(r"[\w]+", normalized, flags=re.UNICODE)
+
+
+def _company_identity(value: str) -> tuple[str, ...]:
+    tokens = _identity_tokens(value)
+    legal_suffixes = {
+        "co",
+        "company",
+        "corp",
+        "corporation",
+        "inc",
+        "incorporated",
+        "limited",
+        "llc",
+        "ltd",
+        "plc",
+    }
+    while tokens and tokens[-1] in legal_suffixes:
+        tokens.pop()
+    return tuple(tokens)
+
+
+def _role_identity(value: str) -> Counter[str]:
+    aliases = {
+        "sr": "senior",
+        "jr": "junior",
+        "swe": "software_engineer",
+        "dev": "developer",
+    }
+    tokens = [aliases.get(token, token) for token in _identity_tokens(value)]
+    return Counter(tokens)
 
 
 def _same_job_flow(expected_url: str, observed_url: str, platform: str) -> bool:

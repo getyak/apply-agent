@@ -79,6 +79,53 @@ def test_submit_checkpoint_requires_review_even_when_dom_button_is_enabled() -> 
     assert result["safe_to_submit"] is False
 
 
+def test_semantic_job_identity_is_required_and_normalized_conservatively() -> None:
+    expected = "https://jobs.lever.co/openai/backend-123"
+    missing = assess_browser_checkpoint(
+        expected_job_url=expected,
+        observed_url=f"{expected}/apply",
+        expected_company="OpenAI, Inc.",
+        expected_role_title="Senior Backend Engineer",
+    )
+    assert missing["status"] == "stop"
+    assert missing["job_identity"]["verified"] is False
+    assert any("not supplied" in reason for reason in missing["stop_reasons"])
+
+    matching = assess_browser_checkpoint(
+        expected_job_url=expected,
+        observed_url=f"{expected}/apply",
+        expected_company="OpenAI, Inc.",
+        expected_role_title="Senior Backend Engineer",
+        observed_company="OpenAI",
+        observed_role_title="Backend Engineer, Sr.",
+    )
+    assert matching["status"] == "ready_for_fill"
+    assert matching["job_identity"]["verified"] is True
+    assert matching["job_identity"]["matches"] == {
+        "company": True,
+        "role_title": True,
+        "ats_job_id": True,
+    }
+
+
+def test_same_url_with_reused_job_content_stops_before_fill() -> None:
+    url = "https://job-boards.greenhouse.io/glossgenius/jobs/6681936003"
+    result = assess_browser_checkpoint(
+        expected_job_url=url,
+        observed_url=url,
+        expected_company="GlossGenius",
+        expected_role_title="Senior Software Engineer",
+        observed_company="Genius AI",
+        observed_role_title="Software Engineer - All Levels",
+        visible_text="Job Application for Software Engineer - All Levels at Genius AI",
+    )
+    assert result["status"] == "stop"
+    assert result["safe_to_fill"] is False
+    assert result["job_identity"]["verified"] is False
+    assert result["job_identity"]["matches"]["company"] is False
+    assert result["job_identity"]["matches"]["role_title"] is False
+
+
 def test_stale_redirected_and_security_check_pages_stop_the_batch() -> None:
     stale = assess_browser_checkpoint(
         expected_job_url="https://jobs.ashbyhq.com/example/abc",

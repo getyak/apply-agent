@@ -59,6 +59,21 @@ def _coerce_json(value: Any) -> Any:
     return value
 
 
+def _questionnaire_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "questionnaire_id": str(row[0]),
+        "schema_version": 1,
+        "revision": int(row[1]),
+        "status": row[2],
+        "job_identity": _coerce_json(row[3]),
+        "fields": _coerce_json(row[4]),
+        "summary": _coerce_json(row[5]),
+        "created_at": row[6].isoformat(),
+        "reviewed_at": row[7].isoformat() if row[7] else None,
+        "approval_source": row[8],
+    }
+
+
 def _row_graph(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
         "id": str(row[0]),
@@ -1353,10 +1368,12 @@ async def get_compilation(user_id: UUID, compilation_id: UUID) -> dict[str, Any]
                        rv.content, c.status, c.selection_manifest,
                        c.guard_report, c.compiler_config, c.quality_report,
                        rv.publish_token, c.created_at, c.approved_at,
-                       c.published_at
+                       c.published_at, job.company, job.role_title, job.url,
+                       job.source, job.external_id
                   FROM career_graph_compilations c
                   JOIN career_graph_revisions r ON r.id = c.graph_revision_id
                   JOIN resumes rv ON rv.id = c.resume_id
+                  LEFT JOIN jobs job ON job.id = c.job_id
                  WHERE c.id = %s AND c.user_id = %s
                 """,
                 (str(compilation_id), str(user_id)),
@@ -1383,6 +1400,17 @@ async def get_compilation(user_id: UUID, compilation_id: UUID) -> dict[str, Any]
         "created_at": row[15].isoformat(),
         "approved_at": row[16].isoformat() if row[16] else None,
         "published_at": row[17].isoformat() if row[17] else None,
+        "job_identity": (
+            {
+                "company": row[18],
+                "role_title": row[19],
+                "job_url": row[20],
+                "source": row[21],
+                "external_id": row[22],
+            }
+            if row[18] is not None or row[19] is not None or row[20] is not None
+            else None
+        ),
     }
 
 
@@ -1918,6 +1946,97 @@ async def get_publication_history(
     }
 
 
+async def bind_compilation_job(
+    user_id: UUID,
+    compilation_id: UUID,
+    *,
+    company: str,
+    role_title: str,
+    job_url: str,
+) -> dict[str, Any]:
+    """Persist the intended job before résumé approval so Codex can resume later."""
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (str(compilation_id),),
+            )
+            await cur.execute(
+                """
+                SELECT job_id, status, jd_text
+                  FROM career_graph_compilations
+                 WHERE id = %s AND user_id = %s
+                 FOR UPDATE
+                """,
+                (str(compilation_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError("compilation not found")
+            job_id, status, jd_text = row
+            if status == "rejected":
+                raise CareerGraphStateError("rejected compilations cannot bind an application")
+            if job_id:
+                await cur.execute(
+                    """
+                    SELECT company, role_title, url
+                      FROM jobs
+                     WHERE id = %s
+                    """,
+                    (str(job_id),),
+                )
+                existing = await cur.fetchone()
+                if not existing:
+                    raise CareerGraphNotFoundError("compilation job not found")
+                if existing != (company, role_title, job_url):
+                    raise CareerGraphStateError(
+                        "compilation is already bound to a different job identity"
+                    )
+            else:
+                external_id = f"career-graph:{compilation_id}"
+                await cur.execute(
+                    """
+                    INSERT INTO jobs (
+                        source, external_id, company, role_title, jd_text, url
+                    ) VALUES ('manual', %s, %s, %s, %s, %s)
+                    ON CONFLICT (source, external_id) DO UPDATE
+                        SET company = EXCLUDED.company,
+                            role_title = EXCLUDED.role_title,
+                            jd_text = EXCLUDED.jd_text,
+                            url = EXCLUDED.url
+                    RETURNING id
+                    """,
+                    (external_id, company, role_title, jd_text, job_url),
+                )
+                job_row = await cur.fetchone()
+                if not job_row:
+                    raise RuntimeError("failed to bind application job")
+                job_id = job_row[0]
+                await cur.execute(
+                    """
+                    UPDATE career_graph_compilations
+                       SET job_id = %s
+                     WHERE id = %s AND user_id = %s
+                    """,
+                    (str(job_id), str(compilation_id), str(user_id)),
+                )
+        await conn.commit()
+    return {
+        "compilation_id": str(compilation_id),
+        "job_id": str(job_id),
+        "job_identity": {
+            "company": company,
+            "role_title": role_title,
+            "job_url": job_url,
+            "source": "manual",
+            "external_id": f"career-graph:{compilation_id}",
+        },
+        "compilation_status": status,
+        "server_side_submission": False,
+    }
+
+
 async def create_application_draft(
     user_id: UUID,
     compilation_id: UUID,
@@ -1986,7 +2105,7 @@ async def create_application_draft(
             else:
                 await cur.execute(
                     """
-                    SELECT url
+                    SELECT url, company, role_title
                       FROM jobs
                      WHERE id = %s
                     """,
@@ -1995,9 +2114,9 @@ async def create_application_draft(
                 existing_job = await cur.fetchone()
                 if not existing_job:
                     raise CareerGraphNotFoundError("compilation job not found")
-                if existing_job[0] != job_url:
+                if existing_job != (job_url, company, role_title):
                     raise CareerGraphStateError(
-                        "compilation is already bound to a different job URL"
+                        "compilation is already bound to a different job identity"
                     )
 
             await cur.execute(
@@ -2059,9 +2178,24 @@ async def application_handoff(
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT a.id
+                SELECT a.id, j.id, j.company, j.role_title, j.source,
+                       j.external_id, questionnaire.id, questionnaire.revision,
+                       questionnaire.status, questionnaire.job_identity,
+                       questionnaire.fields, questionnaire.summary,
+                       questionnaire.created_at, questionnaire.reviewed_at,
+                       questionnaire.approval_source
                   FROM application_drafts a
                   JOIN jobs j ON j.id = a.job_id
+                  LEFT JOIN LATERAL (
+                      SELECT q.id, q.revision, q.status, q.job_identity,
+                             q.fields, q.summary, q.created_at, q.reviewed_at,
+                             q.approval_source
+                        FROM application_questionnaires q
+                       WHERE q.user_id = a.user_id
+                         AND q.application_id = a.id
+                       ORDER BY q.revision DESC
+                       LIMIT 1
+                  ) questionnaire ON true
                  WHERE a.user_id = %s
                    AND a.resume_version_id = %s
                    AND j.url = %s
@@ -2079,6 +2213,18 @@ async def application_handoff(
         "compilation_id": str(compilation_id),
         "application_id": str(application_row[0]),
         "job_url": job_url,
+        "job_identity": {
+            "job_id": str(application_row[1]),
+            "company": application_row[2],
+            "role_title": application_row[3],
+            "source": application_row[4],
+            "external_id": application_row[5],
+        },
+        "questionnaire": (
+            _questionnaire_payload(tuple(application_row[6:15]))
+            if application_row[6]
+            else {}
+        ),
         "resume_id": compilation["resume_id"],
         "resume": compilation["resume"],
         "selection_manifest": compilation["selection_manifest"],
@@ -2090,6 +2236,249 @@ async def application_handoff(
             "CAPTCHA solving or bypass",
             "clicking the final Submit/Apply button without explicit user approval",
         ],
+    }
+
+
+async def save_application_questionnaire(
+    user_id: UUID,
+    application_id: UUID,
+    compilation_id: UUID,
+    *,
+    questionnaire: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist a reviewable questionnaire bound to one application package."""
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    set_config(
+                        'relay.application_submission_authorization_writer',
+                        'codex_mcp_authorize',
+                        true
+                    ),
+                    pg_advisory_xact_lock(hashtext(%s))
+                """,
+                (str(application_id),),
+            )
+            await cur.execute(
+                """
+                SELECT application.status
+                  FROM application_drafts AS application
+                  JOIN career_graph_compilations AS compilation
+                    ON compilation.id = %s
+                   AND compilation.user_id = application.user_id
+                   AND compilation.resume_id = application.resume_version_id
+                   AND compilation.job_id = application.job_id
+                 WHERE application.id = %s
+                   AND application.user_id = %s
+                 FOR UPDATE OF application
+                """,
+                (str(compilation_id), str(application_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError(
+                    "application and compilation questionnaire scope not found"
+                )
+            if row[0] != "review":
+                raise CareerGraphStateError(
+                    "questionnaires can only change while the application awaits review"
+                )
+            await cur.execute(
+                """
+                UPDATE application_submission_authorizations
+                   SET invalidated_at = transaction_timestamp()
+                 WHERE user_id = %s
+                   AND application_id = %s
+                   AND consumed_at IS NULL
+                   AND invalidated_at IS NULL
+                """,
+                (str(user_id), str(application_id)),
+            )
+            await cur.execute(
+                """
+                SELECT revision, status
+                  FROM application_questionnaires
+                 WHERE user_id = %s AND application_id = %s
+                 ORDER BY revision DESC
+                 LIMIT 1
+                """,
+                (str(user_id), str(application_id)),
+            )
+            latest_row = await cur.fetchone()
+            if latest_row and latest_row[1] == "draft":
+                raise CareerGraphStateError(
+                    "a draft questionnaire already exists; approve or reject it before revising"
+                )
+            revision = int(latest_row[0]) + 1 if latest_row else 1
+            await cur.execute(
+                """
+                INSERT INTO application_questionnaires (
+                    user_id, application_id, compilation_id, revision, status,
+                    job_identity, fields, summary
+                ) VALUES (
+                    %s, %s, %s, %s, 'draft', %s::jsonb, %s::jsonb, %s::jsonb
+                )
+                RETURNING id, revision, status, job_identity, fields, summary,
+                          created_at, reviewed_at, approval_source
+                """,
+                (
+                    str(user_id),
+                    str(application_id),
+                    str(compilation_id),
+                    revision,
+                    _json(questionnaire["job_identity"]),
+                    _json(questionnaire["fields"]),
+                    _json(questionnaire["summary"]),
+                ),
+            )
+            stored = await cur.fetchone()
+            if not stored:
+                raise RuntimeError("failed to save application questionnaire")
+        await conn.commit()
+    return {
+        **_questionnaire_payload(tuple(stored)),
+        "application_id": str(application_id),
+        "compilation_id": str(compilation_id),
+    }
+
+
+async def get_application_questionnaire(
+    user_id: UUID,
+    application_id: UUID,
+    compilation_id: UUID,
+) -> dict[str, Any] | None:
+    """Read the full questionnaire only for its exact owner-scoped package."""
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT questionnaire.id, questionnaire.revision,
+                       questionnaire.status, questionnaire.job_identity,
+                       questionnaire.fields, questionnaire.summary,
+                       questionnaire.created_at, questionnaire.reviewed_at,
+                       questionnaire.approval_source
+                  FROM application_drafts AS application
+                  JOIN career_graph_compilations AS compilation
+                    ON compilation.id = %s
+                   AND compilation.user_id = application.user_id
+                   AND compilation.resume_id = application.resume_version_id
+                   AND compilation.job_id = application.job_id
+                  LEFT JOIN LATERAL (
+                      SELECT q.id, q.revision, q.status, q.job_identity,
+                             q.fields, q.summary, q.created_at, q.reviewed_at,
+                             q.approval_source
+                        FROM application_questionnaires q
+                       WHERE q.user_id = application.user_id
+                         AND q.application_id = application.id
+                         AND q.compilation_id = compilation.id
+                       ORDER BY q.revision DESC
+                       LIMIT 1
+                  ) questionnaire ON true
+                 WHERE application.id = %s
+                   AND application.user_id = %s
+                """,
+                (str(compilation_id), str(application_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+    if not row:
+        raise CareerGraphNotFoundError(
+            "application and compilation questionnaire scope not found"
+        )
+    if not row[0]:
+        return None
+    return {
+        **_questionnaire_payload(tuple(row)),
+        "application_id": str(application_id),
+        "compilation_id": str(compilation_id),
+    }
+
+
+async def decide_application_questionnaire(
+    user_id: UUID,
+    application_id: UUID,
+    compilation_id: UUID,
+    *,
+    decision: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Approve or reject the latest questionnaire revision with an exact phrase."""
+
+    if decision not in {"approved", "rejected"}:
+        raise CareerGraphStateError("questionnaire decision must be approved or rejected")
+    verb = "APPROVE" if decision == "approved" else "REJECT"
+    expected = f"{verb} QUESTIONNAIRE {application_id}"
+    if confirmation != expected:
+        raise CareerGraphStateError(
+            f"human confirmation required. Ask the user to type exactly: {expected}"
+        )
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT application.status
+                  FROM application_drafts AS application
+                  JOIN career_graph_compilations AS compilation
+                    ON compilation.id = %s
+                   AND compilation.user_id = application.user_id
+                   AND compilation.resume_id = application.resume_version_id
+                   AND compilation.job_id = application.job_id
+                 WHERE application.id = %s
+                   AND application.user_id = %s
+                 FOR UPDATE OF application
+                """,
+                (str(compilation_id), str(application_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+            if not row:
+                raise CareerGraphNotFoundError(
+                    "application and compilation questionnaire scope not found"
+                )
+            if row[0] != "review":
+                raise CareerGraphStateError(
+                    "questionnaires can only be reviewed while the application awaits review"
+                )
+            await cur.execute(
+                """
+                SELECT id, revision, status, job_identity, fields, summary,
+                       created_at, reviewed_at, approval_source
+                  FROM application_questionnaires
+                 WHERE user_id = %s
+                   AND application_id = %s
+                   AND compilation_id = %s
+                 ORDER BY revision DESC
+                 LIMIT 1
+                 FOR UPDATE
+                """,
+                (str(user_id), str(application_id), str(compilation_id)),
+            )
+            questionnaire_row = await cur.fetchone()
+            if not questionnaire_row or questionnaire_row[2] != "draft":
+                raise CareerGraphStateError("draft questionnaire not found")
+            await cur.execute(
+                """
+                UPDATE application_questionnaires
+                   SET status = %s,
+                       reviewed_at = transaction_timestamp(),
+                       approval_source = 'codex_mcp_exact_confirmation'
+                 WHERE id = %s
+                RETURNING id, revision, status, job_identity, fields, summary,
+                          created_at, reviewed_at, approval_source
+                """,
+                (decision, str(questionnaire_row[0])),
+            )
+            reviewed = await cur.fetchone()
+            if not reviewed:
+                raise RuntimeError("failed to review application questionnaire")
+        await conn.commit()
+    return {
+        **_questionnaire_payload(tuple(reviewed)),
+        "application_id": str(application_id),
+        "compilation_id": str(compilation_id),
     }
 
 

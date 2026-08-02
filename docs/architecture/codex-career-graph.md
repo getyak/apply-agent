@@ -2,7 +2,8 @@
 
 > 状态：Career Graph 本地闭环、远程 OAuth 身份、现有简历导入审阅 UI、
 > 可复现 PDF/DOCX 导出、稳定公共链接版本更新、短期审阅/上传文件交付和
-> Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；真实用户最终提交仍在
+> Greenhouse/Lever/Ashby 目标站 fill-only 回归已实现；application-bound
+> 问卷审阅、语义职位身份校验和逐次提交授权已连通。真实用户最终提交仍在
 > 后续范围内。
 >
 > 核心决定：Relay 拥有 Career Graph、编译和反馈；Codex 拥有交互式编排与
@@ -66,7 +67,9 @@ pending change set ──人工批准──► immutable Career Graph revision
 `024_career_graph_compiler_profiles` 为 compilation 固定编译器配置和质量报告，
 迁移 `026_resume_artifact_delivery_grants` 提供短期私有文件交付，迁移
 `027_career_graph_publication_history` 提供稳定公共链接版本历史，迁移
-`028_application_submission_authorizations` 记录逐 application 的短期提交授权：
+`028_application_submission_authorizations` 记录逐 application 的短期提交授权，
+迁移 `029_application_questionnaires` 隔离 Codex/浏览器问卷与旧 Coordinator
+答案投影：
 
 - `career_graphs`：用户拥有的图谱入口，只指向一个当前已批准 revision。
 - `career_graph_revisions`：不可变 node/edge snapshot。
@@ -82,6 +85,9 @@ pending change set ──人工批准──► immutable Career Graph revision
 - `application_submission_authorizations`：绑定 owner + application +
   compilation，保存预期 URL、观测 URL 和精确短语的 SHA-256；五分钟过期，
   重签会废止旧票据，浏览器确认页回写 submitted 时原子消费。
+- `application_questionnaires`：版本化保存已验证职位身份、完整检测字段、
+  fill/manual/skip 动作、答案证据和独立审批状态；每个 application 最多一个
+  draft，且不会复用或覆盖 legacy `application_drafts.form_answers`。
 
 节点有稳定 ID、类型、事实数据和 provenance；边表达 role → achievement、
 achievement → skill 等关系。编译器只选择和排序节点文本，不根据 JD 生成新事实。
@@ -122,6 +128,8 @@ MCP 使用当前 Python SDK 的 `FastMCP` 和 typed structured output，并为�
 
 - graph change：`APPROVE CAREER CHANGE <id>`
 - résumé compilation：`APPROVE RESUME <id>`
+- application questionnaire：`APPROVE QUESTIONNAIRE <application_id>`
+  或 `REJECT QUESTIONNAIRE <application_id>`
 - public publish：`PUBLISH <id>`
 - stable public update：`UPDATE PUBLIC RESUME <source> TO <target>`
 - public revoke：`REVOKE PUBLIC RESUME <id>`
@@ -203,19 +211,28 @@ resource 和 Web URL 替换为 HTTPS，不能使用 loopback 配置。
 
 ## 5. HITL 不是一句 prompt
 
-当前实现同时使用四层保证：
+当前实现同时使用五层保证：
 
 1. **状态机**：proposal、draft、approved、published 分离，未批准状态不能进入
    下游。
-2. **精确确认短语**：批准/发布工具拒绝普通 “yes”。
-3. **短期授权票据**：最终点击前把当前页面、application、compilation 和精确短语
+2. **答案证据与敏感字段策略**：fill 必须引用当前 approved résumé、approved
+   Career Graph revision 或当前用户回答；签证/工作许可、薪资、人口统计等字段由
+   服务端强制识别，不能靠调用方把 `sensitive=false` 绕过。
+3. **精确确认短语**：graph、résumé、问卷和发布批准工具拒绝普通 “yes”。
+4. **短期授权票据**：最终点击前把当前页面、application、compilation 和精确短语
    绑定；票据五分钟过期，重签废止旧票据，确认页回写时只能消费一次。
-4. **Codex MCP approval policy**：项目配置对写工具和关键批准工具开启 prompt。
+5. **Codex MCP approval policy**：项目配置对写工具和关键批准工具开启 prompt。
 
 浏览器交接只返回 package，不暴露 server-side submit tool。每次 fill 前和最终
-提交审阅前都必须调用 `assess_application_browser_checkpoint`；404、跳到其他
-职位、登录、验证码或安全检查会停止整批。网页上的 Submit 按钮即使可见且 enabled
-也不构成授权。Skill 要求用户在当前消息输入与 application ID 绑定的精确确认
+提交审阅前都必须调用 `assess_application_browser_checkpoint`；除了 URL/ATS job
+ID，还必须把浏览器可见 company 和 role title 与持久化 job identity 比较。404、
+同 URL 换岗、跳到其他职位、登录、验证码或安全检查会停止整批。检测完整表单后，
+Codex 必须先创建问卷、展示全部答案与证据，并取得独立精确批准；只有最新问卷为
+approved 才可继续填表或签发最终票据。签发前还要把当前字段 ID 集合与 approved
+问卷逐项比较；条件题或页面变化导致字段增减时必须重新审阅问卷。问卷新 revision
+会废止尚未使用的提交票据；所有 required 或计划 fill 的字段还必须在当前页面已
+完成。网页上的 Submit 按钮即使可见且 enabled 也不构成授权。
+Skill 要求用户在当前消息输入与 application ID 绑定的精确确认
 短语；随后必须调用 `authorize_application_submission` 获得相同 application /
 compilation 的短期票据，才可立即点击一次。一次批量授权不会被解释为无限期许可。
 票据不是 submit API，也不能证明网页已经接受申请；如果页面结果含糊，不能把

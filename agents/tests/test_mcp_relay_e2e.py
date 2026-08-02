@@ -45,7 +45,13 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "approve_resume_compilation",
                 "prepare_resume_artifact_review",
                 "assess_application_browser_checkpoint",
+                "propose_application_questionnaire",
+                "get_application_questionnaire",
+                "approve_application_questionnaire",
+                "reject_application_questionnaire",
                 "authorize_application_submission",
+                "start_application_workflow",
+                "resume_application_workflow",
                 "create_application_draft",
                 "record_application_progress",
                 "prepare_application_batch",
@@ -62,6 +68,10 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             assert compiler_schema["artifact_locale"]["enum"] == ["en", "zh"]
             assert compiler_schema["length_budget"]["enum"] == ["one_page", "two_page"]
             assert compiler_schema["ats_profile"]["enum"] == ["standard", "strict"]
+            workflow_schema = by_name["start_application_workflow"].inputSchema["properties"]
+            assert workflow_schema["artifact_locale"]["enum"] == ["en", "zh"]
+            assert workflow_schema["length_budget"]["enum"] == ["one_page", "two_page"]
+            assert workflow_schema["ats_profile"]["enum"] == ["standard", "strict"]
             progress_schema = by_name["record_application_progress"].inputSchema["properties"]
             assert progress_schema["evidence_source"]["enum"] == [
                 "user_reported",
@@ -80,7 +90,45 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "observed_url",
                 "confirmation",
                 "visible_text",
+                "observed_company",
+                "observed_role_title",
+                "observed_job_id",
+                "observed_field_ids",
+                "completed_field_ids",
             }.issubset(authorization_schema)
+            assert {
+                "compilation_id",
+                "job_url",
+                "observed_url",
+                "confirmation",
+                "observed_field_ids",
+                "completed_field_ids",
+            }.issubset(
+                set(
+                    by_name["authorize_application_submission"].inputSchema[
+                        "required"
+                    ]
+                )
+            )
+            checkpoint_schema = by_name["assess_application_browser_checkpoint"].inputSchema[
+                "properties"
+            ]
+            assert {
+                "observed_company",
+                "observed_role_title",
+                "observed_job_id",
+            }.issubset(checkpoint_schema)
+            questionnaire_schema = by_name["propose_application_questionnaire"].inputSchema[
+                "properties"
+            ]
+            assert {
+                "compilation_id",
+                "job_url",
+                "observed_url",
+                "observed_company",
+                "observed_role_title",
+                "questions",
+            }.issubset(questionnaire_schema)
             handoff_schema = by_name["prepare_application_handoff"].inputSchema["properties"]
             assert handoff_schema["artifact_format"]["enum"] == ["pdf", "docx"]
             review_schema = by_name["prepare_resume_artifact_review"].inputSchema["properties"]
@@ -96,6 +144,8 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
             assert by_name["prepare_resume_artifact_review"].annotations.openWorldHint is True
             assert by_name["prepare_application_handoff"].annotations.readOnlyHint is False
             assert by_name["prepare_application_handoff"].annotations.openWorldHint is True
+            assert by_name["get_application_questionnaire"].annotations.readOnlyHint is True
+            assert by_name["approve_application_questionnaire"].annotations.readOnlyHint is False
             assert by_name["authorize_application_submission"].annotations.readOnlyHint is False
             assert by_name["authorize_application_submission"].annotations.openWorldHint is False
 

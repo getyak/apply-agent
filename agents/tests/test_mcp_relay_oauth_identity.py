@@ -19,6 +19,22 @@ def _access_token(*scopes: str) -> AccessToken:
     )
 
 
+async def test_status_explains_connect_action_when_local_identity_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("RELAY_MCP_FAKE", raising=False)
+    monkeypatch.delenv("RELAY_USER_ID", raising=False)
+    monkeypatch.setattr(tools, "get_access_token", lambda: None)
+
+    status = await tools.relay_status()
+
+    assert status["ok"] is False
+    assert status["identity_configured"] is False
+    assert status["mode"] == "disconnected"
+    assert status["authentication"]["recommended"] == "remote_oauth"
+    assert status["workflow_resumable_after_authentication"] is True
+
+
 async def test_oauth_subject_replaces_local_user_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

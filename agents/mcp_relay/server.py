@@ -43,7 +43,10 @@ INSTRUCTIONS = (
     "preflight; if local-file access is disabled, stop the batch and request that permission "
     "or a user-manual upload. Application execution is browser-only: "
     "assess the observed page before fill and again before submit review; stop on stale "
-    "jobs, login, CAPTCHA, or security checks. An enabled DOM button is not authorization. "
+    "jobs, semantic company/title/ATS-id drift, login, CAPTCHA, or security checks. Build "
+    "an application-bound questionnaire from the observed fields, preserve answer evidence, "
+    "and require its separate exact approval before filling or submission authorization. "
+    "An enabled DOM button is not authorization. "
     "Never enter passwords, bypass CAPTCHA, or click the final Submit/Apply button without "
     "the exact per-application phrase in the user's current message. After that phrase, call "
     "authorize_application_submission and verify its short-lived receipt before the click. "
@@ -516,6 +519,53 @@ async def get_resume_publication_history(
 
 
 @mcp.tool(
+    title="Start one application workflow",
+    description=(
+        "One high-level entry point for a paid-value application flow. Compile an "
+        "evidence-backed résumé draft and durably bind the intended company, role, and job "
+        "URL so Codex can resume after OAuth, restart, or human review. This never approves "
+        "the résumé, fills a browser, or submits."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def start_application_workflow(
+    graph_id: str,
+    jd_text: str,
+    company: str,
+    role_title: str,
+    job_url: str,
+    artifact_locale: Literal["en", "zh"] = "en",
+    length_budget: Literal["one_page", "two_page"] = "two_page",
+    ats_profile: Literal["standard", "strict"] = "standard",
+) -> dict[str, Any]:
+    return await tools.start_application_workflow(
+        graph_id=graph_id,
+        jd_text=jd_text,
+        company=company,
+        role_title=role_title,
+        job_url=job_url,
+        artifact_locale=artifact_locale,
+        length_budget=length_budget,
+        ats_profile=ats_profile,
+    )
+
+
+@mcp.tool(
+    title="Resume one application workflow",
+    description=(
+        "Recover the current durable stage and next tool from a workflow id. After résumé "
+        "approval this creates or reuses only the local tracking draft, then routes to browser "
+        "inspection, questionnaire review, browser fill, or recorded lifecycle state."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def resume_application_workflow(
+    workflow_id: str,
+) -> dict[str, Any]:
+    return await tools.resume_application_workflow(workflow_id=workflow_id)
+
+
+@mcp.tool(
     title="Create tracked application draft",
     description=(
         "Create or reuse a Relay-local application draft linked to an approved résumé "
@@ -535,6 +585,97 @@ async def create_application_draft(
         company=company,
         role_title=role_title,
         job_url=job_url,
+    )
+
+
+@mcp.tool(
+    title="Propose application questionnaire",
+    description=(
+        "Persist a provenance-bearing questionnaire draft for the exact approved résumé, "
+        "tracked application, and browser-verified company/title/ATS job. Fill actions require "
+        "answer evidence; sensitive answers require a current user response. This only creates "
+        "a review artifact and never fills the browser."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def propose_application_questionnaire(
+    compilation_id: str,
+    job_url: str,
+    observed_url: str,
+    observed_company: str,
+    observed_role_title: str,
+    questions: list[dict[str, Any]],
+    observed_job_id: str | None = None,
+    visible_text: str = "",
+) -> dict[str, Any]:
+    return await tools.propose_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        observed_url=observed_url,
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        questions=questions,
+        observed_job_id=observed_job_id,
+        visible_text=visible_text,
+    )
+
+
+@mcp.tool(
+    title="Get application questionnaire",
+    description=(
+        "Render the full questionnaire review artifact for one exact tracked application. "
+        "Unlike application inventory, this intentionally returns proposed answers and their "
+        "evidence so the owner can review them."
+    ),
+    annotations=READ_ONLY,
+)
+async def get_application_questionnaire(
+    compilation_id: str,
+    job_url: str,
+) -> dict[str, Any]:
+    return await tools.get_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+    )
+
+
+@mcp.tool(
+    title="Approve application questionnaire",
+    description=(
+        "Approve the latest questionnaire revision only after the user types exactly "
+        "APPROVE QUESTIONNAIRE <application_id>. Approval still does not fill or submit."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def approve_application_questionnaire(
+    compilation_id: str,
+    job_url: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    return await tools.approve_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        confirmation=confirmation,
+    )
+
+
+@mcp.tool(
+    title="Reject application questionnaire",
+    description=(
+        "Reject the latest questionnaire revision only after the user types exactly "
+        "REJECT QUESTIONNAIRE <application_id>. Rejection never deletes the application."
+    ),
+    annotations=LOCAL_WRITE,
+)
+async def reject_application_questionnaire(
+    compilation_id: str,
+    job_url: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    return await tools.reject_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        confirmation=confirmation,
     )
 
 
@@ -623,6 +764,9 @@ async def assess_application_browser_checkpoint(
     compilation_id: str,
     job_url: str,
     observed_url: str,
+    observed_company: str | None = None,
+    observed_role_title: str | None = None,
+    observed_job_id: str | None = None,
     visible_text: str = "",
     stage: str = "before_fill",
 ) -> dict[str, Any]:
@@ -630,6 +774,9 @@ async def assess_application_browser_checkpoint(
         compilation_id=compilation_id,
         job_url=job_url,
         observed_url=observed_url,
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        observed_job_id=observed_job_id,
         visible_text=visible_text,
         stage=stage,
     )
@@ -639,8 +786,10 @@ async def assess_application_browser_checkpoint(
     title="Authorize one browser application submission",
     description=(
         "After a before-submit checkpoint and the user's exact application-bound phrase, "
-        "issue a five-minute, one-application receipt for one final click in the user's "
-        "browser. Reissuing invalidates the prior unused receipt. This never clicks, "
+        "compare every currently observed field id with the approved questionnaire, verify "
+        "that every required or planned-fill field is complete, then issue a five-minute, "
+        "one-application receipt for one final click in the user's browser. Reissuing or "
+        "revising the questionnaire invalidates the prior unused receipt. This never clicks, "
         "submits server-side, or treats the click itself as submission evidence."
     ),
     annotations=LOCAL_WRITE,
@@ -650,6 +799,11 @@ async def authorize_application_submission(
     job_url: str,
     observed_url: str,
     confirmation: str,
+    observed_field_ids: list[str],
+    completed_field_ids: list[str],
+    observed_company: str | None = None,
+    observed_role_title: str | None = None,
+    observed_job_id: str | None = None,
     visible_text: str = "",
 ) -> dict[str, Any]:
     return await tools.authorize_application_submission(
@@ -657,6 +811,11 @@ async def authorize_application_submission(
         job_url=job_url,
         observed_url=observed_url,
         confirmation=confirmation,
+        observed_field_ids=observed_field_ids,
+        completed_field_ids=completed_field_ids,
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        observed_job_id=observed_job_id,
         visible_text=visible_text,
     )
 

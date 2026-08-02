@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -402,6 +403,7 @@ class InMemoryCareerGraphStore:
             "graph_revision_id": revision["id"],
             "graph_revision": revision["revision"],
             "job_id": str(job_id) if job_id else None,
+            "job_identity": None,
             "resume_id": resume_id,
             "resume_version": len(self.compilations) + 1,
             "jd_fingerprint": fingerprint,
@@ -763,6 +765,18 @@ class InMemoryCareerGraphStore:
             "compilation_id": str(compilation_id),
             "application_id": application["id"],
             "job_url": job_url,
+            "job_identity": {
+                "job_id": application["job_id"],
+                "company": application["company"],
+                "role_title": application["role_title"],
+                "source": "manual",
+                "external_id": f"career-graph:{compilation_id}",
+            },
+            "questionnaire": deepcopy(
+                application.get("questionnaires", [])[-1]
+                if application.get("questionnaires")
+                else {}
+            ),
             "resume_id": compilation["resume_id"],
             "resume": compilation["resume"],
             "selection_manifest": compilation["selection_manifest"],
@@ -774,6 +788,40 @@ class InMemoryCareerGraphStore:
                 "CAPTCHA solving or bypass",
                 "clicking the final Submit/Apply button without explicit user approval",
             ],
+        }
+
+    async def bind_compilation_job(
+        self,
+        user_id: UUID,
+        compilation_id: UUID,
+        *,
+        company: str,
+        role_title: str,
+        job_url: str,
+    ) -> dict[str, Any]:
+        compilation = self._owned_compilation(user_id, compilation_id)
+        if compilation["status"] == "rejected":
+            raise CareerGraphStateError("rejected compilations cannot bind an application")
+        expected = {
+            "company": company,
+            "role_title": role_title,
+            "job_url": job_url,
+            "source": "manual",
+            "external_id": f"career-graph:{compilation_id}",
+        }
+        if compilation["job_identity"] and compilation["job_identity"] != expected:
+            raise CareerGraphStateError(
+                "compilation is already bound to a different job identity"
+            )
+        if not compilation["job_id"]:
+            compilation["job_id"] = str(uuid4())
+        compilation["job_identity"] = expected
+        return {
+            "compilation_id": str(compilation_id),
+            "job_id": compilation["job_id"],
+            "job_identity": expected,
+            "compilation_status": compilation["status"],
+            "server_side_submission": False,
         }
 
     async def create_application_draft(
@@ -789,6 +837,15 @@ class InMemoryCareerGraphStore:
         if compilation["status"] not in {"approved", "published"}:
             raise CareerGraphStateError(
                 "approve the compilation before creating an application draft"
+            )
+        bound = compilation.get("job_identity")
+        if bound and (
+            bound["company"] != company
+            or bound["role_title"] != role_title
+            or bound["job_url"] != job_url
+        ):
+            raise CareerGraphStateError(
+                "compilation is already bound to a different job identity"
             )
         existing = next(
             (
@@ -808,7 +865,7 @@ class InMemoryCareerGraphStore:
                 "user_id": str(user_id),
                 "compilation_id": str(compilation_id),
                 "resume_id": compilation["resume_id"],
-                "job_id": str(uuid4()),
+                "job_id": compilation["job_id"] or str(uuid4()),
                 "company": company,
                 "role_title": role_title,
                 "job_url": job_url,
@@ -817,6 +874,7 @@ class InMemoryCareerGraphStore:
                 "submitted_at": None,
                 "submitted_via": None,
                 "interview_date": None,
+                "questionnaires": [],
                 "created_at": _now(),
                 "updated_at": _now(),
                 "history": [
@@ -846,6 +904,137 @@ class InMemoryCareerGraphStore:
             "job_url": job_url,
             "reused": reused,
             "server_side_submission": False,
+        }
+
+    async def save_application_questionnaire(
+        self,
+        user_id: UUID,
+        application_id: UUID,
+        compilation_id: UUID,
+        *,
+        questionnaire: dict[str, Any],
+    ) -> dict[str, Any]:
+        application = self.application_drafts.get(str(application_id))
+        compilation = self.compilations.get(str(compilation_id))
+        if (
+            not application
+            or not compilation
+            or application["user_id"] != str(user_id)
+            or compilation["user_id"] != str(user_id)
+            or application["compilation_id"] != str(compilation_id)
+        ):
+            raise CareerGraphNotFoundError(
+                "application and compilation questionnaire scope not found"
+            )
+        if application["status"] != "review":
+            raise CareerGraphStateError(
+                "questionnaires can only change while the application awaits review"
+        )
+        questionnaires = application.setdefault("questionnaires", [])
+        previous = questionnaires[-1] if questionnaires else {}
+        if previous.get("status") == "draft":
+            raise CareerGraphStateError(
+                "a draft questionnaire already exists; approve or reject it before revising"
+            )
+        for authorization in self.submission_authorizations.values():
+            if (
+                authorization["user_id"] == str(user_id)
+                and authorization["application_id"] == str(application_id)
+                and authorization["consumed_at"] is None
+                and authorization["invalidated_at"] is None
+            ):
+                authorization["invalidated_at"] = _now()
+        stored = deepcopy(questionnaire)
+        stored["questionnaire_id"] = str(uuid4())
+        stored["revision"] = int(previous.get("revision", 0)) + 1
+        questionnaires.append(stored)
+        application["updated_at"] = _now()
+        return {
+            **deepcopy(stored),
+            "application_id": str(application_id),
+            "compilation_id": str(compilation_id),
+            "updated_at": application["updated_at"],
+        }
+
+    async def get_application_questionnaire(
+        self,
+        user_id: UUID,
+        application_id: UUID,
+        compilation_id: UUID,
+    ) -> dict[str, Any] | None:
+        application = self.application_drafts.get(str(application_id))
+        compilation = self.compilations.get(str(compilation_id))
+        if (
+            not application
+            or not compilation
+            or application["user_id"] != str(user_id)
+            or compilation["user_id"] != str(user_id)
+            or application["compilation_id"] != str(compilation_id)
+        ):
+            raise CareerGraphNotFoundError(
+                "application and compilation questionnaire scope not found"
+            )
+        questionnaires = application.get("questionnaires", [])
+        if not questionnaires:
+            return None
+        questionnaire = questionnaires[-1]
+        return {
+            **deepcopy(questionnaire),
+            "application_id": str(application_id),
+            "compilation_id": str(compilation_id),
+            "updated_at": application["updated_at"],
+        }
+
+    async def decide_application_questionnaire(
+        self,
+        user_id: UUID,
+        application_id: UUID,
+        compilation_id: UUID,
+        *,
+        decision: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        if decision not in {"approved", "rejected"}:
+            raise CareerGraphStateError("questionnaire decision must be approved or rejected")
+        verb = "APPROVE" if decision == "approved" else "REJECT"
+        expected = f"{verb} QUESTIONNAIRE {application_id}"
+        if confirmation != expected:
+            raise CareerGraphStateError(
+                f"human confirmation required. Ask the user to type exactly: {expected}"
+            )
+        application = self.application_drafts.get(str(application_id))
+        compilation = self.compilations.get(str(compilation_id))
+        if (
+            not application
+            or not compilation
+            or application["user_id"] != str(user_id)
+            or compilation["user_id"] != str(user_id)
+            or application["compilation_id"] != str(compilation_id)
+        ):
+            raise CareerGraphNotFoundError(
+                "application and compilation questionnaire scope not found"
+            )
+        if application["status"] != "review":
+            raise CareerGraphStateError(
+                "questionnaires can only be reviewed while the application awaits review"
+            )
+        questionnaires = application.get("questionnaires", [])
+        questionnaire = questionnaires[-1] if questionnaires else {}
+        if questionnaire.get("status") != "draft":
+            raise CareerGraphStateError("draft questionnaire not found")
+        questionnaire.update(
+            {
+                "status": decision,
+                "reviewed_at": _now(),
+                "approval_source": "codex_mcp_exact_confirmation",
+            }
+        )
+        application["updated_at"] = _now()
+        return {
+            **deepcopy(questionnaire),
+            "application_id": str(application_id),
+            "compilation_id": str(compilation_id),
+            "updated_at": application["updated_at"],
         }
 
     async def issue_application_artifact_delivery(

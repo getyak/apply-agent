@@ -7,7 +7,8 @@ cross the owner boundary by changing tool arguments.
 from __future__ import annotations
 
 import os
-from datetime import date
+import re
+from datetime import UTC, date, datetime
 from typing import Any, cast
 from urllib.parse import urlparse
 from uuid import UUID
@@ -24,6 +25,7 @@ from agents.mcp_relay.delivery import (
     assess_browser_checkpoint,
     batch_safety_contract,
     classify_application_target,
+    extract_ats_job_id,
 )
 
 FAKE_USER_ID = UUID("00000000-0000-0000-0000-000000000999")
@@ -65,8 +67,8 @@ def fake_mode() -> bool:
     return os.environ.get("RELAY_MCP_FAKE") == "1"
 
 
-def current_user_id() -> UUID:
-    """Resolve OAuth subject or trusted-local identity without a tool arg."""
+def optional_current_user_id() -> UUID | None:
+    """Resolve server-side identity, returning None only when local setup is absent."""
 
     if fake_mode():
         return FAKE_USER_ID
@@ -82,14 +84,24 @@ def current_user_id() -> UUID:
             ) from exc
     raw = os.environ.get("RELAY_USER_ID", "").strip()
     if not raw:
-        raise CareerGraphStateError(
-            "Relay identity is not configured. Set RELAY_USER_ID for this trusted local "
-            "Codex session; never pass a user id in a tool call."
-        )
+        return None
     try:
         return UUID(raw)
     except ValueError as exc:
         raise CareerGraphStateError("RELAY_USER_ID must be a UUID") from exc
+
+
+def current_user_id() -> UUID:
+    """Resolve OAuth subject or trusted-local identity without a tool arg."""
+
+    user_id = optional_current_user_id()
+    if user_id is None:
+        raise CareerGraphStateError(
+            "Relay identity is not configured. Connect the remote Relay MCP with OAuth, "
+            "or set RELAY_USER_ID for this trusted local Codex session; never pass a user "
+            "id in a tool call."
+        )
+    return user_id
 
 
 def _require_scope(scope: str) -> None:
@@ -226,7 +238,24 @@ def _artifact_delivery_payload(
 
 
 async def relay_status() -> dict[str, Any]:
-    user_id = current_user_id()
+    user_id = optional_current_user_id()
+    if user_id is None:
+        return {
+            "ok": False,
+            "server": "relay-career",
+            "mode": "disconnected",
+            "identity_configured": False,
+            "identity_source": None,
+            "career_graph_count": None,
+            "authentication": {
+                "recommended": "remote_oauth",
+                "next_action": "connect_relay_career_remote_then_resume_original_intent",
+                "trusted_local_fallback": "set RELAY_USER_ID in the Codex environment",
+                "user_id_must_never_be_passed_in_tool_arguments": True,
+            },
+            "workflow_resumable_after_authentication": True,
+            "server_side_submission": False,
+        }
     graphs = await _store_call("list_graphs", user_id)
     access_token = None if fake_mode() else get_access_token()
     return {
@@ -759,6 +788,745 @@ async def create_application_draft(
     )
 
 
+async def start_application_workflow(
+    *,
+    graph_id: str,
+    jd_text: str,
+    company: str,
+    role_title: str,
+    job_url: str,
+    artifact_locale: str = "en",
+    length_budget: str = "two_page",
+    ats_profile: str = "standard",
+) -> dict[str, Any]:
+    """Start one durable paid-value flow and persist its job intent before review."""
+
+    _require_scope("career:write")
+    _require_scope("application:prepare")
+    parsed = urlparse(job_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise CareerGraphStateError("job_url must be an absolute http(s) URL")
+    company = company.strip()
+    role_title = role_title.strip()
+    if not company or len(company) > 200:
+        raise CareerGraphStateError("company must contain 1-200 characters")
+    if not role_title or len(role_title) > 200:
+        raise CareerGraphStateError("role_title must contain 1-200 characters")
+
+    compilation = await compile_resume_for_jd(
+        graph_id=graph_id,
+        jd_text=jd_text,
+        artifact_locale=artifact_locale,
+        length_budget=length_budget,
+        ats_profile=ats_profile,
+    )
+    binding = await _store_call(
+        "bind_compilation_job",
+        current_user_id(),
+        _uuid(compilation["id"], "compilation_id"),
+        company=company,
+        role_title=role_title,
+        job_url=job_url,
+    )
+    return {
+        "ok": True,
+        "workflow_id": compilation["id"],
+        "stage": "resume_review",
+        "resumable": True,
+        "job_identity": binding["job_identity"],
+        "resume_compilation": compilation,
+        "next_action": {
+            "tool": "prepare_resume_artifact_review",
+            "then": f"APPROVE RESUME {compilation['id']}",
+            "resume_tool": "resume_application_workflow",
+        },
+        "approval_gates_remaining": [
+            "resume",
+            "questionnaire",
+            "final_submission",
+        ],
+        "server_side_submission": False,
+    }
+
+
+async def resume_application_workflow(
+    *,
+    workflow_id: str,
+) -> dict[str, Any]:
+    """Recover the next deterministic action without replaying conversation history."""
+
+    _require_scope("application:prepare")
+    compilation_uuid = _uuid(workflow_id, "workflow_id")
+    compilation = await _store_call(
+        "get_compilation",
+        current_user_id(),
+        compilation_uuid,
+    )
+    if not compilation:
+        raise CareerGraphStateError("application workflow not found")
+    job = compilation.get("job_identity")
+    if not job:
+        raise CareerGraphStateError(
+            "workflow has no persisted job identity; start a new application workflow"
+        )
+    base = {
+        "ok": True,
+        "workflow_id": workflow_id,
+        "resumable": True,
+        "compilation_id": workflow_id,
+        "compilation_status": compilation["status"],
+        "job_identity": job,
+        "server_side_submission": False,
+    }
+    if compilation["status"] == "draft":
+        return {
+            **base,
+            "stage": "resume_review",
+            "next_action": {
+                "tool": "prepare_resume_artifact_review",
+                "then": f"APPROVE RESUME {workflow_id}",
+            },
+        }
+    if compilation["status"] == "rejected":
+        return {
+            **base,
+            "stage": "resume_rejected",
+            "terminal": True,
+            "next_action": {"tool": "start_application_workflow"},
+        }
+
+    draft = await create_application_draft(
+        compilation_id=workflow_id,
+        company=job["company"],
+        role_title=job["role_title"],
+        job_url=job["job_url"],
+    )
+    handoff = await _store_call(
+        "application_handoff",
+        current_user_id(),
+        compilation_uuid,
+        job_url=job["job_url"],
+    )
+    application_status = draft["application_status"]
+    if application_status != "review":
+        return {
+            **base,
+            "application_id": draft["application_id"],
+            "application_status": application_status,
+            "stage": f"application_{application_status}",
+            "next_action": {"tool": "list_tracked_applications"},
+        }
+    questionnaire = handoff.get("questionnaire") or {}
+    questionnaire_status = questionnaire.get("status", "missing")
+    stages = {
+        "missing": (
+            "browser_inspection",
+            "assess_application_browser_checkpoint",
+        ),
+        "draft": (
+            "questionnaire_review",
+            "get_application_questionnaire",
+        ),
+        "rejected": (
+            "questionnaire_revision_required",
+            "propose_application_questionnaire",
+        ),
+        "approved": (
+            "ready_for_browser_fill",
+            "prepare_application_handoff",
+        ),
+    }
+    stage, next_tool = stages.get(
+        questionnaire_status,
+        ("questionnaire_revision_required", "propose_application_questionnaire"),
+    )
+    return {
+        **base,
+        "application_id": draft["application_id"],
+        "application_status": application_status,
+        "stage": stage,
+        "questionnaire_status": questionnaire_status,
+        "next_action": {
+            "tool": next_tool,
+            "job_url": job["job_url"],
+        },
+    }
+
+
+QUESTIONNAIRE_ACTIONS = frozenset({"fill", "manual", "skip"})
+QUESTIONNAIRE_FIELD_TYPES = frozenset(
+    {"text", "textarea", "select", "multiselect", "checkbox", "radio", "file"}
+)
+QUESTIONNAIRE_EVIDENCE_TYPES = frozenset(
+    {"career_graph", "approved_resume", "user_response"}
+)
+SENSITIVE_QUESTION_PATTERNS = {
+    "age_or_birth": (
+        "age",
+        "date of birth",
+        "birth date",
+        "born",
+        "18 years old",
+        "over 18",
+        "at least 18",
+    ),
+    "criminal_history": (
+        "criminal",
+        "conviction",
+        "felony",
+        "arrest",
+    ),
+    "demographic": (
+        "race",
+        "ethnicity",
+        "gender",
+        "sexual orientation",
+        "religion",
+        "marital status",
+        "pronouns",
+    ),
+    "disability_or_veteran": (
+        "disability",
+        "disabled",
+        "veteran",
+        "military status",
+    ),
+    "immigration_or_work_authorization": (
+        "citizenship",
+        "visa",
+        "sponsor",
+        "sponsorship",
+        "work authorization",
+        "authorized to work",
+        "legally authorized",
+        "right to work",
+        "eligible to work",
+    ),
+    "pay_expectation": (
+        "salary",
+        "compensation",
+        "pay expectation",
+        "desired pay",
+        "current pay",
+    ),
+    "security_clearance": (
+        "security clearance",
+        "government clearance",
+    ),
+    "work_arrangement_or_availability": (
+        "commute",
+        "commutable",
+        "relocate",
+        "relocation",
+        "in office",
+        "in-office",
+        "onsite",
+        "on-site",
+        "hybrid schedule",
+        "available to start",
+        "start date",
+        "notice period",
+        "willing to",
+    ),
+    "qualification_eligibility": (
+        "degree or",
+        "years of professional experience",
+        "minimum qualification",
+        "meet the qualification",
+    ),
+}
+
+
+def _questionnaire_answer(value: Any, *, field: str) -> str | bool | list[str] | None:
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if len(value) > 4_000:
+            raise CareerGraphStateError(f"{field}.answer must be at most 4000 characters")
+        return value
+    if isinstance(value, list) and len(value) <= 100:
+        if all(isinstance(item, str) and len(item) <= 500 for item in value):
+            return value
+    raise CareerGraphStateError(
+        f"{field}.answer must be null, a boolean, a string, or a list of strings"
+    )
+
+
+def _sensitivity_reasons(field_id: str, label: str) -> list[str]:
+    searchable = " ".join((field_id, label)).casefold().replace("_", " ").replace("-", " ")
+    return [
+        category
+        for category, patterns in SENSITIVE_QUESTION_PATTERNS.items()
+        if any(
+            re.search(rf"\b{re.escape(pattern)}\b", searchable) is not None
+            for pattern in patterns
+        )
+    ]
+
+
+def _normalize_questionnaire_fields(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not questions:
+        raise CareerGraphStateError(
+            "questions must include every currently observed application field"
+        )
+    if len(questions) > 200:
+        raise CareerGraphStateError("questions must contain at most 200 fields")
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, question in enumerate(questions):
+        field = f"questions[{index}]"
+        if not isinstance(question, dict):
+            raise CareerGraphStateError(f"{field} must be an object")
+        field_id = question.get("id")
+        label = question.get("label")
+        field_type = question.get("field_type", "text")
+        action = question.get("action", "manual")
+        if not isinstance(field_id, str) or not field_id.strip() or len(field_id) > 200:
+            raise CareerGraphStateError(f"{field}.id must contain 1-200 characters")
+        field_id = field_id.strip()
+        if field_id in seen:
+            raise CareerGraphStateError(f"{field}.id duplicates an earlier field")
+        seen.add(field_id)
+        if not isinstance(label, str) or not label.strip() or len(label) > 500:
+            raise CareerGraphStateError(f"{field}.label must contain 1-500 characters")
+        if field_type not in QUESTIONNAIRE_FIELD_TYPES:
+            raise CareerGraphStateError(f"{field}.field_type is unsupported")
+        if action not in QUESTIONNAIRE_ACTIONS:
+            raise CareerGraphStateError(f"{field}.action is unsupported")
+        required = question.get("required", False)
+        caller_sensitive = question.get("sensitive", False)
+        if not isinstance(required, bool) or not isinstance(caller_sensitive, bool):
+            raise CareerGraphStateError(f"{field}.required and sensitive must be booleans")
+        sensitivity_reasons = _sensitivity_reasons(field_id, label)
+        if caller_sensitive and not sensitivity_reasons:
+            sensitivity_reasons.append("caller_marked")
+        sensitive = bool(sensitivity_reasons)
+        answer = _questionnaire_answer(question.get("answer"), field=field)
+        evidence = question.get("evidence", [])
+        if not isinstance(evidence, list) or len(evidence) > 20:
+            raise CareerGraphStateError(f"{field}.evidence must contain at most 20 entries")
+        normalized_evidence: list[dict[str, Any]] = []
+        for evidence_index, item in enumerate(evidence):
+            if not isinstance(item, dict):
+                raise CareerGraphStateError(
+                    f"{field}.evidence[{evidence_index}] must be an object"
+                )
+            source_type = item.get("source_type")
+            source_ref = item.get("source_ref")
+            if source_type not in QUESTIONNAIRE_EVIDENCE_TYPES:
+                raise CareerGraphStateError(
+                    f"{field}.evidence[{evidence_index}].source_type is unsupported"
+                )
+            if not isinstance(source_ref, str) or not source_ref.strip() or len(source_ref) > 500:
+                raise CareerGraphStateError(
+                    f"{field}.evidence[{evidence_index}].source_ref is required"
+                )
+            normalized_evidence.append(
+                {"source_type": source_type, "source_ref": source_ref.strip()}
+            )
+        if action == "fill":
+            if answer is None or answer == "" or answer == []:
+                raise CareerGraphStateError(f"{field}.answer is required when action is fill")
+            if not normalized_evidence:
+                raise CareerGraphStateError(
+                    f"{field}.evidence is required when action is fill"
+                )
+            if sensitive and not any(
+                item["source_type"] == "user_response" for item in normalized_evidence
+            ):
+                raise CareerGraphStateError(
+                    f"{field} is sensitive and requires evidence from a current user response"
+                )
+        elif answer is not None and answer != "" and answer != []:
+            raise CareerGraphStateError(
+                f"{field}.answer must be empty when action is manual or skip"
+            )
+        confidence = question.get("confidence", 0.0 if action != "fill" else None)
+        if (
+            not isinstance(confidence, (int, float))
+            or isinstance(confidence, bool)
+            or not 0 <= float(confidence) <= 1
+        ):
+            raise CareerGraphStateError(f"{field}.confidence must be between 0 and 1")
+        selector = question.get("selector")
+        if selector is not None and (
+            not isinstance(selector, str) or not selector.strip() or len(selector) > 500
+        ):
+            raise CareerGraphStateError(f"{field}.selector must contain 1-500 characters")
+        options = question.get("options", [])
+        if not isinstance(options, list) or len(options) > 200 or not all(
+            isinstance(option, str) and len(option) <= 500 for option in options
+        ):
+            raise CareerGraphStateError(f"{field}.options must be a list of short strings")
+        normalized.append(
+            {
+                "id": field_id,
+                "label": label.strip(),
+                "field_type": field_type,
+                "required": required,
+                "selector": selector.strip() if isinstance(selector, str) else None,
+                "options": options,
+                "answer": answer,
+                "action": action,
+                "confidence": float(confidence),
+                "sensitive": sensitive,
+                "sensitivity_reasons": sensitivity_reasons,
+                "evidence": normalized_evidence,
+            }
+        )
+    return normalized
+
+
+def _validate_questionnaire_evidence_refs(
+    fields: list[dict[str, Any]],
+    *,
+    approved_resume: dict[str, Any],
+    graph_snapshot: dict[str, Any] | None,
+) -> None:
+    graph_nodes = {
+        item["id"]: item
+        for item in (graph_snapshot or {}).get("nodes", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    for field_index, field in enumerate(fields):
+        for evidence_index, evidence in enumerate(field["evidence"]):
+            source_type = evidence["source_type"]
+            source_ref = evidence["source_ref"]
+            if source_type == "approved_resume":
+                if source_ref == "compilation_artifact":
+                    evidence["verified"] = True
+                    continue
+                sections = re.findall(r"\bresume\.([A-Za-z][A-Za-z0-9_]*)", source_ref)
+                if not sections or any(section not in approved_resume for section in sections):
+                    raise CareerGraphStateError(
+                        f"questions[{field_index}].evidence[{evidence_index}].source_ref "
+                        "does not reference the approved résumé"
+                    )
+            elif source_type == "career_graph":
+                matching_ids = [
+                    node_id
+                    for node_id in graph_nodes
+                    if source_ref == node_id or source_ref.startswith(f"{node_id}.")
+                ]
+                if not matching_ids:
+                    raise CareerGraphStateError(
+                        f"questions[{field_index}].evidence[{evidence_index}].source_ref "
+                        "does not reference the approved Career Graph revision"
+                    )
+                node_id = max(matching_ids, key=len)
+                value: Any = graph_nodes[node_id]
+                suffix = source_ref[len(node_id) :].removeprefix(".")
+                for segment in filter(None, suffix.split(".")):
+                    if not isinstance(value, dict) or segment not in value:
+                        raise CareerGraphStateError(
+                            f"questions[{field_index}].evidence[{evidence_index}].source_ref "
+                            "does not resolve inside the approved Career Graph revision"
+                        )
+                    value = value[segment]
+            evidence["verified"] = True
+
+
+def _questionnaire_review_markdown(questionnaire: dict[str, Any]) -> str:
+    lines = [
+        "# Application questionnaire review",
+        "",
+        f"Status: {questionnaire['status']}",
+        "",
+        "| Question | Proposed action | Answer | Evidence |",
+        "|---|---|---|---|",
+    ]
+    for item in questionnaire["fields"]:
+        answer = item["answer"]
+        answer_text = ", ".join(answer) if isinstance(answer, list) else str(answer or "—")
+        evidence = ", ".join(
+            f"{source['source_type']}:{source['source_ref']}" for source in item["evidence"]
+        )
+        cells = [
+            item["label"],
+            item["action"],
+            answer_text,
+            evidence or "—",
+        ]
+        escaped = [str(cell).replace("|", "\\|").replace("\n", " ") for cell in cells]
+        lines.append(f"| {' | '.join(escaped)} |")
+    return "\n".join(lines)
+
+
+def _browser_checkpoint_for_handoff(
+    handoff: dict[str, Any],
+    *,
+    job_url: str,
+    observed_url: str,
+    observed_company: str | None,
+    observed_role_title: str | None,
+    observed_job_id: str | None,
+    visible_text: str,
+    stage: BrowserCheckpointStage,
+) -> dict[str, Any]:
+    identity = handoff["job_identity"]
+    platform = classify_application_target(job_url)["platform"]
+    return assess_browser_checkpoint(
+        expected_job_url=job_url,
+        observed_url=observed_url,
+        visible_text=visible_text,
+        stage=stage,
+        expected_company=identity["company"],
+        expected_role_title=identity["role_title"],
+        expected_job_id=extract_ats_job_id(job_url, platform),
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        observed_job_id=observed_job_id,
+    )
+
+
+def _validate_observed_questionnaire_fields(
+    questionnaire: dict[str, Any],
+    observed_field_ids: list[str],
+    completed_field_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    if not observed_field_ids or len(observed_field_ids) > 200:
+        raise CareerGraphStateError(
+            "observed_field_ids must include every currently observed application field"
+        )
+    normalized: list[str] = []
+    for index, field_id in enumerate(observed_field_ids):
+        if not isinstance(field_id, str) or not field_id.strip() or len(field_id) > 200:
+            raise CareerGraphStateError(
+                f"observed_field_ids[{index}] must contain 1-200 characters"
+            )
+        normalized.append(field_id.strip())
+    if len(set(normalized)) != len(normalized):
+        raise CareerGraphStateError("observed_field_ids must not contain duplicates")
+    approved_ids = [field["id"] for field in questionnaire["fields"]]
+    if set(normalized) != set(approved_ids):
+        missing = sorted(set(approved_ids) - set(normalized))
+        added = sorted(set(normalized) - set(approved_ids))
+        raise CareerGraphStateError(
+            "browser fields changed after questionnaire approval; "
+            f"missing={missing}, added={added}. Reinspect and revise the questionnaire"
+        )
+    if len(completed_field_ids) > 200:
+        raise CareerGraphStateError("completed_field_ids must contain at most 200 fields")
+    completed: list[str] = []
+    for index, field_id in enumerate(completed_field_ids):
+        if not isinstance(field_id, str) or not field_id.strip() or len(field_id) > 200:
+            raise CareerGraphStateError(
+                f"completed_field_ids[{index}] must contain 1-200 characters"
+            )
+        completed.append(field_id.strip())
+    if len(set(completed)) != len(completed):
+        raise CareerGraphStateError("completed_field_ids must not contain duplicates")
+    unknown_completed = sorted(set(completed) - set(approved_ids))
+    if unknown_completed:
+        raise CareerGraphStateError(
+            f"completed_field_ids contains unapproved fields: {unknown_completed}"
+        )
+    required_completed = {
+        field["id"]
+        for field in questionnaire["fields"]
+        if field["required"] or field["action"] == "fill"
+    }
+    incomplete = sorted(required_completed - set(completed))
+    if incomplete:
+        raise CareerGraphStateError(
+            "required or planned-fill fields are incomplete: "
+            f"{incomplete}. Finish them in the browser before authorization"
+        )
+    return normalized, completed
+
+
+async def propose_application_questionnaire(
+    *,
+    compilation_id: str,
+    job_url: str,
+    observed_url: str,
+    observed_company: str,
+    observed_role_title: str,
+    questions: list[dict[str, Any]],
+    observed_job_id: str | None = None,
+    visible_text: str = "",
+) -> dict[str, Any]:
+    """Create a provenance-bearing browser questionnaire draft for human review."""
+
+    _require_scope("application:prepare")
+    compilation_uuid = _uuid(compilation_id, "compilation_id")
+    handoff = await _store_call(
+        "application_handoff",
+        current_user_id(),
+        compilation_uuid,
+        job_url=job_url,
+    )
+    checkpoint = _browser_checkpoint_for_handoff(
+        handoff,
+        job_url=job_url,
+        observed_url=observed_url,
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        observed_job_id=observed_job_id,
+        visible_text=visible_text,
+        stage="before_fill",
+    )
+    if checkpoint["status"] != "ready_for_fill":
+        raise CareerGraphStateError(
+            "browser job identity must be verified before creating a questionnaire"
+        )
+    fields = _normalize_questionnaire_fields(questions)
+    graph_snapshot = None
+    if any(
+        evidence["source_type"] == "career_graph"
+        for field in fields
+        for evidence in field["evidence"]
+    ):
+        compilation = await _store_call(
+            "get_compilation",
+            current_user_id(),
+            compilation_uuid,
+        )
+        if not compilation:
+            raise CareerGraphStateError("approved résumé compilation not found")
+        graph = await _store_call(
+            "get_graph",
+            current_user_id(),
+            _uuid(compilation["graph_id"], "graph_id"),
+        )
+        current_revision = (graph or {}).get("current_revision") or {}
+        graph_snapshot = current_revision.get("snapshot")
+    _validate_questionnaire_evidence_refs(
+        fields,
+        approved_resume=handoff["resume"],
+        graph_snapshot=graph_snapshot,
+    )
+    now = datetime.now(UTC).isoformat()
+    questionnaire = {
+        "schema_version": 1,
+        "status": "draft",
+        "created_at": now,
+        "reviewed_at": None,
+        "approval_source": None,
+        "job_identity": checkpoint["job_identity"],
+        "fields": fields,
+        "summary": {
+            "field_count": len(fields),
+            "fillable_count": sum(item["action"] == "fill" for item in fields),
+            "manual_count": sum(item["action"] == "manual" for item in fields),
+            "skipped_count": sum(item["action"] == "skip" for item in fields),
+            "sensitive_count": sum(item["sensitive"] for item in fields),
+            "all_fill_answers_have_evidence": all(
+                item["action"] != "fill" or bool(item["evidence"]) for item in fields
+            ),
+            "all_evidence_references_verified": all(
+                evidence.get("verified") is True
+                for item in fields
+                for evidence in item["evidence"]
+            ),
+        },
+    }
+    saved = await _store_call(
+        "save_application_questionnaire",
+        current_user_id(),
+        _uuid(handoff["application_id"], "application_id"),
+        compilation_uuid,
+        questionnaire=questionnaire,
+    )
+    saved["review_markdown"] = _questionnaire_review_markdown(saved)
+    saved["confirmation"] = {
+        "approve": f"APPROVE QUESTIONNAIRE {handoff['application_id']}",
+        "reject": f"REJECT QUESTIONNAIRE {handoff['application_id']}",
+    }
+    saved["browser_fill_performed"] = False
+    saved["server_side_submission"] = False
+    return saved
+
+
+async def get_application_questionnaire(
+    *,
+    compilation_id: str,
+    job_url: str,
+) -> dict[str, Any]:
+    _require_scope("application:prepare")
+    compilation_uuid = _uuid(compilation_id, "compilation_id")
+    handoff = await _store_call(
+        "application_handoff",
+        current_user_id(),
+        compilation_uuid,
+        job_url=job_url,
+    )
+    questionnaire = await _store_call(
+        "get_application_questionnaire",
+        current_user_id(),
+        _uuid(handoff["application_id"], "application_id"),
+        compilation_uuid,
+    )
+    if questionnaire is None:
+        return {
+            "application_id": handoff["application_id"],
+            "compilation_id": compilation_id,
+            "status": "missing",
+            "required_before_submit": True,
+            "next_tool": "propose_application_questionnaire",
+        }
+    questionnaire["review_markdown"] = _questionnaire_review_markdown(questionnaire)
+    questionnaire["required_before_submit"] = True
+    return questionnaire
+
+
+async def _decide_application_questionnaire(
+    *,
+    compilation_id: str,
+    job_url: str,
+    confirmation: str,
+    decision: str,
+) -> dict[str, Any]:
+    _require_scope("application:prepare")
+    compilation_uuid = _uuid(compilation_id, "compilation_id")
+    handoff = await _store_call(
+        "application_handoff",
+        current_user_id(),
+        compilation_uuid,
+        job_url=job_url,
+    )
+    result = await _store_call(
+        "decide_application_questionnaire",
+        current_user_id(),
+        _uuid(handoff["application_id"], "application_id"),
+        compilation_uuid,
+        decision=decision,
+        confirmation=confirmation,
+    )
+    result["review_markdown"] = _questionnaire_review_markdown(result)
+    result["browser_fill_performed"] = False
+    result["server_side_submission"] = False
+    return result
+
+
+async def approve_application_questionnaire(
+    *,
+    compilation_id: str,
+    job_url: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    return await _decide_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        confirmation=confirmation,
+        decision="approved",
+    )
+
+
+async def reject_application_questionnaire(
+    *,
+    compilation_id: str,
+    job_url: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    return await _decide_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        confirmation=confirmation,
+        decision="rejected",
+    )
+
+
 async def record_application_progress(
     *,
     application_id: str,
@@ -872,6 +1640,17 @@ async def prepare_application_handoff(
         grant,
         api_base_url=artifact_api_base_url,
     )
+    questionnaire = handoff.get("questionnaire") or {}
+    if questionnaire:
+        questionnaire["review_markdown"] = _questionnaire_review_markdown(questionnaire)
+        questionnaire["required_before_submit"] = True
+    else:
+        questionnaire = {
+            "status": "missing",
+            "required_before_submit": True,
+            "next_tool": "propose_application_questionnaire",
+        }
+    handoff["questionnaire"] = questionnaire
     return handoff
 
 
@@ -880,6 +1659,9 @@ async def assess_application_browser_checkpoint(
     compilation_id: str,
     job_url: str,
     observed_url: str,
+    observed_company: str | None = None,
+    observed_role_title: str | None = None,
+    observed_job_id: str | None = None,
     visible_text: str = "",
     stage: str = "before_fill",
 ) -> dict[str, Any]:
@@ -901,9 +1683,13 @@ async def assess_application_browser_checkpoint(
         _uuid(compilation_id, "compilation_id"),
         job_url=job_url,
     )
-    checkpoint = assess_browser_checkpoint(
-        expected_job_url=job_url,
+    checkpoint = _browser_checkpoint_for_handoff(
+        handoff,
+        job_url=job_url,
         observed_url=observed_url,
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        observed_job_id=observed_job_id,
         visible_text=visible_text,
         stage=cast(BrowserCheckpointStage, stage),
     )
@@ -927,6 +1713,11 @@ async def authorize_application_submission(
     job_url: str,
     observed_url: str,
     confirmation: str,
+    observed_field_ids: list[str],
+    completed_field_ids: list[str],
+    observed_company: str | None = None,
+    observed_role_title: str | None = None,
+    observed_job_id: str | None = None,
     visible_text: str = "",
 ) -> dict[str, Any]:
     """Issue a receipt for one final browser click after exact confirmation."""
@@ -946,9 +1737,13 @@ async def authorize_application_submission(
         compilation_uuid,
         job_url=job_url,
     )
-    checkpoint = assess_browser_checkpoint(
-        expected_job_url=job_url,
+    checkpoint = _browser_checkpoint_for_handoff(
+        handoff,
+        job_url=job_url,
         observed_url=observed_url,
+        observed_company=observed_company,
+        observed_role_title=observed_role_title,
+        observed_job_id=observed_job_id,
         visible_text=visible_text,
         stage="before_submit",
     )
@@ -956,6 +1751,16 @@ async def authorize_application_submission(
         raise CareerGraphStateError(
             "browser checkpoint must be review_required before submission authorization"
         )
+    questionnaire = handoff.get("questionnaire") or {}
+    if questionnaire.get("status") != "approved":
+        raise CareerGraphStateError(
+            "approve the application questionnaire before submission authorization"
+        )
+    verified_field_ids, verified_completed_ids = _validate_observed_questionnaire_fields(
+        questionnaire,
+        observed_field_ids,
+        completed_field_ids,
+    )
 
     expected_confirmation = f"SUBMIT APPLICATION {handoff['application_id']}"
     _require_confirmation(confirmation, expected_confirmation)
@@ -970,6 +1775,9 @@ async def authorize_application_submission(
     )
     authorization["checkpoint_status"] = checkpoint["status"]
     authorization["stop_reasons"] = checkpoint["stop_reasons"]
+    authorization["questionnaire_revision"] = questionnaire["revision"]
+    authorization["observed_field_ids"] = verified_field_ids
+    authorization["completed_field_ids"] = verified_completed_ids
     return authorization
 
 

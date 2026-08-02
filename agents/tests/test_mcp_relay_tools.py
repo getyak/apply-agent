@@ -73,6 +73,47 @@ async def _approved_graph() -> dict:
     )
 
 
+async def _approve_questionnaire(
+    *,
+    compilation_id: str,
+    application_id: str,
+    job_url: str,
+    company: str,
+    role_title: str,
+    questions: list[dict] | None = None,
+) -> dict:
+    proposed = await tools.propose_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        observed_url=job_url + ("/apply" if "jobs.lever.co" in job_url else ""),
+        observed_company=company,
+        observed_role_title=role_title,
+        questions=(
+            questions
+            if questions is not None
+            else [
+                {
+                    "id": "resume_cv",
+                    "label": "Resume/CV",
+                    "field_type": "file",
+                    "required": True,
+                    "answer": None,
+                    "action": "manual",
+                    "confidence": 0,
+                    "evidence": [],
+                }
+            ]
+        ),
+        visible_text="Application form",
+    )
+    assert proposed["status"] == "draft"
+    return await tools.approve_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=job_url,
+        confirmation=f"APPROVE QUESTIONNAIRE {application_id}",
+    )
+
+
 async def test_status_uses_server_side_identity() -> None:
     status = await tools.relay_status()
     assert status["identity_source"] == "fake_fixture"
@@ -532,6 +573,54 @@ async def test_full_review_compile_handoff_publish_flow() -> None:
     assert published["public_url"].startswith("http://localhost:3000/r/")
 
 
+async def test_one_sentence_workflow_persists_job_and_resumes_across_review_gates() -> None:
+    approved = await _approved_graph()
+    job_url = "https://jobs.lever.co/example/backend-123"
+    started = await tools.start_application_workflow(
+        graph_id=approved["graph_id"],
+        jd_text="Senior backend engineer with PostgreSQL experience",
+        company="Example",
+        role_title="Senior Backend Engineer",
+        job_url=job_url,
+        length_budget="one_page",
+        ats_profile="strict",
+    )
+    workflow_id = started["workflow_id"]
+    assert started["stage"] == "resume_review"
+    assert started["resumable"] is True
+    assert started["job_identity"]["job_url"] == job_url
+    assert started["approval_gates_remaining"] == [
+        "resume",
+        "questionnaire",
+        "final_submission",
+    ]
+
+    waiting = await tools.resume_application_workflow(workflow_id=workflow_id)
+    assert waiting["stage"] == "resume_review"
+    assert tools.FAKE_STORE.application_drafts == {}
+
+    await tools.approve_resume_compilation(
+        compilation_id=workflow_id,
+        confirmation=f"APPROVE RESUME {workflow_id}",
+    )
+    browser = await tools.resume_application_workflow(workflow_id=workflow_id)
+    assert browser["stage"] == "browser_inspection"
+    assert browser["questionnaire_status"] == "missing"
+    application_id = browser["application_id"]
+
+    await _approve_questionnaire(
+        compilation_id=workflow_id,
+        application_id=application_id,
+        job_url=job_url,
+        company="Example",
+        role_title="Senior Backend Engineer",
+    )
+    ready = await tools.resume_application_workflow(workflow_id=workflow_id)
+    assert ready["stage"] == "ready_for_browser_fill"
+    assert ready["application_id"] == application_id
+    assert ready["next_action"]["tool"] == "prepare_application_handoff"
+
+
 async def test_draft_artifact_review_is_separate_from_approval_and_upload() -> None:
     approved = await _approved_graph()
     compilation = await tools.compile_resume_for_jd(
@@ -718,13 +807,24 @@ async def test_application_progress_builds_history_and_feedback_without_rewritin
         job_url="https://jobs.lever.co/example/engineer",
     )
     application_id = application["application_id"]
+    await _approve_questionnaire(
+        compilation_id=compilation_id,
+        application_id=application_id,
+        job_url="https://jobs.lever.co/example/engineer",
+        company="Example",
+        role_title="Engineer",
+    )
 
     authorization = await tools.authorize_application_submission(
         compilation_id=compilation_id,
         job_url="https://jobs.lever.co/example/engineer",
         observed_url="https://jobs.lever.co/example/engineer/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
         visible_text="Submit application",
         confirmation=f"SUBMIT APPLICATION {application_id}",
+        observed_field_ids=["resume_cv"],
+        completed_field_ids=["resume_cv"],
     )
     submitted = await tools.record_application_progress(
         application_id=application_id,
@@ -796,6 +896,288 @@ async def test_application_progress_rejects_unverifiable_inputs_before_writing()
     assert tools.FAKE_STORE.application_drafts == {}
 
 
+async def test_questionnaire_is_application_bound_evidence_backed_and_review_gated() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    application = await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example, Inc.",
+        role_title="Senior Backend Engineer",
+        job_url="https://jobs.lever.co/example/backend-123",
+    )
+    application_id = application["application_id"]
+    questions = [
+        {
+            "id": "first_name",
+            "label": "First name",
+            "field_type": "text",
+            "required": True,
+            "selector": "#first_name",
+            "answer": "Alex",
+            "action": "fill",
+            "confidence": 1,
+            "sensitive": False,
+            "evidence": [
+                {
+                    "source_type": "approved_resume",
+                    "source_ref": "resume.basics.name",
+                }
+            ],
+        },
+        {
+            "id": "salary",
+            "label": "Expected salary",
+            "field_type": "text",
+            "required": False,
+            "answer": None,
+            "action": "manual",
+            "confidence": 0,
+            "sensitive": True,
+            "evidence": [],
+        },
+    ]
+    proposed = await tools.propose_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/backend-123",
+        observed_url="https://jobs.lever.co/example/backend-123/apply",
+        observed_company="Example",
+        observed_role_title="Backend Engineer, Sr.",
+        questions=questions,
+        visible_text="Application form",
+    )
+    assert proposed["application_id"] == application_id
+    assert proposed["status"] == "draft"
+    assert proposed["revision"] == 1
+    assert proposed["summary"]["fillable_count"] == 1
+    assert proposed["summary"]["manual_count"] == 1
+    assert proposed["summary"]["all_fill_answers_have_evidence"] is True
+    assert "First name" in proposed["review_markdown"]
+    assert proposed["browser_fill_performed"] is False
+
+    with pytest.raises(CareerGraphStateError, match="draft questionnaire already exists"):
+        await tools.propose_application_questionnaire(
+            compilation_id=compilation_id,
+            job_url="https://jobs.lever.co/example/backend-123",
+            observed_url="https://jobs.lever.co/example/backend-123/apply",
+            observed_company="Example",
+            observed_role_title="Senior Backend Engineer",
+            questions=[
+                {
+                    "id": "resume_cv",
+                    "label": "Resume/CV",
+                    "field_type": "file",
+                    "action": "manual",
+                }
+            ],
+        )
+
+    with pytest.raises(CareerGraphStateError, match="type exactly"):
+        await tools.approve_application_questionnaire(
+            compilation_id=compilation_id,
+            job_url="https://jobs.lever.co/example/backend-123",
+            confirmation="yes",
+        )
+
+    approved_questionnaire = await tools.approve_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/backend-123",
+        confirmation=f"APPROVE QUESTIONNAIRE {application_id}",
+    )
+    assert approved_questionnaire["status"] == "approved"
+    handoff = await tools.prepare_application_handoff(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/backend-123",
+    )
+    assert handoff["questionnaire"]["status"] == "approved"
+    assert handoff["questionnaire"]["fields"][0]["answer"] == "Alex"
+    assert handoff["questionnaire"]["required_before_submit"] is True
+
+    with pytest.raises(CareerGraphStateError, match="current user response"):
+        await tools.propose_application_questionnaire(
+            compilation_id=compilation_id,
+            job_url="https://jobs.lever.co/example/backend-123",
+            observed_url="https://jobs.lever.co/example/backend-123/apply",
+            observed_company="Example",
+            observed_role_title="Senior Backend Engineer",
+            questions=[
+                {
+                    "id": "sponsorship",
+                    "label": "Will you require sponsorship?",
+                    "answer": "No",
+                    "action": "fill",
+                    "confidence": 1,
+                    "sensitive": False,
+                    "evidence": [
+                        {
+                            "source_type": "approved_resume",
+                            "source_ref": "resume.basics",
+                        }
+                    ],
+                }
+            ],
+        )
+
+
+async def test_questionnaire_rejects_unreviewed_answers_and_fake_evidence() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Backend engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="Example",
+        role_title="Backend Engineer",
+        job_url="https://jobs.lever.co/example/backend-123",
+    )
+    common = {
+        "compilation_id": compilation_id,
+        "job_url": "https://jobs.lever.co/example/backend-123",
+        "observed_url": "https://jobs.lever.co/example/backend-123/apply",
+        "observed_company": "Example",
+        "observed_role_title": "Backend Engineer",
+    }
+    programming_languages = await tools.propose_application_questionnaire(
+        **common,
+        questions=[
+            {
+                "id": "programming_languages",
+                "label": "What programming languages are you proficient in?",
+                "answer": "Python",
+                "action": "fill",
+                "confidence": 1,
+                "sensitive": False,
+                "evidence": [
+                    {
+                        "source_type": "user_response",
+                        "source_ref": "current_turn:test_fixture",
+                    }
+                ],
+            }
+        ],
+    )
+    assert programming_languages["fields"][0]["sensitive"] is False
+    await tools.reject_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url=common["job_url"],
+        confirmation=(
+            f"REJECT QUESTIONNAIRE {programming_languages['application_id']}"
+        ),
+    )
+    with pytest.raises(CareerGraphStateError, match="must be empty"):
+        await tools.propose_application_questionnaire(
+            **common,
+            questions=[
+                {
+                    "id": "salary",
+                    "label": "Expected salary",
+                    "answer": "$200k",
+                    "action": "manual",
+                }
+            ],
+        )
+    with pytest.raises(CareerGraphStateError, match="source_type is unsupported"):
+        await tools.propose_application_questionnaire(
+            **common,
+            questions=[
+                {
+                    "id": "portfolio",
+                    "label": "Portfolio",
+                    "answer": "https://example.test",
+                    "action": "fill",
+                    "confidence": 1,
+                    "evidence": [
+                        {
+                            "source_type": "manual",
+                            "source_ref": "trust me",
+                        }
+                    ],
+                }
+            ],
+        )
+    with pytest.raises(CareerGraphStateError, match="approved résumé"):
+        await tools.propose_application_questionnaire(
+            **common,
+            questions=[
+                {
+                    "id": "portfolio",
+                    "label": "Portfolio",
+                    "answer": "https://example.test",
+                    "action": "fill",
+                    "confidence": 1,
+                    "evidence": [
+                        {
+                            "source_type": "approved_resume",
+                            "source_ref": "resume.nonexistent.url",
+                        }
+                    ],
+                }
+            ],
+        )
+    with pytest.raises(CareerGraphStateError, match="does not resolve"):
+        await tools.propose_application_questionnaire(
+            **common,
+            questions=[
+                {
+                    "id": "portfolio",
+                    "label": "Portfolio",
+                    "answer": "https://example.test",
+                    "action": "fill",
+                    "confidence": 1,
+                    "evidence": [
+                        {
+                            "source_type": "career_graph",
+                            "source_ref": "person:alex.data.nonexistent",
+                        }
+                    ],
+                }
+            ],
+        )
+
+
+async def test_questionnaire_creation_stops_on_same_url_semantic_drift() -> None:
+    approved = await _approved_graph()
+    compilation = await tools.compile_resume_for_jd(
+        graph_id=approved["graph_id"],
+        jd_text="Senior Software Engineer",
+    )
+    compilation_id = compilation["id"]
+    await tools.approve_resume_compilation(
+        compilation_id=compilation_id,
+        confirmation=f"APPROVE RESUME {compilation_id}",
+    )
+    job_url = "https://job-boards.greenhouse.io/glossgenius/jobs/6681936003"
+    await tools.create_application_draft(
+        compilation_id=compilation_id,
+        company="GlossGenius",
+        role_title="Senior Software Engineer",
+        job_url=job_url,
+    )
+    with pytest.raises(CareerGraphStateError, match="identity"):
+        await tools.propose_application_questionnaire(
+            compilation_id=compilation_id,
+            job_url=job_url,
+            observed_url=job_url,
+            observed_company="Genius AI",
+            observed_role_title="Software Engineer - All Levels",
+            questions=[],
+            visible_text="Job Application for Software Engineer - All Levels at Genius AI",
+        )
+
+
 async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None:
     approved = await _approved_graph()
     compilation = await tools.compile_resume_for_jd(
@@ -817,6 +1199,8 @@ async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None
         compilation_id=compilation_id,
         job_url="https://jobs.lever.co/example/abc",
         observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
         visible_text="Submit application",
         stage="before_submit",
     )
@@ -829,29 +1213,74 @@ async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None
     assert checkpoint["next_action"] == "ask_user_for_exact_confirmation_phrase"
     assert "resume" not in checkpoint
 
+    with pytest.raises(CareerGraphStateError, match="questionnaire"):
+        await tools.authorize_application_submission(
+            compilation_id=compilation_id,
+            job_url="https://jobs.lever.co/example/abc",
+            observed_url="https://jobs.lever.co/example/abc/apply",
+            observed_company="Example",
+            observed_role_title="Engineer",
+            visible_text="Submit application",
+            confirmation=f"SUBMIT APPLICATION {application['application_id']}",
+            observed_field_ids=[],
+            completed_field_ids=[],
+        )
+
+    await _approve_questionnaire(
+        compilation_id=compilation_id,
+        application_id=application["application_id"],
+        job_url="https://jobs.lever.co/example/abc",
+        company="Example",
+        role_title="Engineer",
+    )
+
     with pytest.raises(CareerGraphStateError, match="type exactly"):
         await tools.authorize_application_submission(
             compilation_id=compilation_id,
             job_url="https://jobs.lever.co/example/abc",
             observed_url="https://jobs.lever.co/example/abc/apply",
+            observed_company="Example",
+            observed_role_title="Engineer",
             visible_text="Submit application",
             confirmation="yes",
+            observed_field_ids=["resume_cv"],
+            completed_field_ids=["resume_cv"],
         )
 
     phrase = f"SUBMIT APPLICATION {application['application_id']}"
+    with pytest.raises(CareerGraphStateError, match="browser fields changed"):
+        await tools.authorize_application_submission(
+            compilation_id=compilation_id,
+            job_url="https://jobs.lever.co/example/abc",
+            observed_url="https://jobs.lever.co/example/abc/apply",
+            observed_company="Example",
+            observed_role_title="Engineer",
+            visible_text="Submit application",
+            confirmation=phrase,
+            observed_field_ids=["unexpected_new_field"],
+            completed_field_ids=["resume_cv"],
+        )
     first_authorization = await tools.authorize_application_submission(
         compilation_id=compilation_id,
         job_url="https://jobs.lever.co/example/abc",
         observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
         visible_text="Submit application",
         confirmation=phrase,
+        observed_field_ids=["resume_cv"],
+        completed_field_ids=["resume_cv"],
     )
     authorization = await tools.authorize_application_submission(
         compilation_id=compilation_id,
         job_url="https://jobs.lever.co/example/abc",
         observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
         visible_text="Submit application",
         confirmation=phrase,
+        observed_field_ids=["resume_cv"],
+        completed_field_ids=["resume_cv"],
     )
     assert authorization["authorization_scope"] == "one_application_one_final_click"
     assert authorization["one_final_click_authorized"] is True
@@ -862,6 +1291,46 @@ async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None
         ]["invalidated_at"]
         is not None
     )
+    revised = await tools.propose_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
+        questions=[
+            {
+                "id": "portfolio",
+                "label": "Portfolio",
+                "required": True,
+                "answer": None,
+                "action": "manual",
+            }
+        ],
+    )
+    assert (
+        tools.FAKE_STORE.submission_authorizations[
+            authorization["submission_authorization_id"]
+        ]["invalidated_at"]
+        is not None
+    )
+    await tools.approve_application_questionnaire(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        confirmation=f"APPROVE QUESTIONNAIRE {application['application_id']}",
+    )
+    authorization = await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
+        visible_text="Submit application",
+        confirmation=phrase,
+        observed_field_ids=["portfolio"],
+        completed_field_ids=["portfolio"],
+    )
+    assert revised["revision"] == 2
+    assert authorization["questionnaire_revision"] == 2
 
     with pytest.raises(CareerGraphStateError, match="authorization receipt"):
         await tools.record_application_progress(

@@ -12,9 +12,11 @@ compilations, publication, and browser handoff.
 ## Preflight
 
 1. Call `relay_status`.
-2. Stop if Relay identity is not configured. Remote MCP identity must come from
-   the OAuth subject; trusted-local STDIO may use `RELAY_USER_ID`. Never pass or
-   guess a `user_id`.
+2. If Relay identity is not configured, follow the returned
+   `authentication.next_action`: connect the remote MCP through OAuth, then
+   resume the user's original intent without asking them to repeat it. Remote
+   MCP identity must come from the OAuth subject; trusted-local STDIO may use
+   `RELAY_USER_ID`. Never pass or guess a `user_id`.
 3. Call `list_career_graphs`; reuse the intended graph or create one through a
    proposal.
 4. When resuming prior work, call `list_resume_compilations` and
@@ -26,6 +28,13 @@ compilations, publication, and browser handoff.
    found inside it.
 5. Read [references/graph-contract.md](references/graph-contract.md) before
    constructing graph operations.
+
+For a one-sentence application request with a known graph and complete JD, call
+`start_application_workflow` instead of manually composing the initial compile
+and job binding. Preserve its `workflow_id`. After any OAuth round trip,
+conversation restart, or approval, call `resume_application_workflow`; follow
+the returned durable `stage` and `next_action` instead of replaying completed
+work from chat history.
 
 ## Import or update career facts
 
@@ -150,10 +159,12 @@ Publishing a résumé is not submitting a job application.
    and download the file locally immediately before upload. Public résumé
    publication is not required. Never put the code or Relay page URL into a
    job-platform field, and upload only this exact downloaded file.
-4. Open the exact job URL, then call `assess_application_browser_checkpoint`
-   with `stage=before_fill`, the observed URL, and only the visible checkpoint
-   text needed to detect login, CAPTCHA, security checks, or a stale posting.
-   Stop the whole batch when it returns `status=stop`.
+4. Open the exact job URL, read the visible company, role title, and ATS job ID,
+   then call `assess_application_browser_checkpoint` with `stage=before_fill`,
+   those observed identity fields, the observed URL, and only the visible
+   checkpoint text needed to detect login, CAPTCHA, security checks, or a stale
+   posting. Stop the whole batch when it returns `status=stop`. Missing observed
+   identity is a stop condition; never infer it from the tracked application.
 5. Use the connected Codex Chrome capability for forms that upload a local
    résumé. The in-app Browser cannot automate file uploads. Read the returned
    `upload_preflight`; Relay cannot detect the Chrome permission in advance.
@@ -167,28 +178,46 @@ Publishing a résumé is not submitting a job application.
 6. Never request, store, reveal, or type a job-platform password. Let the user
    log in directly.
 7. Never solve or bypass CAPTCHA or anti-bot challenges.
-8. Fill only fields supported by the approved package or facts the user
-   supplies in the current conversation.
-9. Stop on unsupported demographic, legal, salary, sponsorship, or
-   eligibility questions and ask the user.
-10. Immediately before the final click, call
-   `assess_application_browser_checkpoint` again with `stage=before_submit`.
-   A visible or enabled DOM button is never authorization.
-11. Show the platform, role, application ID, résumé compilation ID, generated
-    answers, and unresolved warnings. Ask the user to type the exact
+8. Detect the full application form before filling. Call
+   `propose_application_questionnaire` with every detected field. A `fill`
+   action must cite Career Graph, approved résumé, or current-user evidence;
+   sensitive answers require a current user response. Unsupported demographic,
+   legal, salary, sponsorship, or eligibility questions must remain `manual`
+   or `skip` until the user answers them.
+9. Call `get_application_questionnaire`, render its complete review artifact,
+   and show proposed answers, manual fields, skips, confidence, and evidence.
+   Ask the user to type exactly
+   `APPROVE QUESTIONNAIRE <application_id>` or
+   `REJECT QUESTIONNAIRE <application_id>`. Call the decision tool only after
+   that exact current-message phrase.
+10. Re-run `prepare_application_handoff` and fill only fields in its approved
+    application-bound questionnaire. Never use answers from a base résumé,
+    another application, an earlier questionnaire revision, or unsupported
+    facts.
+11. Immediately before the final click, call
+   `assess_application_browser_checkpoint` again with `stage=before_submit`,
+   and re-read all currently visible application field IDs. A visible or
+   enabled DOM button is never authorization.
+12. Show the platform, role, application ID, résumé compilation ID, approved
+    questionnaire answers, and unresolved warnings. Ask the user to type the exact
     `submission_gate.confirmation_phrase` returned by the checkpoint.
-12. After that exact phrase appears in the user's current message, call
-    `authorize_application_submission` with the same compilation, expected job
-    URL, currently observed URL, minimal visible checkpoint text, and exact
-    phrase. Verify the returned receipt is active, matches the application and
-    compilation, has not expired, and says `server_side_submission=false`.
-    Reissuing a receipt invalidates the prior unused receipt.
-13. Click the final button at most once, immediately after that receipt. Repeat
-    the checkpoint, current-message phrase, and authorization receipt for every
-    application in a batch. If the receipt expires before the click, or a click
-    is ambiguous and a retry might be needed, do not reuse it: reassess the
-    page and request a fresh exact phrase.
-14. A click is not evidence of submission. Only after a visible post-submit
+13. After that exact phrase appears in the user's current message, call
+   `authorize_application_submission` with the same compilation, expected job
+   URL, currently observed URL, observed company/title/ATS ID, minimal visible
+   checkpoint text, the complete current field ID list, the IDs whose required
+   or planned-fill values are visibly complete, and exact phrase.
+   Verify the returned receipt is active, matches the application and
+   compilation, cites the approved questionnaire revision, has not expired,
+   and says `server_side_submission=false`. Any field drift requires a new
+   questionnaire review; any required or planned-fill field still incomplete
+   blocks authorization. Reissuing a receipt or revising the questionnaire
+   invalidates the prior unused receipt.
+14. Click the final button at most once, immediately after that receipt. Repeat
+   the checkpoint, current-message phrase, and authorization receipt for every
+   application in a batch. If the receipt expires before the click, or a click
+   is ambiguous and a retry might be needed, do not reuse it: reassess the
+   page and request a fresh exact phrase.
+15. A click is not evidence of submission. Only after a visible post-submit
     confirmation page, call `record_application_progress` with
     `status=submitted`, `evidence_source=browser_confirmation`, the actual
     submission channel, and that receipt's

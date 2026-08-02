@@ -87,6 +87,12 @@ approval_mode = "prompt"
 [mcp_servers.relay-career.tools.authorize_application_submission]
 approval_mode = "prompt"
 
+[mcp_servers.relay-career.tools.approve_application_questionnaire]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.reject_application_questionnaire]
+approval_mode = "prompt"
+
 # Remote multi-user surface. Enable this and disable the STDIO entry above
 # after `make mcp-remote`; then run `codex mcp login relay-career-remote`.
 # Production deployments must replace the loopback URLs with HTTPS.
@@ -127,6 +133,12 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.relay-career-remote.tools.authorize_application_submission]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.approve_application_questionnaire]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.reject_application_questionnaire]
 approval_mode = "prompt"
 
 [features]
