@@ -203,7 +203,7 @@ export default async function HomePage({
 
       {/* HERO — `main` landmark + #main anchor for the skip-link above. */}
       <main id="main" role="main">
-      <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 items-center">
+      <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-[0.92fr_1.08fr] gap-10 md:gap-12 items-center">
         {/* Film grain (v10) — a sub-perceptual tactile veil so the warm paper
             field under the hero reads as material, not flat fill. Behind all
             content; pointer-transparent; hidden under reduced-motion. */}
@@ -256,11 +256,7 @@ export default async function HomePage({
           </div>
         </div>
         <div className="animate-fade-up-delay">
-          <div className="animate-buoy">
-            <div data-tilt="6" className="tilt-pointer">
-              <HeroConsole />
-            </div>
-          </div>
+          <HeroConsole />
         </div>
       </section>
 

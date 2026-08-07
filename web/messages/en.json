@@ -344,7 +344,7 @@
       "text": "Please sign in to open your workspace."
     },
     "hero": {
-      "badge": "Client-side agents · zero account risk",
+      "badge": "Client-side agents · you submit",
       "headline": {
         "line1": "Your job hunt,",
         "line2Pre": "run by",
@@ -378,7 +378,7 @@
         },
         {
           "title": "Submit it yourself",
-          "body": "The form fills in your own browser. You press submit — zero account risk."
+          "body": "The form fills in your own browser and you press Submit, reducing credential and remote-submission risk."
         },
         {
           "title": "Prep & track",
@@ -448,8 +448,8 @@
           "body": "Applying to 11–20 roles converts 3× better than blasting 100+. We help you go narrow and excellent — not spray and pray."
         },
         {
-          "title": "Client-side = zero ban",
-          "body": "Filling and submitting happen in your browser, your login, your IP. Platforms can't tell human from assisted. Your account stays safe."
+          "title": "Client-side, lower account risk",
+          "body": "Filling happens in your browser, under your login and IP, and you confirm the final Submit. No assistive tool can guarantee a platform will never flag activity."
         },
         {
           "title": "Your context is the moat",
@@ -551,7 +551,7 @@
       }
     },
     "footer": {
-      "tagline": "Quality over quantity. Your account, never at risk.",
+      "tagline": "Quality over quantity. No platform passwords on our servers.",
       "privacy": "Privacy",
       "security": "Security",
       "docs": "Docs"
@@ -562,7 +562,7 @@
       "items": [
         {
           "q": "Will Vantage get my LinkedIn or job-board account banned?",
-          "a": "No. Every submission happens inside your own browser, signed in as you, from your IP — the same way you'd apply by hand. We never store platform passwords and never operate your accounts from a server."
+          "a": "Vantage fills forms client-side, leaves the final Submit to you, and never stores platform passwords. That reduces credential and remote-submission risk, but no assistive tool can guarantee a platform will never flag activity."
         },
         {
           "q": "Does Vantage fabricate experience to make my résumé look better?",
