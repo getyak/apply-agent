@@ -359,30 +359,31 @@
     "atsStrip": {
       "label": "Fills forms on"
     },
-    "steps": {
-      "eyebrow": "The loop",
-      "title": "From “I need a job” to submitted — in a handful of clicks.",
-      "subtitle": "One calm loop that gets smarter every time you use it. No spray-and-pray. No filling the same form twice.",
-      "items": [
+    "journey": {
+      "eyebrow": "The working loop",
+      "title": "From signal to a submission you trust.",
+      "subtitle": "Three real product states, one continuous workspace. The agents move the work forward while you keep the facts and the final say.",
+      "scenes": [
         {
-          "title": "Bring yourself in",
-          "body": "Drop a résumé, paste it, link a profile — or just chat. No forms to fill."
+          "tab": "Find the signal",
+          "title": "Find roles worth your attention",
+          "body": "Live matches put fit, salary, evidence, and skill gaps in one view, so a strong opportunity is obvious before you spend time on it.",
+          "caption": "Real product view: ranked live matches",
+          "alt": "Vantage live matches ranked by fit with salary and skill evidence"
         },
         {
-          "title": "Get matched",
-          "body": "Agents scan live roles and rank real fits. Quality, not a thousand long-shots."
+          "tab": "Build the package",
+          "title": "Work from one career context",
+          "body": "Ask once. The same evidence-backed profile follows the matching, résumé, application, and interview agents without making you start over.",
+          "caption": "Real product view: shared agent workspace",
+          "alt": "Vantage workspace with job search, résumé, and interview agent actions"
         },
         {
-          "title": "Review the package",
-          "body": "Tailored résumé, cover note, and answers — AI parts marked for a quick glance."
-        },
-        {
-          "title": "Submit it yourself",
-          "body": "The form fills in your own browser and you press Submit, reducing credential and remote-submission risk."
-        },
-        {
-          "title": "Prep & track",
-          "body": "Everything lands on a board. Got an interview? A mock is one tap away."
+          "tab": "Keep the final say",
+          "title": "Review before anything leaves your browser",
+          "body": "The role evidence, prepared materials, and agent actions stay visible together. You review the package and control the final submission.",
+          "caption": "Real product view: application review and agent handoff",
+          "alt": "Vantage application review with job evidence and the Ask Vantage agent panel"
         }
       ]
     },

@@ -1,9 +1,7 @@
 import {
   Check,
   ArrowRight,
-  Upload as UploadIcon,
   Search,
-  CheckSquare,
   Lock,
   Star,
   MessageSquare,
@@ -17,6 +15,9 @@ import type { CSSProperties } from "react";
 import { cookies } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import HeroConsole from "@/components/hero-console";
+import ProductJourney, {
+  type ProductJourneyCopy,
+} from "@/components/product-journey";
 import PricingSection from "@/components/pricing-section";
 import LandingMotion from "@/components/landing-motion";
 import PointerFX from "@/components/pointer-fx";
@@ -44,15 +45,6 @@ const FEATURE_ICONS = [
   <BarChart3 key="f5" size={22} className="text-brown" strokeWidth={1.7} />,
 ];
 
-const STEP_ICONS = [
-  <UploadIcon key="s0" size={22} className="text-brown" strokeWidth={1.7} />,
-  <Search key="s1" size={22} className="text-brown" strokeWidth={1.7} />,
-  <CheckSquare key="s2" size={22} className="text-brown" strokeWidth={1.7} />,
-  <Lock key="s3" size={22} className="text-brown" strokeWidth={1.7} />,
-  <Star key="s4" size={22} className="text-brown" strokeWidth={1.7} />,
-];
-
-const STEP_NUMBERS = ["01", "02", "03", "04", "05"];
 const BET_KEYS = ["01", "02", "03"];
 
 export default async function HomePage({
@@ -72,9 +64,7 @@ export default async function HomePage({
   const bets = (t.raw("bets.items") as { title: string; body: string }[]).map(
     (b, i) => ({ ...b, k: BET_KEYS[i] }),
   );
-  const steps = (t.raw("steps.items") as { title: string; body: string }[]).map(
-    (s, i) => ({ ...s, no: STEP_NUMBERS[i], icon: STEP_ICONS[i] }),
-  );
+  const journey = t.raw("journey") as ProductJourneyCopy;
   const faqItems = t.raw("faq.items") as { q: string; a: string }[];
   // Structured data — surfaces Vantage as an Organization + SoftwareApplication
   // in Google's Knowledge Graph and turns the FAQ section into rich results.
@@ -172,7 +162,7 @@ export default async function HomePage({
             <div className="logo-spark w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
               <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
             </div>
-            <span className="wordmark-gleam weight-hover font-display font-bold text-lg tracking-[3px] text-brown">
+            <span className="wordmark-gleam weight-hover hidden min-[430px]:inline font-display font-bold text-lg tracking-[3px] text-brown">
               VANTAGE
             </span>
           </div>
@@ -185,7 +175,7 @@ export default async function HomePage({
             <a href="#pricing" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 4 } as CSSProperties}>{t("nav.pricing")}</a>
             <a href="#faq" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 5 } as CSSProperties}>{t("faq.eyebrow")}</a>
           </nav>
-          <div className="nav-assemble ml-auto flex items-center gap-4" style={{ "--ni": 6 } as CSSProperties}>
+          <div className="nav-assemble ml-auto flex items-center gap-2 sm:gap-4" style={{ "--ni": 6 } as CSSProperties}>
             <LanguageSwitcher variant="inline" />
             {isSignedIn ? (
               // Avatar chip (name + initials) so the signed-in state is
@@ -193,8 +183,8 @@ export default async function HomePage({
               <LandingAccountChip />
             ) : (
               <>
-                <a href="/auth?mode=login" className="underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">{t("nav.signIn")}</a>
-                <a href="/auth" data-magnetic="0.35" data-ripple className="magnet shine cta-aura no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">{t("nav.startFree")}</a>
+                <a href="/auth?mode=login" className="underline-grow hidden sm:inline no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">{t("nav.signIn")}</a>
+                <a href="/auth" data-magnetic="0.35" data-ripple className="magnet shine cta-aura whitespace-nowrap no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-3 sm:px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">{t("nav.startFree")}</a>
               </>
             )}
           </div>
@@ -279,45 +269,10 @@ export default async function HomePage({
         </div>
       </section>
 
-      {/* HOW IT WORKS */}
-      <section id="how" className="bg-white border-y border-border">
-        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
-          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            <span className="eyebrow-dot" aria-hidden />{t("steps.eyebrow")}<span className="eyebrow-rule" aria-hidden />
-          </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-3 max-w-[620px]">
-            {t("steps.title")}
-          </h2>
-          <p data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="text-pretty font-body text-[17px] leading-[1.55] text-ink-light m-0 mb-12 max-w-[560px]">
-            {t("steps.subtitle")}
-          </p>
-          <div className="relative">
-            {/* Connective thread (v18) — a warm rail draws across the row when
-                the section is first seen, threading behind the opaque icon
-                tiles so the five steps read as one pipeline. lg-only (the steps
-                stack below it); shares the reveal observer + its fallbacks. */}
-            <div aria-hidden data-reveal className="flow-rail hidden lg:block" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-[18px]">
-            {steps.map((step, i) => (
-              <div key={step.no} data-reveal style={{ "--reveal-delay": `${i * 80}ms` } as CSSProperties} className="group relative">
-                <div className="ghost-num select-none text-[34px] tracking-[-1px] mb-2 leading-none">
-                  {step.no}
-                </div>
-                <div className="icon-glow w-[42px] h-[42px] rounded-[11px] bg-cream border border-cream-border flex items-center justify-center mb-3.5 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-gold-bg group-hover:-translate-y-0.5 group-hover:shadow-[0_6px_14px_-6px_rgba(61,42,20,0.3)]">
-                  {step.icon}
-                </div>
-                <div className="font-body font-semibold text-[15px] text-ink mb-1.5">
-                  {step.title}
-                </div>
-                <div className="font-body text-[13.5px] leading-[1.5] text-ink-light">
-                  {step.body}
-                </div>
-              </div>
-            ))}
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Product story: all three real screens remain in the document.
+          The sticky rail only reflects which part of the continuous journey
+          is closest to the viewport reference line. */}
+      <ProductJourney copy={journey} />
 
       {/* CHAT FIRST */}
       <section id="chat" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[90px] grid grid-cols-1 md:grid-cols-[1fr_1.05fr] gap-10 md:gap-[60px] items-center">
