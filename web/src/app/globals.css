@@ -77,6 +77,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-body);
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -220,6 +221,26 @@ body {
 .animate-float { animation: float-y 5s var(--ease-in-out) infinite; }
 .animate-tilt-in { animation: tilt-in 0.7s var(--ease-out) both; }
 .animate-glow { animation: glow-breathe 3.4s var(--ease-in-out) infinite; }
+
+/* The final product-story scene gets its sense of depth from cropping real
+   interface layers. There is no perspective or 3D rotation: a scaled review
+   screen and a wider agent panel are clipped by the same viewport. */
+.journey-push-primary {
+  transform: scale(1.4);
+  transform-origin: 54% 69%;
+}
+.journey-agent-layer {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-push-primary {
+    transform: scale(1.12);
+  }
+  .journey-agent-layer {
+    transform: none;
+  }
+}
 
 /* Gradient text — warm gold "lit metal" headline accent. Apply to a span
    inside a heading; it pans slowly so the gold catches the light. */

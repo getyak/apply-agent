@@ -50,14 +50,18 @@ Relay 是一套可以自托管的 AI 求职基础设施。仓库覆盖 Web 工�
 
 <table>
   <tr>
-    <td width="50%">
+    <td width="33.33%">
+      <img src="web/public/demo/workspace.png" alt="Vantage 智能体工作区" />
+    </td>
+    <td width="33.33%">
       <img src="web/public/demo/live-matches.png" alt="Vantage 职位匹配工作区" />
     </td>
-    <td width="50%">
+    <td width="33.33%">
       <img src="web/public/demo/application-review.png" alt="Vantage 投递包审核界面" />
     </td>
   </tr>
   <tr>
+    <td align="center"><sub>统一工作区：从一句请求启动职位、简历与面试智能体。</sub></td>
     <td align="center"><sub>实时职位匹配：把机会、契合度和技能缺口放在同一屏。</sub></td>
     <td align="center"><sub>投递前审核：职位证据、准备材料和智能体协作同时可见。</sub></td>
   </tr>
