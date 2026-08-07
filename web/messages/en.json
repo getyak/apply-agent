@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Vantage — Your job hunt, run by agents",
-    "description": "Drop your résumé in. AI agents find the right roles, tailor every application, draft your answers, and prep your interviews — you review and hit submit."
+    "title": "Vantage | The evidence-backed job search",
+    "description": "Verified career facts become tailored applications. Vantage agents prepare the work, and you approve what leaves your browser."
   },
   "common": {
     "save": "Save",
@@ -345,6 +345,7 @@
     },
     "hero": {
       "badge": "Client-side agents · you submit",
+      "eyebrow": "The evidence-backed job search",
       "headline": {
         "line1": "Your job hunt,",
         "line2Pre": "run by",
@@ -352,37 +353,63 @@
         "line2Post": ".",
         "line3": "Reviewed by you."
       },
-      "subhead": "Just tell Vantage what you want. Its agents find the right roles, tailor every application, draft your answers, and prep your interviews — you review and hit submit.",
-      "secondaryCta": "See how it works",
+      "headlineEvidence": {
+        "line1": "Your career,",
+        "line2": "on the record."
+      },
+      "subhead": "Verified facts become tailored applications. Agents prepare the work. You approve what leaves your browser.",
+      "secondaryCta": "See the workflow",
       "microcopy": "No card to start · Your data can stay on your device"
     },
     "atsStrip": {
       "label": "Fills forms on"
     },
+    "evidence": {
+      "contractLabel": "How Vantage keeps the work trustworthy",
+      "contract": [
+        {
+          "title": "Career facts stay sourced",
+          "body": "Your Career Graph remains the source of truth."
+        },
+        {
+          "title": "Agents share context",
+          "body": "Matching, résumé, and interview work stay connected."
+        },
+        {
+          "title": "You keep the final say",
+          "body": "Nothing submits without your approval."
+        }
+      ],
+      "title": "One career context. Every agent.",
+      "body": "Ask once. Vantage agents work from the same verified Career Graph instead of inventing context or making you start over.",
+      "workspaceAlt": "Vantage workspace with job search, résumé, and interview agent actions",
+      "workspaceCaption": "Actual Vantage workspace",
+      "commandsLabel": "Examples of work you can delegate"
+    },
     "journey": {
       "eyebrow": "The working loop",
-      "title": "From signal to a submission you trust.",
-      "subtitle": "Three real product states, one continuous workspace. The agents move the work forward while you keep the facts and the final say.",
+      "title": "See every handoff.",
+      "subtitle": "Three real product states share one career context. The work moves forward while the evidence and approval stay visible.",
       "scenes": [
         {
-          "tab": "Find the signal",
+          "tab": "Find a role",
           "title": "Find roles worth your attention",
           "body": "Live matches put fit, salary, evidence, and skill gaps in one view, so a strong opportunity is obvious before you spend time on it.",
-          "caption": "Real product view: ranked live matches",
+          "caption": "Ranked live matches",
           "alt": "Vantage live matches ranked by fit with salary and skill evidence"
         },
         {
           "tab": "Build the package",
           "title": "Work from one career context",
           "body": "Ask once. The same evidence-backed profile follows the matching, résumé, application, and interview agents without making you start over.",
-          "caption": "Real product view: shared agent workspace",
+          "caption": "Shared agent workspace",
           "alt": "Vantage workspace with job search, résumé, and interview agent actions"
         },
         {
-          "tab": "Keep the final say",
+          "tab": "Approve the action",
           "title": "Review before anything leaves your browser",
           "body": "The role evidence, prepared materials, and agent actions stay visible together. You review the package and control the final submission.",
-          "caption": "Real product view: application review and agent handoff",
+          "caption": "Application review and agent handoff",
           "alt": "Vantage application review with job evidence and the Ask Vantage agent panel"
         }
       ]
@@ -393,10 +420,10 @@
       "titleLine2": "Just ask.",
       "body": "Vantage is one conversation. Behind it, a team of agents quietly does the work — updating your résumé, tailoring an application, filling a form, launching a mock interview. You stay in one place and stay in control.",
       "asks": [
-        "\"Find me product design roles under $200k, remote.\"",
-        "\"Rewrite my résumé to lead with impact.\"",
-        "\"Start the Stripe application and draft the answers.\"",
-        "\"Run a mock interview for tomorrow's Stripe screen.\""
+        "Find roles I should look at.",
+        "Tailor my résumé for this role.",
+        "Prepare me for tomorrow's interview.",
+        "Show me what changed and why."
       ]
     },
     "chatMock": {
@@ -412,23 +439,24 @@
     },
     "features": {
       "eyebrow": "What it does",
-      "title": "Six agents. One career context that keeps growing.",
+      "title": "One career context. Six focused agents.",
+      "subtitle": "Each agent has a narrow job. All of them work from the same evidence and approval rules.",
       "items": [
         {
           "title": "Résumé studio",
-          "body": "Build and refine by conversation. Every version saved — write once, map everywhere."
+          "body": "Build and refine by conversation. Every version stays connected to its source facts."
         },
         {
           "title": "Honest AI optimize",
-          "body": "Sharpens how your real wins read — quantifies, tightens, never invents."
+          "body": "Sharpens how your real wins read. It tightens the language and never invents experience."
         },
         {
           "title": "JD-tailored apply",
-          "body": "One job description in, one tailored résumé + cover note + answers out."
+          "body": "Turns one job description into a tailored résumé, cover note, and draft answers."
         },
         {
           "title": "Client-side autofill",
-          "body": "Fills ATS forms in your browser, on your login. You always submit yourself."
+          "body": "Prepares ATS fields in your browser. You perform the final submission."
         },
         {
           "title": "Mock interviews",
@@ -436,34 +464,34 @@
         },
         {
           "title": "Market & flywheel",
-          "body": "Daily trends plus a personal interview vault that gets richer the more you use it."
+          "body": "Connects market signals with an interview vault that becomes more useful over time."
         }
       ]
     },
     "bets": {
       "eyebrow": "Three bets we made",
-      "title": "Built the opposite way to every mass-apply bot.",
+      "title": "Designed for a narrower, better search.",
       "items": [
         {
           "title": "Quality over quantity",
-          "body": "Applying to 11–20 roles converts 3× better than blasting 100+. We help you go narrow and excellent — not spray and pray."
+          "body": "Vantage ranks roles before it prepares anything, so effort goes to opportunities supported by real fit evidence."
         },
         {
           "title": "Client-side, lower account risk",
-          "body": "Filling happens in your browser, under your login and IP, and you confirm the final Submit. No assistive tool can guarantee a platform will never flag activity."
+          "body": "Forms are prepared in the browser you already use. You review the package and perform the final submission."
         },
         {
-          "title": "Your context is the moat",
-          "body": "Autofill gets copied. Your résumé history, applications, and interview answers don't — they compound into an assistant that truly knows you."
+          "title": "Your context compounds",
+          "body": "Your Career Graph, application history, and interview evidence improve later work without rewriting the facts."
         }
       ]
     },
     "pricing": {
       "eyebrow": "Pricing",
-      "title": "Start free. Upgrade when it's working.",
+      "title": "Start free. Upgrade when the system earns it.",
       "toggleMonthly": "Monthly",
-      "toggleAnnual": "Annual · save 20%",
-      "periodAnnual": "/mo · billed yearly",
+      "toggleAnnual": "Annual. Save 20%",
+      "periodAnnual": "/mo, billed yearly",
       "periodMonthly": "/ month",
       "free": {
         "name": "Free",
@@ -472,7 +500,7 @@
         "cta": "Get started",
         "features": [
           "1 résumé + version history",
-          "5 tailored applications / mo",
+          "5 tailored applications per month",
           "Daily market trends",
           "Client-side autofill"
         ]
@@ -484,7 +512,7 @@
         "cta": "Start 7-day trial",
         "features": [
           "Unlimited tailored applications",
-          "40 agent autofills / mo",
+          "40 agent autofills per month",
           "Unlimited mock interviews",
           "Full trends + skill-gap analysis",
           "Interview vault"
@@ -502,9 +530,12 @@
           "1:1 onboarding session"
         ]
       },
-      "footnote": "Every plan: your data can stay on your device · you always submit applications yourself · cancel anytime"
+      "footnote": "Every plan lets your data stay on your device. You always submit applications yourself. Cancel anytime."
     },
     "heroConsole": {
+      "productAlt": "{agents} working across real Vantage product views",
+      "proofLabel": "Live product workflow",
+      "proofDetail": "From fit evidence to final review",
       "titleBar": "vantage · start here",
       "live": "live",
       "methods": {
@@ -552,7 +583,7 @@
       }
     },
     "footer": {
-      "tagline": "Quality over quantity. No platform passwords on our servers.",
+      "tagline": "Evidence first. No platform passwords on our servers.",
       "privacy": "Privacy",
       "security": "Security",
       "docs": "Docs"
@@ -567,7 +598,7 @@
         },
         {
           "q": "Does Vantage fabricate experience to make my résumé look better?",
-          "a": "No. Our fabrication guard rejects any draft that introduces a company, role, year, or quantified claim that isn't in your source résumé. AI rephrases — it doesn't invent."
+          "a": "No. Our fabrication guard rejects any draft that introduces a company, role, year, or quantified claim that isn't in your source résumé. AI rephrases. It does not invent."
         },
         {
           "q": "Which platforms work with autofill?",
@@ -579,20 +610,21 @@
         },
         {
           "q": "Do I have to approve every submission?",
-          "a": "Yes — by design. The agents prepare the package and queue it; you review and click submit. High-risk actions (sending email, deleting data, submitting forms) always go through a human-in-the-loop approval."
+          "a": "Yes, by design. The agents prepare the package and queue it. You review and click submit. High-risk actions such as sending email, deleting data, and submitting forms always require human approval."
         },
         {
           "q": "How is this different from autofill extensions like Simplify?",
-          "a": "Autofill is the on-ramp; the agents are the road. Vantage tailors résumés per JD, drafts open-ended answers, preps interviews from real recruiter intel, and remembers everything for next time — autofill alone doesn't do any of that."
+          "a": "Autofill is the on-ramp. Vantage also tailors résumés for each job, drafts open-ended answers, prepares interviews from evidence, and carries that context into the next task."
         }
       ]
     },
     "skipToContent": "Skip to content",
     "finalCta": {
+      "headline": "Put the busywork on agents.",
       "headlinePre": "Hand the busywork to the",
       "headlineHighlight": "agents",
       "headlinePost": ".",
-      "body": "Upload a résumé, or just start talking. You'll have applications ready to review in minutes."
+      "body": "Start with a résumé or a conversation. Review the work before anything leaves your browser."
     },
     "accountChip": {
       "fallbackName": "there",

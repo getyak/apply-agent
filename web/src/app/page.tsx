@@ -1,75 +1,50 @@
-import {
-  Check,
-  ArrowRight,
-  Search,
-  Lock,
-  Star,
-  MessageSquare,
-  FileText,
-  Pencil,
-  BarChart3,
-  Zap,
-  Send,
-} from "lucide-react";
-import type { CSSProperties } from "react";
+import { ArrowRight, Check } from "lucide-react";
+import Image from "next/image";
 import { cookies } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import HeroConsole from "@/components/hero-console";
+import PricingSection from "@/components/pricing-section";
 import ProductJourney, {
   type ProductJourneyCopy,
 } from "@/components/product-journey";
-import PricingSection from "@/components/pricing-section";
-import LandingMotion from "@/components/landing-motion";
-import PointerFX from "@/components/pointer-fx";
 import { LandingAccountChip } from "@/components/landing-account-chip";
 import { LanguageSwitcher } from "@/components/i18n/language-switcher";
 import { SITE_NAME, SITE_TAGLINE, SITE_URL, SOCIAL_LINKS } from "@/lib/site";
 
-// Shared with web/src/lib/api.ts (TOKEN_COOKIE) and web/src/proxy.ts.
-// The cookie is non-httpOnly and mirrored from localStorage on login, which
-// lets this server component presence-check auth at render time — the same
-// signal the edge proxy uses to gate /app/*. Presence-only: an expired token
-// still shows the signed-in nav, then the /app layout's me() guard bounces to
-// /auth — behaviour identical to a direct /app visit.
 const TOKEN_COOKIE = "vantage_token";
 
-// Icons stay in code (not translatable); copy is keyed into the "landing"
-// namespace and zipped in at render time. The order of these icon arrays must
-// match the order of the corresponding string arrays in messages/*.json.
-const FEATURE_ICONS = [
-  <FileText key="f0" size={22} className="text-brown" strokeWidth={1.7} />,
-  <Pencil key="f1" size={22} className="text-brown" strokeWidth={1.7} />,
-  <Search key="f2" size={22} className="text-brown" strokeWidth={1.7} />,
-  <Lock key="f3" size={22} className="text-brown" strokeWidth={1.7} />,
-  <MessageSquare key="f4" size={22} className="text-brown" strokeWidth={1.7} />,
-  <BarChart3 key="f5" size={22} className="text-brown" strokeWidth={1.7} />,
-];
+type EvidenceItem = {
+  title: string;
+  body: string;
+};
 
-const BET_KEYS = ["01", "02", "03"];
+type FeatureItem = {
+  title: string;
+  body: string;
+};
 
 export default async function HomePage({
   searchParams,
 }: {
-  // Next 16 ships dynamic APIs as promises — must await before reading.
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const t = await getTranslations("landing");
   const params = (await searchParams) ?? {};
-  // Zip translatable copy with the in-code icon/number arrays. t.raw() returns
-  // the array of strings straight from the active locale's "landing" namespace.
+  const contract = t.raw("evidence.contract") as EvidenceItem[];
   const asks = t.raw("chat.asks") as string[];
-  const features = (t.raw("features.items") as { title: string; body: string }[]).map(
-    (f, i) => ({ ...f, icon: FEATURE_ICONS[i] }),
-  );
-  const bets = (t.raw("bets.items") as { title: string; body: string }[]).map(
-    (b, i) => ({ ...b, k: BET_KEYS[i] }),
-  );
-  const journey = t.raw("journey") as ProductJourneyCopy;
+  const features = t.raw("features.items") as FeatureItem[];
+  const principles = t.raw("bets.items") as EvidenceItem[];
   const faqItems = t.raw("faq.items") as { q: string; a: string }[];
-  // Structured data — surfaces Vantage as an Organization + SoftwareApplication
-  // in Google's Knowledge Graph and turns the FAQ section into rich results.
-  // All copy is pulled from the same i18n keys the visible UI renders, so
-  // crawlers and humans see the same words (no "cloaking" risk).
+  const journeyScenes = t.raw(
+    "journey.scenes",
+  ) as ProductJourneyCopy["scenes"];
+  const journey: ProductJourneyCopy = {
+    eyebrow: t("journey.eyebrow"),
+    title: t("journey.title"),
+    subtitle: t("journey.subtitle"),
+    scenes: journeyScenes,
+  };
+
   const jsonLd = [
     {
       "@context": "https://schema.org",
@@ -106,484 +81,394 @@ export default async function HomePage({
       })),
     },
   ];
-  // The middleware bounces unauthenticated visits to /app/* back here with
-  // ?source=app_redirect so we can explain the redirect instead of leaving
-  // the user wondering why they landed on marketing.
-  // Signed-in visitors get a "back to your workspace" nav instead of the
-  // sign-in / start-free CTAs, so the landing page reflects their session.
+
   const isSignedIn = Boolean((await cookies()).get(TOKEN_COOKIE)?.value);
-  // When signed in, every "Start free" CTA becomes "Open workspace" → /app.
   const primaryCtaHref = isSignedIn ? "/app" : "/auth";
   const primaryCtaLabel = isSignedIn
     ? t("nav.openWorkspace")
     : t("nav.startFree");
-  // Only guests can have been bounced here from /app/* by the edge proxy, so
-  // the "please sign in" banner is mutually exclusive with the signed-in nav.
-  const showRedirectNotice = !isSignedIn && params.source === "app_redirect";
+  const showRedirectNotice =
+    !isSignedIn && params.source === "app_redirect";
+  const featureColumns = [features.slice(0, 3), features.slice(3)];
+
   return (
-    <div className="min-h-screen">
-      {/* a11y: keyboard users hit Tab on page load and get a real skip-link
-          before any decorative motion / nav links. The .skip-link class lives
-          in globals.css and is visually hidden until :focus. */}
+    <div className="evidence-landing min-h-screen bg-[var(--landing-bg)] text-[var(--landing-ink)]">
       <a href="#main" className="skip-link">
         {t("skipToContent")}
       </a>
-      {/* Structured data — one script per @type keeps Google's Rich Results
-          test from choking on monolithic arrays, and lets us future-add types
-          (e.g. BreadcrumbList) without rewriting the existing blocks. */}
-      {jsonLd.map((node, i) => (
+
+      {jsonLd.map((node, index) => (
         <script
-          key={`ld-${i}`}
+          key={`ld-${index}`}
           type="application/ld+json"
-          // JSON.stringify with no replacer; safe — no untrusted strings here.
           dangerouslySetInnerHTML={{ __html: JSON.stringify(node) }}
         />
       ))}
-      <LandingMotion />
-      <PointerFX />
+
       {showRedirectNotice && (
         <div
           role="status"
-          className="w-full bg-cream border-b border-cream-border text-center font-body text-[13px] text-brown px-4 py-2"
+          className="border-b border-[var(--landing-line)] bg-[var(--landing-soft)] px-4 py-2 text-center text-[13px] text-[var(--landing-muted)]"
         >
           {t("redirectNotice.text")}
           <a
             href="/auth?mode=login"
-            className="ml-2 font-semibold underline hover:no-underline"
+            className="ml-2 font-semibold text-[var(--landing-accent)] underline"
           >
             {t("nav.signIn")}
           </a>
         </div>
       )}
-      {/* NAV */}
-      <header className="site-nav sticky top-0 z-40 backdrop-blur-[20px] bg-paper/82 border-b border-border h-[66px]">
-        <div className="max-w-[1140px] mx-auto px-4 sm:px-8 h-full flex items-center gap-3.5">
-          <div className="nav-assemble flex items-center gap-[9px]" style={{ "--ni": 0 } as CSSProperties}>
-            <div className="logo-spark w-[27px] h-[27px] rounded-[7px] bg-brown flex items-center justify-center">
-              <Check size={15} className="text-[#FAF8F6]" strokeWidth={2.2} />
-            </div>
-            <span className="wordmark-gleam weight-hover hidden min-[430px]:inline font-display font-bold text-lg tracking-[3px] text-brown">
+
+      <header className="sticky top-0 z-40 h-[70px] border-b border-[var(--landing-line)] bg-[var(--landing-bg)]">
+        <div className="mx-auto flex h-full max-w-[1320px] items-center gap-5 px-5 sm:px-8">
+          <a
+            href="#main"
+            aria-label={SITE_NAME}
+            className="flex min-h-11 shrink-0 items-center gap-2.5 no-underline"
+          >
+            <span className="grid size-7 place-items-center rounded-[7px] bg-[var(--landing-accent)] text-[var(--landing-on-accent)]">
+              <Check size={15} strokeWidth={2.3} aria-hidden />
+            </span>
+            <span className="font-display text-[16px] font-bold tracking-[0.16em] text-[var(--landing-ink)]">
               VANTAGE
             </span>
-          </div>
-          {/* Anchor nav collapses on mobile — the Sign in + Start free CTAs in
-              the right-hand cluster are the only nav users need below md. */}
-          <nav className="ml-[34px] hidden md:flex items-center gap-7">
-            <a href="#how" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 1 } as CSSProperties}>{t("nav.howItWorks")}</a>
-            <a href="#chat" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 2 } as CSSProperties}>{t("nav.theAgents")}</a>
-            <a href="#features" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 3 } as CSSProperties}>{t("nav.features")}</a>
-            <a href="#pricing" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 4 } as CSSProperties}>{t("nav.pricing")}</a>
-            <a href="#faq" data-nav-link className="nav-link nav-assemble underline-grow no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors" style={{ "--ni": 5 } as CSSProperties}>{t("faq.eyebrow")}</a>
+          </a>
+
+          <nav className="ml-auto hidden items-center gap-7 lg:flex">
+            <a className="evidence-link" href="#how">
+              {t("nav.howItWorks")}
+            </a>
+            <a className="evidence-link" href="#chat">
+              {t("nav.theAgents")}
+            </a>
+            <a className="evidence-link" href="#features">
+              {t("nav.features")}
+            </a>
+            <a className="evidence-link" href="#pricing">
+              {t("nav.pricing")}
+            </a>
+            <a className="evidence-link" href="#faq">
+              {t("faq.eyebrow")}
+            </a>
           </nav>
-          <div className="nav-assemble ml-auto flex items-center gap-2 sm:gap-4" style={{ "--ni": 6 } as CSSProperties}>
-            <LanguageSwitcher variant="inline" />
+
+          <div className="ml-auto flex items-center gap-3 lg:ml-5">
+            <LanguageSwitcher />
             {isSignedIn ? (
-              // Avatar chip (name + initials) so the signed-in state is
-              // visible at a glance; resolves the name client-side via me().
               <LandingAccountChip />
             ) : (
               <>
-                <a href="/auth?mode=login" className="underline-grow hidden sm:inline no-underline font-body font-medium text-sm text-ink-light hover:text-ink transition-colors">{t("nav.signIn")}</a>
-                <a href="/auth" data-magnetic="0.35" data-ripple className="magnet shine cta-aura whitespace-nowrap no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown px-3 sm:px-[17px] py-[9px] rounded-[9px] hover:bg-brown-light">{t("nav.startFree")}</a>
+                <a
+                  href="/auth?mode=login"
+                  className="evidence-link !hidden sm:!inline-flex"
+                >
+                  {t("nav.signIn")}
+                </a>
+                <a
+                  href="/auth"
+                  className="evidence-button evidence-button-primary min-h-11 px-4 text-sm"
+                >
+                  {t("nav.startFree")}
+                </a>
               </>
             )}
           </div>
         </div>
       </header>
 
-      {/* HERO — `main` landmark + #main anchor for the skip-link above. */}
-      <main id="main" role="main">
-      <section className="relative overflow-hidden max-w-[1140px] mx-auto px-6 sm:px-8 pt-12 sm:pt-[84px] pb-16 grid grid-cols-1 md:grid-cols-[0.92fr_1.08fr] gap-10 md:gap-12 items-center">
-        {/* Film grain (v10) — a sub-perceptual tactile veil so the warm paper
-            field under the hero reads as material, not flat fill. Behind all
-            content; pointer-transparent; hidden under reduced-motion. */}
-        <div aria-hidden className="grain-overlay" />
-        {/* God-ray (v11) — a soft volumetric beam rakes once across the hero on
-            first paint, like sun through a window. One-shot, decorative, behind
-            all content; hidden under reduced-motion. */}
-        <div aria-hidden className="beam -z-10" />
-        {/* Ambient cursor light — a warm pool that tracks the reader's pointer
-            across the hero, so the surface feels lit by a lamp they're holding.
-            Driven by PointerFX; rests dark + invisible with no JS. */}
-        <div aria-hidden className="ambient-light -z-10" />
-        {/* Warm aurora drift behind the hero — low-opacity light that keeps the
-            paper fill from reading dead. Purely decorative. */}
-        <div aria-hidden data-parallax="34" className="aurora-blob parallax -z-10 w-[460px] h-[460px] -top-[140px] -left-[120px]" />
-        <div aria-hidden data-parallax="-22" className="aurora-blob parallax -z-10 w-[360px] h-[360px] top-[40px] -right-[80px] [animation-delay:-6s] opacity-30" />
-        <div className="relative animate-fade-up">
-          <div className="badge-glint orbit-ring inline-flex items-center gap-2 bg-cream border border-cream-border rounded-full px-[13px] py-1.5 mb-6">
-            <span className="w-[7px] h-[7px] rounded-full bg-green animate-pulse-dot" />
-            <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-brown">
-              {t("hero.badge")}
-            </span>
-          </div>
-          <h1 className="kinetic-head fluid-display font-display font-bold text-ink m-0 mb-5">
-            <span className="kw" style={{ "--kw": 0 } as CSSProperties}>{t("hero.headline.line1")}</span>
-            <br />
-            <span className="kw" style={{ "--kw": 1 } as CSSProperties}>{t("hero.headline.line2Pre")}</span>{" "}
-            <span className="kw gradient-text text-halo crown" style={{ "--kw": 2 } as CSSProperties}>{t("hero.headline.line2Highlight")}</span>
-            <span className="kw" style={{ "--kw": 3 } as CSSProperties}>{t("hero.headline.line2Post")}</span>
-            <br />
-            <span className="text-brown">
-              <span className="kw" style={{ "--kw": 4 } as CSSProperties}>{t("hero.headline.line3")}</span>
-            </span>
-          </h1>
-          <p className="text-pretty font-body text-lg leading-[1.55] text-ink-light m-0 mb-8 max-w-[480px]">
-            {t("hero.subhead")}
-          </p>
-          <div className="flex flex-wrap items-center gap-3.5 mb-[22px]">
-            <a href={primaryCtaHref} data-magnetic="0.3" data-ripple className="group magnet shine cta-aura cta-breathe sheen-host no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[26px] py-[15px] rounded-[11px] shadow-[0_2px_8px_-2px_rgba(61,42,20,0.35)] hover:bg-brown-light hover:shadow-[0_14px_30px_-8px_rgba(61,42,20,0.55)]">
-              <span className="sheen" aria-hidden />
-              {primaryCtaLabel}
-              <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover:translate-x-1" />
-            </a>
-            <a href="#how" className="lift-pop pressure shine no-underline inline-flex items-center gap-2 font-body font-semibold text-base text-ink bg-white border border-border-dark px-[22px] py-[15px] rounded-[11px] hover:border-brown">
-              {t("hero.secondaryCta")}
-            </a>
-          </div>
-          <div className="font-mono text-[11px] tracking-[0.4px] uppercase text-ink-muted">
-            {t("hero.microcopy")}
-          </div>
-        </div>
-        <div className="animate-fade-up-delay">
-          <HeroConsole />
-        </div>
-      </section>
-
-      {/* ATS strip */}
-      <section className="max-w-[1140px] mx-auto px-6 sm:px-8 pt-2 pb-16">
-        <div data-reveal className="scan-strip flex items-center justify-center gap-[30px] flex-wrap py-2">
-          <span className="font-mono text-[11px] tracking-[0.6px] uppercase text-ink-muted">
-            {t("atsStrip.label")}
-          </span>
-          {["Greenhouse", "Lever", "Ashby", "Workday", "Workable"].map((name, i) => (
-            <span
-              key={name}
-              data-reveal
-              style={{ "--reveal-delay": `${i * 60}ms` } as CSSProperties}
-              className="press font-display font-semibold text-[17px] text-[#8a857d] transition-[color,transform] duration-200 ease-out hover:text-brown hover:-translate-y-0.5"
-            >
-              {name}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      {/* Product story: all three real screens remain in the document.
-          The sticky rail only reflects which part of the continuous journey
-          is closest to the viewport reference line. */}
-      <ProductJourney copy={journey} />
-
-      {/* CHAT FIRST */}
-      <section id="chat" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[90px] grid grid-cols-1 md:grid-cols-[1fr_1.05fr] gap-10 md:gap-[60px] items-center">
-        <div data-reveal className="reveal-l">
-          <div className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            <span className="eyebrow-dot" aria-hidden />{t("chat.eyebrow")}<span className="eyebrow-rule" aria-hidden />
-          </div>
-          <h2 className="font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-[18px] leading-[1.1]">
-            {t("chat.titleLine1")}
-            <br />
-            {t("chat.titleLine2")}
-          </h2>
-          <p className="text-pretty font-body text-[17px] leading-[1.6] text-ink-light m-0 mb-7">
-            {t("chat.body")}
-          </p>
-          <div className="flex flex-col gap-3.5">
-            {asks.map((a, i) => (
-              <div
-                key={a}
-                data-reveal
-                style={{ "--reveal-delay": `${i * 80}ms` } as CSSProperties}
-                className="proof-row flex items-center gap-[13px]"
+      <main id="main">
+        <section className="mx-auto grid min-h-[calc(100dvh-70px)] max-w-[1320px] grid-cols-1 items-center gap-12 px-5 py-12 sm:px-8 lg:grid-cols-12 lg:gap-14 lg:py-14">
+          <div className="lg:col-span-5">
+            <p className="mb-6 text-xs font-bold uppercase tracking-[0.14em] text-[var(--landing-accent)]">
+              {t("hero.eyebrow")}
+            </p>
+            <h1 className="m-0 font-display text-[clamp(3.25rem,6vw,5.9rem)] font-bold leading-[0.91] tracking-[-0.065em] text-[var(--landing-ink)]">
+              <span className="block">{t("hero.headlineEvidence.line1")}</span>
+              <span className="block">{t("hero.headlineEvidence.line2")}</span>
+            </h1>
+            <p className="mb-0 mt-7 max-w-[500px] text-[18px] leading-[1.55] text-[var(--landing-muted)]">
+              {t("hero.subhead")}
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a
+                href={primaryCtaHref}
+                className="evidence-button evidence-button-primary group"
               >
-                <div className="proof-check w-[30px] h-[30px] rounded-lg bg-green-bg flex items-center justify-center shrink-0">
-                  <Check size={16} className="text-green" strokeWidth={2} />
-                </div>
-                <span className="font-body text-[15px] text-ink">{a}</span>
+                {primaryCtaLabel}
+                <ArrowRight
+                  size={17}
+                  strokeWidth={1.8}
+                  aria-hidden
+                  className="transition-transform duration-200 group-hover:translate-x-0.5"
+                />
+              </a>
+              <a
+                href="#how"
+                className="evidence-button evidence-button-secondary"
+              >
+                {t("hero.secondaryCta")}
+              </a>
+            </div>
+          </div>
+
+          <div className="min-w-0 lg:col-span-7">
+            <HeroConsole />
+          </div>
+        </section>
+
+        <section
+          aria-label={t("evidence.contractLabel")}
+          className="border-y border-[var(--landing-line)]"
+        >
+          <div className="mx-auto grid max-w-[1320px] md:grid-cols-3">
+            {contract.map((item, index) => (
+              <div
+                key={item.title}
+                className={`px-5 py-6 sm:px-8 md:py-7 ${
+                  index > 0
+                    ? "border-t border-[var(--landing-line)] md:border-l md:border-t-0"
+                    : ""
+                }`}
+              >
+                <h2 className="m-0 text-[16px] font-semibold text-[var(--landing-ink)]">
+                  {item.title}
+                </h2>
+                <p className="mb-0 mt-1.5 text-[13.5px] leading-[1.5] text-[var(--landing-muted)]">
+                  {item.body}
+                </p>
               </div>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* Mini chat mock */}
-        <div data-reveal className="reveal-r" style={{ "--reveal-delay": "120ms" } as CSSProperties}>
-          <div data-tilt="5" className="group grad-border tilt-pointer tilt-shine bg-paper border border-border rounded-[18px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden" data-active="true">
-          <div className="h-12 border-b border-border flex items-center gap-2.5 px-[18px] bg-white">
-            <div className="w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
-              <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
-            </div>
-            <span className="font-body font-semibold text-sm text-ink">
-              {t("chatMock.title")}
-            </span>
-          </div>
-          <div className="p-[22px_20px] flex flex-col gap-3.5">
-            <div style={{ "--md": "260ms" } as CSSProperties} className="mock-step self-end bg-brown text-[#FAF8F6] rounded-[13px_13px_4px_13px] py-[11px] px-[15px] font-body text-[13.5px] leading-[1.45] max-w-[80%]">
-              {t("chatMock.userMessage")}
-            </div>
-            <div className="flex gap-2.5 items-start">
-              <div className="w-7 h-7 rounded-[7px] bg-brown shrink-0 flex items-center justify-center">
-                <Star size={13} className="text-[#FAF8F6]" strokeWidth={1.8} />
-              </div>
-              <div className="max-w-[80%]">
-                <div style={{ "--md": "420ms" } as CSSProperties} className="mock-step bg-white border border-border rounded-[4px_13px_13px_13px] py-3 px-[15px] font-body text-[13.5px] leading-[1.5] text-ink shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-                  {t("chatMock.reply")}
-                </div>
-                <div className="flex flex-col gap-[7px] mt-[9px]">
-                  <div style={{ "--md": "560ms" } as CSSProperties} className="mock-step mock-row flex items-center gap-2.5 bg-white border border-cream-border rounded-[9px] py-[9px] px-3">
-                    <Zap size={14} className="text-brown" strokeWidth={2} />
-                    <span className="flex-1 font-mono text-[10px] tracking-[0.5px] uppercase text-brown">
-                      {t("chatMock.resumeAgent")}
-                    </span>
-                    <span style={{ "--md": "900ms" } as CSSProperties} className="mock-done font-mono text-[9px] tracking-[0.5px] uppercase text-green">
-                      {t("chatMock.done")}
-                    </span>
-                  </div>
-                  <div style={{ "--md": "680ms" } as CSSProperties} className="mock-step mock-row flex items-center gap-2.5 bg-white border border-cream-border rounded-[9px] py-[9px] px-3">
-                    <FileText size={14} className="text-brown" strokeWidth={2} />
-                    <span className="flex-1 font-mono text-[10px] tracking-[0.5px] uppercase text-brown">
-                      {t("chatMock.applicationAgent")}
-                    </span>
-                    <span style={{ "--md": "1020ms" } as CSSProperties} className="mock-done font-mono text-[9px] tracking-[0.5px] uppercase text-green">
-                      {t("chatMock.done")}
-                    </span>
-                  </div>
-                </div>
-                <div style={{ "--md": "1160ms" } as CSSProperties} className="mock-step mt-[9px] bg-[#FFFBF4] border border-cream-border rounded-[11px] py-3 px-3.5 flex items-center gap-2.5">
-                  <div className="flex-1 font-body text-[13px] text-[#3a352e]">
-                    {t.rich("chatMock.result", {
-                      b: (chunks) => (
-                        <b className="font-semibold">{chunks}</b>
-                      ),
-                    })}
-                  </div>
-                  <span className="font-mono text-[9px] tracking-[0.5px] uppercase text-[#FAF8F6] bg-brown py-[5px] px-[9px] rounded-[6px]">
-                    {t("chatMock.open")}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="px-5 pb-5">
-            <div className="flex items-center gap-2.5 bg-white border border-border-dark rounded-xl p-[6px_6px_6px_15px]">
-              <span className="flex-1 font-body text-[13.5px] text-ink-muted">
-                {t("chatMock.composerPlaceholder")}
-              </span>
-              <div className="w-8 h-8 rounded-lg bg-brown flex items-center justify-center">
-                <Send size={15} className="text-[#FAF8F6]" strokeWidth={2} />
-              </div>
-            </div>
-          </div>
-          </div>
-        </div>
-      </section>
+        <ProductJourney copy={journey} />
 
-      {/* FEATURES */}
-      <section id="features" className="bg-white border-t border-border">
-        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
-          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            <span className="eyebrow-dot" aria-hidden />{t("features.eyebrow")}<span className="eyebrow-rule" aria-hidden />
+        <section
+          id="chat"
+          className="mx-auto max-w-[1320px] px-5 py-24 sm:px-8 md:py-32"
+        >
+          <div className="max-w-[760px]">
+            <h2 className="m-0 text-balance font-display text-[clamp(2.7rem,5vw,4.8rem)] font-bold leading-[0.96] tracking-[-0.055em]">
+              {t("evidence.title")}
+            </h2>
+            <p className="mb-0 mt-5 max-w-[640px] text-[17px] leading-[1.6] text-[var(--landing-muted)]">
+              {t("evidence.body")}
+            </p>
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-12 max-w-[560px]">
-            {t("features.title")}
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {features.map((f, i) => (
+
+          <figure className="mt-14">
+            <div className="relative aspect-[8/5] overflow-hidden rounded-[var(--landing-frame-radius)] border border-[var(--landing-line-strong)] bg-[var(--landing-surface)] shadow-[var(--landing-shadow)]">
+              <Image
+                src="/demo/workspace.png"
+                alt={t("evidence.workspaceAlt")}
+                fill
+                sizes="(min-width: 1320px) 1256px, 94vw"
+                className="object-cover object-left"
+              />
+            </div>
+            <figcaption className="mt-3 text-[12px] text-[var(--landing-subtle)]">
+              {t("evidence.workspaceCaption")}
+            </figcaption>
+          </figure>
+
+          <div
+            aria-label={t("evidence.commandsLabel")}
+            className="mt-12 grid border-t border-[var(--landing-line)] sm:grid-cols-2"
+          >
+            {asks.map((ask, index) => (
               <div
-                key={f.title}
-                data-reveal
-                data-tilt="3.5"
-                style={{ "--reveal-delay": `${(i % 3) * 80}ms` } as CSSProperties}
-                className="group tilt-pointer tilt-shine rim spotlight sheen-host bg-paper border border-border rounded-[14px] p-6 hover:border-border-dark"
+                key={ask}
+                className={`flex min-h-20 items-center gap-4 border-b border-[var(--landing-line)] py-5 ${
+                  index % 2 === 0
+                    ? "sm:pr-8"
+                    : "sm:border-l sm:pl-8"
+                }`}
               >
-                <span className="sheen" aria-hidden />
-                <div className="icon-glow w-11 h-11 rounded-[11px] bg-white border border-border flex items-center justify-center mb-4 transition-all duration-300 ease-out group-hover:border-brown group-hover:bg-cream group-hover:scale-[1.06] group-hover:-rotate-3">
-                  {f.icon}
-                </div>
-                <div className="font-body font-semibold text-base text-ink mb-[7px]">
-                  {f.title}
-                </div>
-                <div className="font-body text-sm leading-[1.55] text-ink-light">
-                  {f.body}
-                </div>
+                <span
+                  aria-hidden
+                  className="grid size-8 shrink-0 place-items-center rounded-[7px] border border-[var(--landing-line-strong)] text-[var(--landing-accent)]"
+                >
+                  <ArrowRight size={15} strokeWidth={1.8} />
+                </span>
+                <span className="text-[15px] font-medium leading-[1.45]">
+                  {ask}
+                </span>
               </div>
             ))}
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* DIFFERENTIATORS */}
-      <section className="relative overflow-hidden bg-dark">
-        {/* Ember-toned drifting mesh — gives the near-black panel atmospheric
-            depth so it reads as lit, not a dead fill. Purely decorative. */}
-        {/* Engineered dot-field (v11) — a faint warm grid that gives the dark
-            panel blueprint-like depth beneath the softer mesh + embers. */}
-        <div aria-hidden className="dot-field -z-0" />
-        <div aria-hidden className="aurora-mesh on-dark -z-0 opacity-70" />
-        {/* Pointer-tracked ember — the dark panel lights up where the reader
-            looks, layered over the drifting mesh. */}
-        <div aria-hidden className="ambient-light on-dark -z-0" />
-        {/* Rising embers — a slow column of warm motes drifting up the panel so
-            it reads as a banked fire, not a flat fill. Purely decorative. */}
-        <div aria-hidden className="embers -z-0">
-          {[
-            { left: "8%", dur: "9.5s", delay: "0s", drift: "14px" },
-            { left: "18%", dur: "11s", delay: "1.6s", drift: "-10px" },
-            { left: "29%", dur: "8.5s", delay: "3.1s", drift: "8px" },
-            { left: "41%", dur: "12s", delay: "0.8s", drift: "-16px" },
-            { left: "52%", dur: "10s", delay: "2.4s", drift: "12px" },
-            { left: "63%", dur: "9s", delay: "4s", drift: "-9px" },
-            { left: "73%", dur: "11.5s", delay: "1.2s", drift: "16px" },
-            { left: "84%", dur: "8.8s", delay: "3.6s", drift: "-12px" },
-            { left: "93%", dur: "10.5s", delay: "2s", drift: "10px" },
-          ].map((e, i) => (
-            <span
-              key={i}
-              className="ember"
-              style={
-                {
-                  left: e.left,
-                  "--dur": e.dur,
-                  "--delay": e.delay,
-                  "--drift": e.drift,
-                } as CSSProperties
-              }
-            />
-          ))}
-        </div>
-        <div className="relative z-10 max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
-          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-dark-gold mb-3.5">
-            <span className="eyebrow-dot" aria-hidden />{t("bets.eyebrow")}
+        <section
+          id="features"
+          className="border-y border-[var(--landing-line)] bg-[var(--landing-surface)]"
+        >
+          <div className="mx-auto grid max-w-[1320px] gap-14 px-5 py-24 sm:px-8 md:py-32 lg:grid-cols-[0.72fr_1.28fr] lg:gap-20">
+            <div>
+              <h2 className="m-0 max-w-[520px] text-balance font-display text-[clamp(2.6rem,4.5vw,4.4rem)] font-bold leading-[0.98] tracking-[-0.052em]">
+                {t("features.title")}
+              </h2>
+              <p className="mb-0 mt-5 max-w-[430px] text-[17px] leading-[1.6] text-[var(--landing-muted)]">
+                {t("features.subtitle")}
+              </p>
+            </div>
+
+            <div className="grid gap-x-12 md:grid-cols-2">
+              {featureColumns.map((column, columnIndex) => (
+                <div
+                  key={`feature-column-${columnIndex}`}
+                  className={
+                    columnIndex === 1
+                      ? "md:border-l md:border-[var(--landing-line)] md:pl-12"
+                      : ""
+                  }
+                >
+                  {column.map((feature) => (
+                    <article
+                      key={feature.title}
+                      className="border-t border-[var(--landing-line)] py-7"
+                    >
+                      <h3 className="m-0 text-[19px] font-semibold tracking-[-0.01em]">
+                        {feature.title}
+                      </h3>
+                      <p className="mb-0 mt-2 max-w-[430px] text-[14.5px] leading-[1.6] text-[var(--landing-muted)]">
+                        {feature.body}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-[#FAF8F6] m-0 mb-[50px] max-w-[640px]">
+        </section>
+
+        <section className="mx-auto max-w-[1320px] px-5 py-24 sm:px-8 md:py-32">
+          <h2 className="m-0 max-w-[820px] text-balance font-display text-[clamp(2.8rem,5vw,4.9rem)] font-bold leading-[0.96] tracking-[-0.055em]">
             {t("bets.title")}
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-[26px]">
-            {bets.map((b, i) => (
-              <div key={b.k} data-reveal data-glow style={{ "--reveal-delay": `${i * 90}ms` } as CSSProperties} className="group card-glow on-dark ignite-rule border-t border-dark-border pt-[22px] transition-colors duration-300 hover:border-gold/50">
-                <div className="font-display font-bold text-[30px] gradient-text mb-3.5 transition-transform duration-300 ease-out group-hover:-translate-y-0.5">
-                  {b.k}
-                </div>
-                <div className="font-body font-semibold text-lg text-[#FAF8F6] mb-2.5">
-                  {b.title}
-                </div>
-                <div className="font-body text-[14.5px] leading-[1.6] text-dark-text">
-                  {b.body}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      {/* PRICING */}
-      <PricingSection />
-
-      {/* FAQ — visible content mirrors the FAQPage JSON-LD above 1:1 so
-          search-engine rich results match what the user reads. <details> is
-          the lowest-friction expand/collapse that needs no JS and stays
-          fully keyboard-accessible. */}
-      <section id="faq" className="bg-white border-y border-border">
-        <div className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-20">
-          <div data-reveal className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber mb-3.5">
-            <span className="eyebrow-dot" aria-hidden />{t("faq.eyebrow")}<span className="eyebrow-rule" aria-hidden />
+          <div className="mt-14 grid border-t border-[var(--landing-line-strong)] lg:grid-cols-[1.35fr_0.65fr]">
+            <article className="py-9 lg:min-h-[360px] lg:pr-16">
+              <h3 className="m-0 max-w-[600px] font-display text-[clamp(2rem,3.5vw,3.6rem)] font-semibold leading-[1] tracking-[-0.04em]">
+                {principles[0]?.title}
+              </h3>
+              <p className="mb-0 mt-5 max-w-[560px] text-[17px] leading-[1.65] text-[var(--landing-muted)]">
+                {principles[0]?.body}
+              </p>
+            </article>
+            <div className="border-[var(--landing-line-strong)] lg:border-l">
+              {principles.slice(1).map((principle) => (
+                <article
+                  key={principle.title}
+                  className="border-b border-[var(--landing-line)] py-8 lg:px-10"
+                >
+                  <h3 className="m-0 text-[21px] font-semibold">
+                    {principle.title}
+                  </h3>
+                  <p className="mb-0 mt-3 text-[14.5px] leading-[1.6] text-[var(--landing-muted)]">
+                    {principle.body}
+                  </p>
+                </article>
+              ))}
+            </div>
           </div>
-          <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="head-rule balance font-display font-bold text-4xl tracking-[-0.6px] text-ink m-0 mb-10 max-w-[640px]">
-            {t("faq.title")}
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {faqItems.map((item, i) => (
-              <details
-                key={item.q}
-                data-reveal
-                style={{ "--reveal-delay": `${(i % 2) * 80}ms` } as CSSProperties}
-                className="group bg-paper border border-border rounded-[14px] p-5 open:border-border-dark transition-colors"
-              >
-                <summary className="cursor-pointer list-none flex items-start justify-between gap-3 font-body font-semibold text-[15.5px] text-ink select-none">
-                  <span>{item.q}</span>
-                  <span
-                    aria-hidden
-                    className="mt-1 inline-block w-4 h-4 shrink-0 text-brown transition-transform duration-200 group-open:rotate-45"
-                  >
-                    +
-                  </span>
-                </summary>
-                <p className="mt-3 font-body text-[14.5px] leading-[1.6] text-ink-light">
-                  {item.a}
-                </p>
-              </details>
-            ))}
-          </div>
-        </div>
-      </section>
+        </section>
 
-      {/* CTA */}
-      <section className="max-w-[1140px] mx-auto px-8 pt-5 pb-[90px]">
-        <div data-reveal className="reveal-scale group grad-border edge-light relative overflow-hidden bg-cream border border-cream-border rounded-[20px] px-12 py-[60px] text-center" data-active="true">
-          {/* Conic halo (v11) — a slow-rotating ring of warm light behind the
-              panel so the closing CTA reads as genuinely radiant. Self-contained
-              decorative layer; hidden under reduced-motion. */}
-          <div aria-hidden className="cta-conic -z-0" />
-          {/* Warm light pooling under the headline. */}
-          <div aria-hidden data-parallax="28" className="aurora-blob parallax -z-0 w-[420px] h-[420px] -top-[180px] left-1/2 -translate-x-1/2 opacity-40" />
-          <div className="relative z-10">
-            <h2 className="kinetic-head font-display font-bold text-[28px] sm:text-[38px] tracking-[-0.6px] text-ink m-0 mb-3.5">
-              <span className="kw" style={{ "--kw": 0 } as CSSProperties}>{t("finalCta.headlinePre")}</span>{" "}
-              <span className="kw gradient-text text-halo crown" style={{ "--kw": 1 } as CSSProperties}>{t("finalCta.headlineHighlight")}</span>
-              <span className="kw" style={{ "--kw": 2 } as CSSProperties}>{t("finalCta.headlinePost")}</span>
+        <PricingSection />
+
+        <section
+          id="faq"
+          className="border-y border-[var(--landing-line)] bg-[var(--landing-surface)]"
+        >
+          <div className="mx-auto max-w-[1320px] px-5 py-24 sm:px-8 md:py-28">
+            <h2 className="m-0 max-w-[720px] text-balance font-display text-[clamp(2.5rem,4.5vw,4.2rem)] font-bold leading-[0.98] tracking-[-0.052em]">
+              {t("faq.title")}
             </h2>
-            <p className="text-pretty font-body text-[17px] leading-[1.55] text-ink-light m-0 mx-auto mb-[30px] max-w-[480px]">
-              {t("finalCta.body")}
-            </p>
-            <a href={primaryCtaHref} data-magnetic="0.3" data-ripple className="group/cta magnet shine cta-aura no-underline inline-flex items-center gap-[9px] font-body font-semibold text-base text-[#FAF8F6] bg-brown px-[30px] py-4 rounded-xl hover:bg-brown-light">
+            <div className="mt-12 grid border-b border-[var(--landing-line)] md:grid-cols-2 md:gap-x-12">
+              {faqItems.map((item) => (
+                <details
+                  key={item.q}
+                  className="group border-t border-[var(--landing-line)]"
+                >
+                  <summary className="flex min-h-[76px] cursor-pointer list-none items-center justify-between gap-5 py-5 text-[16px] font-semibold">
+                    <span>{item.q}</span>
+                    <span
+                      aria-hidden
+                      className="text-[24px] font-light text-[var(--landing-accent)] transition-transform duration-200 group-open:rotate-45"
+                    >
+                      +
+                    </span>
+                  </summary>
+                  <p className="mb-6 mt-0 max-w-[560px] text-[14.5px] leading-[1.65] text-[var(--landing-muted)]">
+                    {item.a}
+                  </p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-b border-[var(--landing-line)]">
+          <div className="mx-auto grid max-w-[1320px] items-center gap-8 px-5 py-20 sm:px-8 md:grid-cols-[1fr_auto] md:py-24">
+            <div>
+              <h2 className="m-0 max-w-[720px] font-display text-[clamp(2.6rem,4.5vw,4.5rem)] font-bold leading-[0.96] tracking-[-0.052em]">
+                {t("finalCta.headline")}
+              </h2>
+              <p className="mb-0 mt-4 max-w-[560px] text-[16px] leading-[1.6] text-[var(--landing-muted)]">
+                {t("finalCta.body")}
+              </p>
+            </div>
+            <a
+              href={primaryCtaHref}
+              className="evidence-button evidence-button-primary group md:min-w-[150px]"
+            >
               {primaryCtaLabel}
-              <ArrowRight size={17} className="transition-transform duration-200 ease-out group-hover/cta:translate-x-1" />
+              <ArrowRight
+                size={17}
+                strokeWidth={1.8}
+                aria-hidden
+                className="transition-transform duration-200 group-hover:translate-x-0.5"
+              />
             </a>
           </div>
-        </div>
-      </section>
-
+        </section>
       </main>
 
-      {/* FOOTER */}
-      <footer className="hearth-host edge-light relative overflow-hidden border-t border-border bg-white">
-        {/* v39 — Banked hearth. The page opens carrying a lamp; here it sets the
-            lamp down to bank as embers at the foot of the read. A soft warm pool
-            rests against the footer's top seam (visible with no JS), kindles up
-            once as the footer is reached, then breathes slowly while the page
-            idles. Decorative + behind content; pinned calm under reduced motion. */}
-        <div aria-hidden data-reveal className="footer-hearth" />
-        <div data-reveal className="relative max-w-[1140px] mx-auto px-6 sm:px-8 py-11 flex items-center gap-3.5 flex-wrap">
-          <div className="flex items-center gap-[9px]">
-            <div className="logo-spark w-6 h-6 rounded-[6px] bg-brown flex items-center justify-center">
-              <Check size={13} className="text-[#FAF8F6]" strokeWidth={2.2} />
-            </div>
-            <span className="wordmark-gleam weight-hover font-display font-bold text-[15px] tracking-[2.5px] text-brown">
+      <footer>
+        <div className="mx-auto flex max-w-[1320px] flex-col gap-6 px-5 py-10 sm:px-8 md:flex-row md:items-center">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-6 place-items-center rounded-[6px] bg-[var(--landing-accent)] text-[var(--landing-on-accent)]">
+              <Check size={13} strokeWidth={2.2} aria-hidden />
+            </span>
+            <span className="font-display text-[14px] font-bold tracking-[0.15em]">
               VANTAGE
             </span>
           </div>
-          <span className="font-body text-[13px] text-ink-muted ml-2">
+          <p className="m-0 text-[13px] text-[var(--landing-subtle)]">
             {t("footer.tagline")}
-          </span>
-          <div className="ml-auto flex gap-6">
-            <a href="/legal/privacy" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">{t("footer.privacy")}</a>
-            <a href="/legal/security" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">{t("footer.security")}</a>
-            <a href="/legal/docs" className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors">{t("footer.docs")}</a>
-            {/* External brand profiles — rel="me" lets indieweb identity
-                verifiers (and some social platforms) confirm we own the
-                opposite end, and the visible link gives crawlers a path to
-                Organization.sameAs without relying only on JSON-LD. */}
+          </p>
+          <div className="flex flex-wrap gap-x-5 gap-y-3 md:ml-auto">
+            <a className="evidence-link text-[13px]" href="/legal/privacy">
+              {t("footer.privacy")}
+            </a>
+            <a className="evidence-link text-[13px]" href="/legal/security">
+              {t("footer.security")}
+            </a>
+            <a className="evidence-link text-[13px]" href="/legal/docs">
+              {t("footer.docs")}
+            </a>
             {SOCIAL_LINKS.map((href) => (
               <a
                 key={href}
                 href={href}
                 rel="me noopener"
                 target="_blank"
-                className="underline-grow no-underline font-body text-[13px] text-ink-light hover:text-ink transition-colors"
+                className="evidence-link text-[13px]"
               >
                 {new URL(href).hostname.replace(/^www\./, "")}
               </a>
             ))}
-            <span className="font-mono text-[11px] tracking-[0.4px] text-ink-muted">
+            <span className="text-[12px] text-[var(--landing-subtle)]">
               © 2026
             </span>
           </div>
