@@ -32,9 +32,6 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
 
   useEffect(() => {
     let frameId = 0;
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    );
 
     const measure = () => {
       frameId = 0;
@@ -66,16 +63,8 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
         const activeProgress = clamp(
           (referenceLine - rect.top) / Math.max(rect.height * 0.76, 1),
         );
-        const progress = reduceMotion.matches
-          ? index <= nearestIndex
-            ? 1
-            : 0
-          : index < nearestIndex
-            ? 1
-            : index > nearestIndex
-              ? 0
-              : activeProgress;
-
+        const progress =
+          index < nearestIndex ? 1 : index > nearestIndex ? 0 : activeProgress;
         progressRefs.current[index]?.style.setProperty(
           "transform",
           `scaleX(${progress})`,
@@ -87,15 +76,13 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
       if (!frameId) frameId = window.requestAnimationFrame(measure);
     };
 
-    window.addEventListener("scroll", scheduleMeasure, { passive: true });
+    document.addEventListener("scroll", scheduleMeasure, { passive: true });
     window.addEventListener("resize", scheduleMeasure);
-    reduceMotion.addEventListener("change", scheduleMeasure);
     measure();
 
     return () => {
-      window.removeEventListener("scroll", scheduleMeasure);
+      document.removeEventListener("scroll", scheduleMeasure);
       window.removeEventListener("resize", scheduleMeasure);
-      reduceMotion.removeEventListener("change", scheduleMeasure);
       if (frameId) window.cancelAnimationFrame(frameId);
     };
   }, []);
@@ -111,23 +98,24 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
   };
 
   return (
-    <section
-      id="how"
-      aria-label={copy.eyebrow}
-      className="border-b border-[var(--landing-line)] bg-[var(--landing-surface)]"
-    >
-      <div className="mx-auto max-w-[1320px] px-5 py-24 sm:px-8 md:py-32">
-        <h2 className="m-0 max-w-[840px] text-balance font-display text-[clamp(2.8rem,5vw,4.9rem)] font-bold leading-[0.96] tracking-[-0.055em] text-[var(--landing-ink)]">
-          {copy.title}
-        </h2>
-        <p className="mb-0 mt-5 max-w-[650px] text-[17px] leading-[1.6] text-[var(--landing-muted)]">
-          {copy.subtitle}
-        </p>
+    <section id="how" className="border-y border-border bg-white">
+      <div className="mx-auto max-w-[1140px] px-6 py-16 sm:px-8 md:py-24">
+        <div className="max-w-[760px]">
+          <div className="mb-4 font-display text-xs font-bold uppercase tracking-[1.8px] text-amber">
+            {copy.eyebrow}
+          </div>
+          <h2 className="m-0 max-w-[720px] text-balance font-display text-4xl font-bold leading-[1.02] tracking-[-1.2px] text-ink sm:text-5xl md:text-[58px]">
+            {copy.title}
+          </h2>
+          <p className="m-0 mt-5 max-w-[590px] text-pretty font-body text-[17px] leading-[1.6] text-ink-light">
+            {copy.subtitle}
+          </p>
+        </div>
 
-        <div className="mt-16 grid items-start gap-10 md:mt-20 md:grid-cols-[280px_1fr] md:gap-14 lg:grid-cols-[320px_1fr] lg:gap-20">
+        <div className="mt-14 grid items-start gap-10 md:mt-20 md:grid-cols-[280px_1fr] md:gap-14 lg:grid-cols-[320px_1fr] lg:gap-20">
           <nav
             aria-label={copy.eyebrow}
-            className="sticky top-[70px] z-20 -mx-5 grid grid-cols-3 border-y border-[var(--landing-line)] bg-[var(--landing-surface)] px-5 sm:-mx-8 sm:px-8 md:top-[110px] md:z-auto md:mx-0 md:block md:border-0 md:bg-transparent md:px-0"
+            className="sticky top-[66px] z-20 -mx-6 grid grid-cols-3 border-y border-border bg-white/94 px-6 backdrop-blur-md md:top-[102px] md:z-auto md:mx-0 md:block md:border-0 md:bg-transparent md:px-0 md:backdrop-blur-none"
           >
             {copy.scenes.map((scene, index) => {
               const state =
@@ -136,35 +124,31 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
                   : index === activeIndex
                     ? "active"
                     : "upcoming";
-
               return (
                 <button
                   key={scene.tab}
                   type="button"
                   aria-current={state === "active" ? "step" : undefined}
                   onClick={() => goToScene(index)}
-                  className={`group min-h-14 cursor-pointer border-0 border-b-2 bg-transparent px-2 py-3 text-left text-[12px] font-semibold transition-colors duration-200 sm:px-3 sm:text-[13px] md:min-h-0 md:w-full md:border-b md:border-[var(--landing-line)] md:px-0 md:py-5 md:text-[16px] ${
+                  className={`group min-h-14 cursor-pointer border-0 border-b border-border bg-transparent px-2 py-3 text-left font-body text-xs font-semibold transition-colors sm:px-3 sm:text-sm md:min-h-0 md:w-full md:px-0 md:py-5 md:text-base ${
                     state === "active"
-                      ? "border-[var(--landing-accent)] text-[var(--landing-ink)] md:border-[var(--landing-line)]"
+                      ? "text-ink"
                       : state === "complete"
-                        ? "border-transparent text-[var(--landing-accent)] md:border-[var(--landing-line)]"
-                        : "border-transparent text-[var(--landing-subtle)] hover:text-[var(--landing-ink)] md:border-[var(--landing-line)]"
+                        ? "text-brown"
+                        : "text-ink-muted hover:text-ink-light"
                   }`}
                 >
                   <span className="block">{scene.tab}</span>
                   <span
                     aria-hidden
-                    className="mt-3 hidden h-[2px] w-full overflow-hidden bg-[var(--landing-line)] md:block"
+                    className="mt-3 hidden h-px w-full overflow-hidden bg-border md:block"
                   >
                     <span
                       ref={(node) => {
                         progressRefs.current[index] = node;
                       }}
-                      className="block h-full w-full origin-left bg-[var(--landing-accent)] will-change-transform"
-                      style={{
-                        transform:
-                          index === 0 ? "scaleX(0.08)" : "scaleX(0)",
-                      }}
+                      className="block h-full w-full origin-left bg-brown will-change-transform"
+                      style={{ transform: index === 0 ? "scaleX(0.08)" : "scaleX(0)" }}
                     />
                   </span>
                 </button>
@@ -179,20 +163,20 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
                 ref={(node) => {
                   sceneRefs.current[index] = node;
                 }}
-                className="scroll-mt-40 md:min-h-[780px]"
+                className="scroll-mt-40 md:min-h-[760px]"
               >
-                <div className="max-w-[650px]">
-                  <h3 className="m-0 font-display text-[30px] font-semibold leading-[1.05] tracking-[-0.035em] text-[var(--landing-ink)] sm:text-[38px]">
+                <div className="max-w-[610px]">
+                  <h3 className="m-0 font-display text-[28px] font-bold leading-[1.08] tracking-[-0.7px] text-ink sm:text-[34px]">
                     {scene.title}
                   </h3>
-                  <p className="mb-0 mt-3 text-[16px] leading-[1.65] text-[var(--landing-muted)]">
+                  <p className="m-0 mt-3 text-pretty font-body text-base leading-[1.6] text-ink-light">
                     {scene.body}
                   </p>
                 </div>
 
                 <figure className="mt-7">
                   <div
-                    className={`relative aspect-[8/5] overflow-hidden rounded-[var(--landing-frame-radius)] border border-[var(--landing-line-strong)] bg-[var(--landing-bg)] shadow-[var(--landing-shadow)] ${
+                    className={`relative aspect-[8/5] overflow-hidden rounded-[16px] border border-[#d8cdbd] bg-paper shadow-[0_28px_70px_-38px_rgba(61,42,20,0.58)] ${
                       index === 2 ? "journey-push-scene" : ""
                     }`}
                   >
@@ -200,7 +184,7 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
                       src={SCENE_IMAGES[index]}
                       alt={scene.alt}
                       fill
-                      sizes="(min-width: 1024px) 800px, (min-width: 768px) 64vw, 100vw"
+                      sizes="(min-width: 1024px) 660px, (min-width: 768px) 58vw, 100vw"
                       className={`object-cover ${
                         index === 2
                           ? "journey-push-primary"
@@ -212,19 +196,19 @@ export default function ProductJourney({ copy }: { copy: ProductJourneyCopy }) {
                     {index === 2 && (
                       <div
                         aria-hidden
-                        className="journey-agent-layer absolute -bottom-[21%] -right-[6%] h-[58%] w-[112%] overflow-hidden rounded-t-[14px] border border-b-0 border-[var(--landing-line-strong)] bg-[var(--landing-surface)] shadow-[0_-22px_48px_-30px_rgba(24,32,26,0.4)]"
+                        className="journey-agent-layer absolute -bottom-[21%] -right-[6%] h-[58%] w-[112%] overflow-hidden rounded-t-[14px] border border-b-0 border-[#cbbda9] bg-white shadow-[0_-22px_48px_-30px_rgba(43,40,34,0.58)]"
                       >
                         <Image
                           src="/demo/workspace.png"
                           alt=""
                           fill
-                          sizes="860px"
+                          sizes="760px"
                           className="object-cover object-right"
                         />
                       </div>
                     )}
                   </div>
-                  <figcaption className="mt-3 text-[12px] text-[var(--landing-subtle)]">
+                  <figcaption className="mt-3 font-mono text-[10px] uppercase tracking-[0.7px] text-ink-muted">
                     {scene.caption}
                   </figcaption>
                 </figure>

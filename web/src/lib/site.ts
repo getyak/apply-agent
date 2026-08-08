@@ -11,7 +11,7 @@ const RAW =
 export const SITE_URL = RAW.replace(/\/+$/, "");
 
 export const SITE_NAME = "Vantage";
-export const SITE_TAGLINE = "The evidence-backed job search";
+export const SITE_TAGLINE = "Your job hunt, run by agents";
 
 // Twitter handle for twitter:site / twitter:creator. Defaults to the brand
 // account so cards always credit Vantage; env override exists for future
