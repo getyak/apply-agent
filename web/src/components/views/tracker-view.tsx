@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { useVantage, type ApiApplication, type Applied } from "@/lib/store";
+import { useVantage, type ApiApplication } from "@/lib/store";
 import { statusVisual, type AppColumn } from "@/lib/status";
 import { Sparkles, Inbox, Compass, ArrowRight, X, ShieldCheck } from "lucide-react";
 
@@ -33,12 +33,14 @@ interface TrackerCard {
 }
 
 const columnTitles = (t: Translator): Record<AppColumn, string> => ({
+  preparing: t("columns.preparing"),
   applied: t("columns.applied"),
   interviewing: t("columns.interviewing"),
   outcome: t("columns.outcome"),
 });
 
 const columnEmptyCopy = (t: Translator): Record<AppColumn, string> => ({
+  preparing: t("empty.preparing"),
   applied: t("empty.applied"),
   interviewing: t("empty.interviewing"),
   outcome: t("empty.outcome"),
@@ -50,6 +52,7 @@ const columnEmptyCopy = (t: Translator): Record<AppColumn, string> => ({
 // pick the column's canonical status. Dropping in the source column is a
 // no-op handled before this map is consulted.
 const COLUMN_DEFAULT_STATUS: Record<AppColumn, string> = {
+  preparing: "draft",
   applied: "submitted",
   interviewing: "interview",
   // Outcome is genuinely ambiguous (offer vs rejected vs ghosted). We pick
@@ -115,19 +118,6 @@ function NextActionBadge({ value, t }: { value: string; t: Translator }) {
       {spec.text}
     </span>
   );
-}
-
-function appliedToCard(a: Applied, i: number): TrackerCard {
-  return {
-    key: `seed-${a.co}-${i}`,
-    applicationId: null,
-    mono: a.mono,
-    company: a.co,
-    role: a.role,
-    when: a.when,
-    status: "submitted",
-    isNew: a.isNew,
-  };
 }
 
 function apiToCard(a: ApiApplication, t: Translator): TrackerCard {
@@ -266,7 +256,7 @@ function Column({
                     <span
                       className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
                     >
-                      {card.isNew ? t("justSent") : v.label}
+                      {card.isNew ? t("justSent") : t(`status.${v.labelKey}`)}
                     </span>
                   </div>
                 </div>
@@ -370,7 +360,7 @@ function DetailDrawer({
               <span
                 className={`font-mono text-[9px] tracking-[0.5px] uppercase px-[7px] py-[3px] rounded ${v.pillClass}`}
               >
-                {v.label}
+                {t(`status.${v.labelKey}`)}
               </span>
               <span className="font-mono text-[10px] text-ink-muted">
                 {application.submitted_at
@@ -395,6 +385,54 @@ function DetailDrawer({
             section never touches the sticky footer (or kisses the bottom
             of the viewport when there's no error frame). */}
         <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-8 flex flex-col gap-6">
+          <section className="rounded-[12px] border border-cream-border bg-cream p-4">
+            <div className="font-mono text-[10px] tracking-[1px] uppercase text-ink-muted">
+              {t("drawer.packageLabel")}
+            </div>
+            <div className="mt-3 grid gap-2 font-body text-[12.5px] text-ink">
+              <div className="flex items-center justify-between gap-3">
+                <span>{t("drawer.resumeArtifact")}</span>
+                <span className={application.resume_version_id ? "text-green" : "text-ink-muted"}>
+                  {application.resume_version_id ? t("drawer.ready") : t("drawer.pending")}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>{t("drawer.coverArtifact")}</span>
+                <span className={application.cover_letter?.trim() ? "text-green" : "text-ink-muted"}>
+                  {application.cover_letter?.trim() ? t("drawer.ready") : t("drawer.pending")}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>{t("drawer.formArtifact")}</span>
+                <span className="text-ink-muted">
+                  {t("drawer.answerCount", {
+                    count: Array.isArray(application.form_answers)
+                      ? application.form_answers.length
+                      : application.form_answers
+                        ? Object.keys(application.form_answers).length
+                        : 0,
+                  })}
+                </span>
+              </div>
+            </div>
+            {application.status !== "submitted" ? (
+              <div className="mt-3 pt-3 border-t border-cream-border font-body text-[11.5px] leading-[1.5] text-ink-light">
+                {t("drawer.notSubmitted")}
+              </div>
+            ) : null}
+            {application.url ? (
+              <a
+                href={application.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-[8px] bg-brown px-3 py-2 font-body text-[12.5px] font-semibold text-paper no-underline hover:bg-brown-light"
+              >
+                {t("drawer.openJobSite")}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </a>
+            ) : null}
+          </section>
+
           {/* Status field — primary edit. Backed by PATCH ?status=. */}
           <section>
             <label className="block font-mono text-[10px] tracking-[1px] uppercase text-ink-muted mb-2">
@@ -489,10 +527,6 @@ function DetailDrawer({
 
 export function TrackerView() {
   const t = useTranslations("tracker");
-  // Seed entries from the demo onboarding path — kept ONLY until the user
-  // submits their first real application. Once any API application lands the
-  // seeds are dropped from the board so columns are exclusively real.
-  const applied = useVantage((s) => s.applied);
   const openPrep = useVantage((s) => s.openPrep);
   // Fall back to [] so a transient undefined (mid-rehydrate, before first
   // loadApplications resolves) can never blow up `.length` / `.map`.
@@ -547,6 +581,7 @@ export function TrackerView() {
 
   const cards = useMemo<Record<AppColumn, TrackerCard[]>>(() => {
     const buckets: Record<AppColumn, TrackerCard[]> = {
+      preparing: [],
       applied: [],
       interviewing: [],
       outcome: [],
@@ -554,11 +589,8 @@ export function TrackerView() {
     apiApplications.forEach((a) => {
       buckets[statusVisual(a.status).column].push(apiToCard(a, t));
     });
-    if (apiApplications.length === 0) {
-      applied.forEach((a, i) => buckets.applied.push(appliedToCard(a, i)));
-    }
     return buckets;
-  }, [apiApplications, applied, t]);
+  }, [apiApplications, t]);
 
   const selected = useMemo(
     () => apiApplications.find((a) => a.id === selectedId) ?? null,
@@ -645,7 +677,7 @@ export function TrackerView() {
   }
 
   return (
-    <div className="px-12 pt-10 pb-[60px] animate-fade-up">
+    <div className="px-4 sm:px-8 lg:px-12 pt-7 sm:pt-10 pb-[60px] animate-fade-up">
       <div className="font-mono text-[11px] tracking-[1px] uppercase text-ink-muted mb-[10px]">
         {t("pipeline")}
       </div>
@@ -732,10 +764,7 @@ export function TrackerView() {
         </div>
       )}
 
-      {/* First-time empty state — only when we've finished loading AND have
-          zero real applications. The seed cards under "Applied" stay as a
-          visual scaffold; this banner is the load-bearing CTA that explains
-          the column is genuinely empty and points to where matches live. */}
+      {/* First-time empty state — exclusively real application data. */}
       {!apiAppsLoading && totalReal === 0 && (
         <div className="mb-6 flex items-start gap-3 bg-cream border border-cream-border rounded-[13px] px-4 py-4">
           <div className="w-[34px] h-[34px] rounded-[9px] bg-white border border-cream-border flex items-center justify-center shrink-0">
@@ -759,8 +788,8 @@ export function TrackerView() {
         </div>
       )}
 
-      <div className="flex gap-[18px] items-start">
-        {(["applied", "interviewing", "outcome"] as AppColumn[]).map((column) => (
+      <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-4 gap-[18px] items-start">
+        {(["preparing", "applied", "interviewing", "outcome"] as AppColumn[]).map((column) => (
           <Column
             key={column}
             column={column}

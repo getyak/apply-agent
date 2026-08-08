@@ -20,9 +20,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   useVantage,
-  MOCK_QS,
-  MOCK_PROGRESS_LABELS,
-  INTERVIEWING_DATA,
 } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
 import { sendAsk } from "@/lib/agent-events";
@@ -171,6 +168,11 @@ interface MockMessage {
   feedback?: TranslationFeedback;
 }
 
+interface PracticeQuestion {
+  q: string;
+  feedback: string;
+}
+
 export function MockScreen() {
   const t = useTranslations("mock");
   const backHome = useVantage((s) => s.backHome);
@@ -213,16 +215,75 @@ export function MockScreen() {
     [selectedSlug],
   );
 
-  const realInterview = apiApplications.find((a) => a.status === "interview");
-  const job = realInterview
+  // Synthetic/example records are useful for API fixtures, but using one as
+  // the interview target makes the practice experience feel fabricated.
+  // Prefer a real application and fall back to the user's résumé context.
+  const usableApplications = apiApplications.filter(
+    (application) =>
+      !/^(example|synthetic(?:\s+test)?(?:\s+company)?)$/i.test(
+        application.company.trim(),
+      ),
+  );
+  const targetApplication =
+    usableApplications.find((a) => a.status === "interview") ??
+    usableApplications.find((a) =>
+      ["review", "submitted", "draft"].includes(a.status),
+    );
+  const resumeRole =
+    parsedResume?.basics?.label?.trim() ||
+    parsedResume?.work?.[0]?.position?.trim() ||
+    t("practiceRole");
+  const job = targetApplication
     ? {
-        mono: realInterview.company.charAt(0).toUpperCase(),
-        co: realInterview.company,
-        role: realInterview.role_title,
+        mono: targetApplication.company.charAt(0).toUpperCase(),
+        co: targetApplication.company,
+        role: targetApplication.role_title,
         stage: t("recruiterScreen"),
         when: t("soon"),
       }
-    : INTERVIEWING_DATA[0];
+    : {
+        mono: resumeRole.charAt(0).toUpperCase(),
+        co: t("practiceCompany"),
+        role: resumeRole,
+        stage: t("recruiterScreen"),
+        when: t("soon"),
+      };
+
+  const questions = useMemo<PracticeQuestion[]>(
+    () => [
+      {
+        q: t("questions.project.q", { role: job.role }),
+        feedback: t("questions.project.feedback"),
+      },
+      {
+        q: t("questions.challenge.q", { role: job.role }),
+        feedback: t("questions.challenge.feedback"),
+      },
+      {
+        q: t("questions.motivation.q", { company: job.co, role: job.role }),
+        feedback: t("questions.motivation.feedback", { company: job.co }),
+      },
+      {
+        q: t("questions.failure.q"),
+        feedback: t("questions.failure.feedback"),
+      },
+      {
+        q: t("questions.growth.q", { role: job.role }),
+        feedback: t("questions.growth.feedback"),
+      },
+    ],
+    [job.co, job.role, t],
+  );
+  const progressTopics = useMemo(
+    () => [
+      t("topics.project"),
+      t("topics.challenge"),
+      t("topics.motivation", { company: job.co }),
+      t("topics.failure"),
+      t("topics.growth"),
+    ],
+    [job.co, t],
+  );
 
   // Same precedence as sidebar/dock: prefer the résumé's basics.name over
   // auth display_name so the avatar never falls back to the email's first
@@ -233,14 +294,14 @@ export function MockScreen() {
 
   const intel = {
     duration: t("intel.duration"),
-    style: t("intel.style"),
+    style: t("intel.style", { company: job.co, role: job.role }),
     freq: [
-      { q: t("intel.q1"), p: "94%" },
-      { q: t("intel.q2"), p: "81%" },
-      { q: t("intel.q3"), p: "67%" },
+      { q: questions[0].q, p: "94%" },
+      { q: questions[2].q, p: "81%" },
+      { q: questions[1].q, p: "67%" },
     ],
     trap: {
-      q: t("intel.trapQ"),
+      q: questions[3].q,
       note: t("intel.trapNote"),
     },
   };
@@ -279,7 +340,7 @@ export function MockScreen() {
   }
 
   function seedFirstQuestion() {
-    const first = MOCK_QS[0];
+    const first = questions[0];
     setMessages([
       {
         role: "interviewer",
@@ -292,7 +353,7 @@ export function MockScreen() {
   function sendAnswer() {
     const text = pendingAnswer.trim();
     if (!text) return;
-    const cur = MOCK_QS[qIdx];
+    const cur = questions[qIdx];
     if (!cur) return;
     setPendingAnswer("");
 
@@ -300,13 +361,26 @@ export function MockScreen() {
       ...messages,
       { role: "user", text },
     ];
+    const hasEvidence = /\d|%|百分之|万|千|million|billion/i.test(text);
+    const hasDecision =
+      /决定|选择|取舍|权衡|采用|先.{0,20}(?:再|然后)|通过|主导|带领|我做|decid|chose|trade-?off|led|I (?:used|introduced|changed)/i.test(
+        text,
+      );
+    const heard =
+      hasEvidence && hasDecision
+        ? t("live.heardStrong")
+        : hasEvidence
+          ? t("live.heardEvidenceOnly")
+          : hasDecision
+            ? t("live.heardDecisionOnly")
+            : t("live.sampleHeard");
 
     if (selectedMode.feedback === "three_perspective_translation") {
       nextMsgs.push({
         role: "translation",
         feedback: {
           said: text,
-          heard: t("live.sampleHeard"),
+          heard,
           rephrase: cur.feedback,
           stuck:
             selectedMode.pressure === "chained_to_stuck"
@@ -322,11 +396,11 @@ export function MockScreen() {
     }
 
     const nextIdx = qIdx + 1;
-    if (nextIdx < MOCK_QS.length) {
+    if (nextIdx < questions.length) {
       const followUp =
         selectedMode.pressure === "one_follow_up" ||
         selectedMode.pressure === "chained_to_stuck";
-      const nq = MOCK_QS[nextIdx];
+      const nq = questions[nextIdx];
       nextMsgs.push({
         role: "interviewer",
         text: nq.q,
@@ -354,7 +428,7 @@ export function MockScreen() {
         {pendingStart && (
           <StartConfirmModal
             mode={selectedMode}
-            questionCount={MOCK_QS.length}
+            questionCount={questions.length}
             onCancel={cancelStart}
             onConfirm={confirmStart}
           />
@@ -375,7 +449,7 @@ export function MockScreen() {
         {pendingStart && (
           <StartConfirmModal
             mode={selectedMode}
-            questionCount={MOCK_QS.length}
+            questionCount={questions.length}
             onCancel={cancelStart}
             onConfirm={confirmStart}
           />
@@ -397,6 +471,7 @@ export function MockScreen() {
           onBack={() => setStage("modes")}
           onSend={sendAnswer}
           progressIdx={qIdx}
+          progressTopics={progressTopics}
         />
       </Shell>
     );
@@ -407,6 +482,7 @@ export function MockScreen() {
       <Debrief
         job={job}
         focusNext={t("debrief.focusNext")}
+        progressTopics={progressTopics}
         onRestart={() => {
           setQIdx(0);
           setMessages([]);
@@ -784,6 +860,7 @@ function LiveStage({
   onBack,
   onSend,
   progressIdx,
+  progressTopics,
 }: {
   job: { mono: string; co: string; role: string };
   mode: BuiltInMode;
@@ -794,14 +871,15 @@ function LiveStage({
   onBack: () => void;
   onSend: () => void;
   progressIdx: number;
+  progressTopics: string[];
 }) {
   const t = useTranslations("mock");
-  const total = MOCK_QS.length;
+  const total = progressTopics.length;
   const curr = Math.min(progressIdx + 1, total);
   // Topics breakdown becomes a hover tooltip in the progress pill so the
   // right-rail is gone entirely — the live screen is now single-column,
   // centered, and immersive. Tooltip text is plain HTML title for now.
-  const tooltip = MOCK_PROGRESS_LABELS.map((label, i) => {
+  const tooltip = progressTopics.map((label, i) => {
     const marker = i < progressIdx ? "✓" : i === progressIdx ? "›" : " ";
     return `${marker} ${label}`;
   }).join("\n");
@@ -1148,11 +1226,13 @@ const DEBRIEF_HEARD_KEYS: string[] = [
 function Debrief({
   job,
   focusNext,
+  progressTopics,
   onRestart,
   onDone,
 }: {
   job: { co: string };
   focusNext: string;
+  progressTopics: string[];
   onRestart: () => void;
   onDone: () => void;
 }) {
@@ -1210,8 +1290,8 @@ function Debrief({
             marginBottom: 28,
           }}
         >
-          {MOCK_PROGRESS_LABELS.map((topic, i) => {
-            const isLast = i === MOCK_PROGRESS_LABELS.length - 1;
+          {progressTopics.map((topic, i) => {
+            const isLast = i === progressTopics.length - 1;
             const heardKey =
               DEBRIEF_HEARD_KEYS[i] ?? DEBRIEF_HEARD_KEYS[DEBRIEF_HEARD_KEYS.length - 1];
             const heard = t(heardKey);

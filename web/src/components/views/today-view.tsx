@@ -2,14 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { useVantage, JOBS, type ApiJob } from "@/lib/store";
-import { firstNameOf, fullGreeting, formatToday } from "@/lib/dates";
+import { useLocale, useTranslations } from "next-intl";
+import { useVantage, type ApiJob } from "@/lib/store";
+import { firstNameOf } from "@/lib/dates";
 import {
   Zap,
-  ArrowUpRight,
-  Clock,
-  Sparkles,
 } from "lucide-react";
 import { today as todayApi, type TodayAction } from "@/lib/api";
 import { sendAsk } from "@/lib/agent-events";
@@ -75,21 +72,21 @@ function ApiJobCard({ job, onApply, t }: { job: ApiJob; onApply: (id: string) =>
   // bucketing every row as "Fair" with a fake 50% bar (QA bug #2).
   const match = job.matchScore;
   const scored = typeof match === "number";
-  const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
-  const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
+  const fitColor = (m: number) => (m >= 80 ? "#4C7A3F" : m >= 70 ? "#5D3000" : "#A66A00");
+  const fitBg = (m: number) => (m >= 80 ? "#EBF3E5" : m >= 70 ? "#F5EDE3" : "#F8ECD6");
   const fitLabel = (m: number) =>
-    m >= 95 ? t("fit.excellent") : m >= 90 ? t("fit.strong") : m >= 85 ? t("fit.good") : t("fit.fair");
+    m >= 90 ? t("fit.excellent") : m >= 80 ? t("fit.strong") : m >= 70 ? t("fit.good") : t("fit.fair");
   const p = job.parsed;
   const location = p?.locations?.join(", ") || (p?.remote ? t("remote") : "");
   const salary = p?.salary_min && p?.salary_max ? `$${Math.round(p.salary_min / 1000)}–${Math.round(p.salary_max / 1000)}k` : "";
 
   return (
-    <div className="group lift bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] hover:border-border-dark">
+    <div className="group lift bg-white border border-border rounded-[14px] px-4 sm:px-[22px] py-5 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-[18px] hover:border-border-dark">
       <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[19px] text-ink shrink-0 transition-all duration-300 ease-out group-hover:bg-gold-bg group-hover:scale-[1.05]">
         {job.company.charAt(0)}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-[9px] mb-[3px]">
+        <div className="flex flex-wrap items-center gap-[9px] mb-[3px]">
           <span className="font-body font-semibold text-[16px] text-ink">{job.role_title}</span>
           {scored ? (
             <span className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px]" style={{ color: fitColor(match), background: fitBg(match) }}>
@@ -127,10 +124,10 @@ function ApiJobCard({ job, onApply, t }: { job: ApiJob; onApply: (id: string) =>
           </div>
         )}
       </div>
-      <div className="shrink-0">
+      <div className="w-full shrink-0 sm:w-auto">
         <button
           onClick={() => onApply(job.id)}
-          className="border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] transition-all duration-200 ease-out hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] active:scale-[0.97]"
+          className="w-full sm:w-auto justify-center border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] transition-all duration-200 ease-out hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] active:scale-[0.97]"
         >
           <Zap className="w-[15px] h-[15px] transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110" strokeWidth={1.9} />
           {t("reviewAndApply")}
@@ -142,8 +139,8 @@ function ApiJobCard({ job, onApply, t }: { job: ApiJob; onApply: (id: string) =>
 
 export function TodayView() {
   const t = useTranslations("today");
+  const locale = useLocale();
   const openReview = useVantage((s) => s.openReview);
-  const openExtension = useVantage((s) => s.openExtension);
   const apiJobs = useVantage((s) => s.apiJobs);
   const apiJobsLoading = useVantage((s) => s.apiJobsLoading);
   const trendSnapshot = useVantage((s) => s.trendSnapshot);
@@ -151,6 +148,7 @@ export function TodayView() {
   const loadTrends = useVantage((s) => s.loadTrends);
   const currentUser = useVantage((s) => s.currentUser);
   const parsedResume = useVantage((s) => s.parsedResume);
+  const currentResumeId = useVantage((s) => s.currentResumeId);
   const loadCurrentUser = useVantage((s) => s.loadCurrentUser);
 
   useEffect(() => {
@@ -200,11 +198,6 @@ export function TodayView() {
     if (a.route) router.push(a.route);
   };
 
-  const fitColor = (m: number) => (m >= 90 ? "#4C7A3F" : m >= 85 ? "#5D3000" : "#A66A00");
-  const fitBg = (m: number) => (m >= 90 ? "#EBF3E5" : m >= 85 ? "#F5EDE3" : "#F8ECD6");
-  const fitLabel = (m: number) =>
-    m >= 95 ? t("fit.excellent") : m >= 90 ? t("fit.strong") : m >= 85 ? t("fit.good") : t("fit.fair");
-
   // Prefer the résumé's basics.name (what the user actually wrote) over their
   // auth display_name; both fall through to a friendly nameless greeting.
   const firstName =
@@ -212,8 +205,28 @@ export function TodayView() {
   // useMemo just to keep the rendered "Today" stable inside a single render —
   // we explicitly DON'T want this to be a fresh `new Date()` per re-render
   // (causing hydration mismatches in dev).
-  const headerDate = useMemo(() => formatToday(), []);
-  const greeting = useMemo(() => fullGreeting(firstName), [firstName]);
+  const headerDate = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      }).format(new Date()),
+    [locale],
+  );
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    const key =
+      hour < 5 || hour >= 18
+        ? "evening"
+        : hour < 12
+          ? "morning"
+          : "afternoon";
+    return t(`greeting.${key}`, {
+      name: firstName || t("greeting.fallbackName"),
+    });
+  }, [firstName, t]);
 
   // Real stats only — no fake fallbacks. Empty states are below.
   const totalJobs = trendSnapshot?.totalJobs ?? apiJobs.length;
@@ -221,12 +234,12 @@ export function TodayView() {
   // as "0" let us claim "0 strong fits" instead of "scoring not ready yet"
   // (QA UX note — surface the empty state honestly).
   const scoredJobs = apiJobs.filter((j) => typeof j.matchScore === "number");
-  const strongFits = scoredJobs.filter((j) => (j.matchScore ?? 0) >= 85).length;
+  const strongFits = scoredJobs.filter((j) => (j.matchScore ?? 0) >= 80).length;
   const anyScored = scoredJobs.length > 0;
   const trackedSkills = trendSnapshot?.topSkills?.length ?? 0;
 
   return (
-    <div className="max-w-[880px] mx-auto px-12 pt-10 pb-20 animate-fade-up">
+    <div className="max-w-[880px] mx-auto px-4 sm:px-8 lg:px-12 pt-7 sm:pt-10 pb-20 animate-fade-up">
       <div className="font-mono text-[11px] tracking-[1px] uppercase text-ink-muted mb-[10px]">
         {headerDate}
       </div>
@@ -234,14 +247,14 @@ export function TodayView() {
         {greeting}
       </h1>
 
-      <div className="flex bg-white border border-border rounded-[13px] shadow-sm overflow-hidden mb-[34px]">
+      <div className="flex flex-col sm:flex-row bg-white border border-border rounded-[13px] shadow-sm overflow-hidden mb-[34px]">
         <div className="stat-cell flex-1 px-[22px] py-[18px]">
           <div key={totalJobs} className="num-rise font-display font-bold text-[26px] text-ink tabular-nums">{totalJobs}</div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
             {t("rolesInDatabase", { count: totalJobs })}
           </div>
         </div>
-        <div className="w-px bg-border" />
+        <div className="h-px sm:h-auto sm:w-px bg-border" />
         <div className="stat-cell flex-1 px-[22px] py-[18px]">
           <div key={`${anyScored}-${strongFits}`} className={`num-rise font-display font-bold text-[26px] tabular-nums ${anyScored ? "text-green" : "text-ink-muted"}`} style={{ animationDelay: "0.07s" }}>
             {anyScored ? strongFits : "—"}
@@ -254,7 +267,7 @@ export function TodayView() {
                 : t("strongFitsReady", { count: strongFits })}
           </div>
         </div>
-        <div className="w-px bg-border" />
+        <div className="h-px sm:h-auto sm:w-px bg-border" />
         <div className="stat-cell flex-1 px-[22px] py-[18px]">
           <div key={trackedSkills} className="num-rise font-display font-bold text-[26px] text-amber tabular-nums" style={{ animationDelay: "0.14s" }}>{trackedSkills}</div>
           <div className="font-body text-[13px] text-ink-light mt-[2px]">
@@ -329,7 +342,7 @@ export function TodayView() {
         // we don't, surface a single concrete next step; if we do, the
         // original passive line still applies (the queue really will
         // populate as the user starts applying / scheduling interviews).
-        !parsedResume ? (
+        !parsedResume && !currentResumeId ? (
           <div className="mb-[34px] flex items-start gap-3 rounded-[14px] border border-cream-border bg-cream px-[18px] py-[14px]">
             <div className="font-body text-[13.5px] text-ink-dark flex-1">
               <span className="font-semibold">{t("emptyResumeTitle")}</span>{" "}
@@ -390,85 +403,15 @@ export function TodayView() {
         </div>
       )}
 
-      {/* Demo matches are scaffolding for first-time users: only show them when
-          we genuinely have nothing real to show. Once any matched job lands the
-          demos disappear so the page stops feeling like a marketing prop. */}
       {!apiJobsLoading && apiJobs.length === 0 && (
-        <>
-          <div className="flex items-baseline justify-between mb-[14px]">
-            <h2 className="font-display font-bold text-[13px] tracking-[1.5px] uppercase text-ink-light m-0">
-              {t("whileWeLook")}
-            </h2>
-            <span className="font-body text-[13px] text-ink-muted flex items-center gap-1">
-              <Sparkles className="w-[13px] h-[13px] text-amber" strokeWidth={1.7} /> {t("sampleSurface")}
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-[13px]">
-        {JOBS.map((job) => (
-          <div
-            key={job.id}
-            className="group lift bg-white border border-border rounded-[14px] px-[22px] py-5 shadow-sm flex items-center gap-[18px] hover:border-border-dark"
-          >
-            <div className="w-[46px] h-[46px] rounded-[11px] bg-[#F3F0EB] flex items-center justify-center font-display font-bold text-[19px] text-ink shrink-0">
-              {job.mono}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-[9px] mb-[3px]">
-                <span className="font-body font-semibold text-[16px] text-ink">
-                  {job.role}
-                </span>
-                <span
-                  className="font-mono text-[10px] tracking-[0.4px] uppercase px-2 py-[3px] rounded-[5px]"
-                  style={{ color: fitColor(job.match), background: fitBg(job.match) }}
-                >
-                  {fitLabel(job.match)}
-                </span>
-              </div>
-              <div className="font-body text-[13px] text-ink-light">
-                {job.co} · {job.location}
-                {job.salary && ` · ${job.salary}`}
-              </div>
-              <div className="flex items-center gap-[10px] mt-[11px]">
-                <div className="bar-track w-[120px] h-[6px] rounded-full bg-border overflow-hidden">
-                  <div
-                    className="bar-fill h-full rounded-full bg-[linear-gradient(90deg,#4C7A3F,#5E9B4D)]"
-                    style={{ width: `${job.match}%` }}
-                  />
-                </div>
-                <span className="font-mono text-[11px] font-medium text-green">
-                  {t("percentMatch", { pct: job.match })}
-                </span>
-              </div>
-            </div>
-            <div className="shrink-0">
-              {job.ready ? (
-                <button
-                  onClick={() => openReview(job.id)}
-                  className="tap border-none cursor-pointer bg-brown text-paper font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap shadow-[0_1px_2px_rgba(61,42,20,0.18)] hover:bg-brown-light hover:shadow-[0_6px_16px_-6px_rgba(61,42,20,0.5)] transition-[background-color,box-shadow,transform] duration-200 ease-out"
-                >
-                  <Zap className="w-[15px] h-[15px] transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110" strokeWidth={1.9} />
-                  {t("oneClickApply")}
-                </button>
-              ) : (
-                <button
-                  onClick={() => openExtension(job.id)}
-                  className="tap group/site cursor-pointer bg-white text-ink border border-border-dark font-body font-semibold text-[14px] px-[18px] py-[11px] rounded-[9px] flex items-center gap-[7px] whitespace-nowrap hover:border-brown hover:shadow-[0_6px_16px_-8px_rgba(61,42,20,0.28)] transition-[border-color,box-shadow,transform] duration-200 ease-out"
-                >
-                  {t("applyOnSite")}
-                  <ArrowUpRight className="w-[14px] h-[14px] text-ink-light transition-transform duration-300 ease-out group-hover/site:translate-x-0.5 group-hover/site:-translate-y-0.5" strokeWidth={1.9} />
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-          </div>
-
-          <div className="mt-5 flex items-center gap-[9px] justify-center font-body text-[13px] text-ink-muted">
-            <Clock className="w-[15px] h-[15px]" strokeWidth={1.7} />
-            {t("buttonsHint")}
-          </div>
-        </>
+        <div className="rounded-[14px] border border-border bg-white px-5 py-6 text-center shadow-sm">
+          <h2 className="font-display text-[16px] font-bold text-ink">
+            {t("noMatchesTitle")}
+          </h2>
+          <p className="mx-auto mt-2 max-w-[520px] font-body text-[13px] leading-[1.6] text-ink-light">
+            {t("noMatchesBody")}
+          </p>
+        </div>
       )}
     </div>
   );

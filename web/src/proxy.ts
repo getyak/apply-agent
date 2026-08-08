@@ -50,7 +50,8 @@ export function proxy(request: NextRequest): NextResponse {
   // we don't loop back into /app after the layout itself bounced us out.
   if (hasToken && pathname === AUTH_PATH) {
     const reason = request.nextUrl.searchParams.get("reason");
-    if (!reason) {
+    const next = request.nextUrl.searchParams.get("next");
+    if (!reason && !next) {
       const url = request.nextUrl.clone();
       url.pathname = "/app";
       url.search = "";

@@ -23,7 +23,7 @@ contextvar — works for both paths uniformly.
 
 from __future__ import annotations
 
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -101,7 +101,7 @@ def open_tally() -> TallyHandle:
 
 class TallyHandle:
     def __init__(self) -> None:
-        self._token = None
+        self._token: Token[CostTally | None] | None = None
         self.tally = CostTally()
 
     def __enter__(self) -> CostTally:
@@ -121,7 +121,7 @@ class TallyHandle:
 class CostTrackingCallback(AsyncCallbackHandler):
     """LangChain callback that records per-call usage into the active tally.
 
-    Plugged into ``ChatOpenAI(callbacks=[CostTrackingCallback()])`` by
+    Plugged into ``ChatOpenRouter(callbacks=[CostTrackingCallback()])`` by
     ``pick_model()`` in llm.py so every ainvoke / astream path goes
     through it transparently.
     """
@@ -180,7 +180,7 @@ class CostTrackingCallback(AsyncCallbackHandler):
         )
 
 
-# Module-level singleton; ChatOpenAI accepts a list of callbacks and this is
+# Module-level singleton; ChatOpenRouter accepts a list of callbacks and this is
 # stateless (state lives in the contextvar), so sharing one instance across
 # all picks is safe.
 COST_TRACKING_CALLBACK = CostTrackingCallback()

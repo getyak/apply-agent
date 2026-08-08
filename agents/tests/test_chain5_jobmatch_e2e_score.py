@@ -89,7 +89,19 @@ from agents.tools import auto  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "jd"
 
-_HAS_KEY = bool(os.environ.get("OPENROUTER_API_KEY"))
+
+def _has_real_openrouter_key() -> bool:
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    lower = key.lower()
+    return bool(
+        len(key) >= 40
+        and not lower.startswith(("dummy", "test", "fake", "placeholder"))
+        and "change_me" not in lower
+        and "changeme" not in lower
+    )
+
+
+_HAS_KEY = _has_real_openrouter_key()
 pytestmark = pytest.mark.skipif(
     not _HAS_KEY,
     reason="chain5 needs a real OPENROUTER_API_KEY (root .env) — it drives the live LLM",
@@ -246,7 +258,11 @@ CASES: list[dict] = [
     },
     {
         "case_id": "malformed_degrades",
-        "url": "https://example.com/careers/whatever",
+        # Use a literal public address so this mock-transport case stays
+        # independent of local DNS proxies (for example Clash fake-IP maps
+        # example.com into 198.18.0.0/15, which the production SSRF guard
+        # correctly rejects before the malformed response can be exercised).
+        "url": "https://1.1.1.1/careers/whatever",
         "degraded": True,
     },
 ]

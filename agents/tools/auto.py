@@ -131,7 +131,7 @@ async def redis_setex(key: str, ttl_seconds: int, value: str) -> bool:
     except Exception:  # noqa: BLE001 boundary
         return False
     try:
-        await client.setex(key, ttl_seconds, value)
+        await client.set(key, value, ex=ttl_seconds)
         return True
     except (
         redis.ConnectionError,

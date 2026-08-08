@@ -41,6 +41,7 @@ export const SENSITIVE_FIELD_TOKENS: ReadonlyArray<string> = [
   'ethnicity',
   'gender',
   'gender identity',
+  'pronoun',
   'sex',
   'disability',
   'veteran',

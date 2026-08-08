@@ -37,6 +37,7 @@ import {
 } from "./reducer";
 import { consumeAgentStream } from "./consumer";
 import { useDock } from "@/lib/ask-vantage-store";
+import { getClientLocale } from "@/i18n/locale-client";
 
 // Client-injected step kinds the reducer never produces (the user's own
 // prompt bubble). We widen StepKind locally for these without touching the
@@ -75,6 +76,45 @@ function toReducerState(s: AgentStreamState): ReducerState {
 }
 
 let userStepCounter = 0;
+
+/**
+ * Keep the browser → gateway request contract in one small, testable place.
+ * FastAPI's AskPayload reads `message` (not the historical `prompt` key);
+ * thread/surface are copied to headers by consumer.ts.
+ */
+export function buildAskRequestBody(
+  message: string,
+  threadId: string,
+  surface?: string,
+): Record<string, unknown> {
+  return {
+    message,
+    thread_id: threadId,
+    ...(surface ? { surface } : {}),
+  };
+}
+
+/**
+ * Parser/schema failures are implementation details, not useful recovery
+ * guidance. Preserve the technical error in the console while the timeline
+ * gets concise, localized next-step copy.
+ */
+export function toUserFacingStreamError(err: Error): string {
+  console.error("[ask] stream failed", err);
+  const locale = getClientLocale();
+  const technical =
+    /invalid_union|discriminator|zod|schema|parse|protocol|unexpected token/i.test(
+      err.message,
+    );
+  if (locale === "zh") {
+    return technical
+      ? "Vantage 暂时无法读取响应，请重试。"
+      : "连接中断，请检查网络后重试。";
+  }
+  return technical
+    ? "Vantage couldn't read the response. Please try again."
+    : "The connection was interrupted. Check your network and try again.";
+}
 
 export const useAgentStream = create<AgentStreamState>()(
   subscribeWithSelector((set, get) => ({
@@ -358,11 +398,7 @@ export async function sendAsk(
   useDock.setState({ abortController: controller, streaming: true, input: "" });
 
   await consumeAgentStream({
-    body: {
-      prompt: wirePrompt,
-      thread_id: threadId,
-      ...(opts.surface ? { surface: opts.surface } : {}),
-    },
+    body: buildAskRequestBody(wirePrompt, threadId, opts.surface),
     abortController: controller,
     callbacks: makeStreamCallbacks(controller),
   });
@@ -417,7 +453,7 @@ function makeStreamCallbacks(controller: AbortController) {
       }
     },
     onError: (err: Error) => {
-      useAgentStream.setState({ errorMessage: err.message });
+      useAgentStream.setState({ errorMessage: toUserFacingStreamError(err) });
       clearOwned();
     },
     onDone: () => {

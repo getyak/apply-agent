@@ -47,6 +47,30 @@ describe("jsonResumeToMarkdown", () => {
     expect(md).toContain("_2017 – 2021_");
   });
 
+  it("uses semantic breaks for the header and work summary", () => {
+    const md = jsonResumeToMarkdown({
+      basics: {
+        name: "Avery",
+        label: "Engineer",
+        email: "avery@example.test",
+      },
+      work: [
+        {
+          name: "Example",
+          position: "Engineer",
+          startDate: "2024",
+          endDate: "Present",
+          summary: "Owned the documented platform scope.",
+          highlights: ["Reduced a recorded queue delay."],
+        },
+      ],
+    });
+    expect(md).toContain("_Engineer_  \navery@example.test");
+    expect(md).toContain(
+      "_2024 – Present_\n\nOwned the documented platform scope.",
+    );
+  });
+
   it("maps every highlight to exactly one bullet line (bullet-line contract §4.3)", () => {
     const resume: JsonResume = {
       work: [{ name: "Acme", highlights: ["one", "two", "three"] }],
@@ -126,6 +150,7 @@ describe("jsonResumeToMarkdown", () => {
         { studyType: "BS", area: "CS", institution: "NJU", startDate: "2017", endDate: "2021" } as never,
       ],
       projects: [{ name: "Demo", description: "A side project." } as never],
+      languages: [{ language: "English", fluency: "Professional" }],
     };
 
     it("renders zh section titles and 至今 sentinel for open-ended ranges", () => {
@@ -135,11 +160,13 @@ describe("jsonResumeToMarkdown", () => {
       expect(md).toContain("## 技能");
       expect(md).toContain("## 项目");
       expect(md).toContain("## 教育");
+      expect(md).toContain("## 语言");
       expect(md).toContain("6 月 2021 – 至今");
       // Content (name, company, bullet) stays verbatim — never translated.
       expect(md).toContain("# 王祥");
       expect(md).toContain("### Engineer — Stripe");
       expect(md).toContain("- Owned the payments rewrite.");
+      expect(md).not.toContain("## Languages");
     });
 
     it("defaults to en when no locale is supplied (backward-compatible)", () => {

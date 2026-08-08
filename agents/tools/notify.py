@@ -23,14 +23,14 @@ async def write_user_memory(user_id: UUID, key: str, value: dict[str, Any]) -> b
     if not dsn:
         return False
     sql = """
-        INSERT INTO user_memories (user_id, content, metadata)
-        VALUES (%s, %s, %s)
+        INSERT INTO user_memories (user_id, memory_type, content)
+        VALUES (%s, 'feedback', %s)
     """
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 sql,
-                (str(user_id), key + ": " + json.dumps(value)[:1000], json.dumps({key: value})),
+                (str(user_id), key + ": " + json.dumps(value)[:1000]),
             )
         await conn.commit()
     return True

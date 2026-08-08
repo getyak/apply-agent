@@ -78,6 +78,15 @@ describe("deriveNextAction", () => {
     });
   });
 
+  it("explicit terminal statuses → close_loop", () => {
+    for (const status of ["withdrawn", "ghosted", "accepted", "closed"]) {
+      expect(deriveNextAction({ status })).toEqual({
+        next_action_derived: "close_loop",
+        next_action_due_derived: null,
+      });
+    }
+  });
+
   it("outcome present → close_loop even without rejected status", () => {
     expect(
       deriveNextAction({ status: "submitted", outcome: "ghosted" }),

@@ -25,8 +25,11 @@ import type { AppEnv } from "../types";
 // the same, so the suffix is invisible to the rest of the test.
 const USER_A = `user-prepare-a-${process.pid}-${process.hrtime.bigint()}`;
 const RESUME_ID = "00000000-0000-0000-0000-000000000bb1";
+const APPLICATION_ID = "00000000-0000-0000-0000-000000000cc1";
+const JOB_ID = "00000000-0000-0000-0000-000000000dd1";
 
 let hasBaseResume = true;
+let hasOwnedApplication = true;
 let agentResponder: () => Response = () =>
   new Response(JSON.stringify({ application_id: "app-001", status: "review" }), {
     status: 200,
@@ -42,6 +45,20 @@ async function stubQuery(text: string, params: unknown[]) {
           id: RESUME_ID,
           version: 3,
           content: { basics: { name: "Alice Engineer" } },
+        },
+      ],
+    };
+  }
+  if (text.includes("FROM application_drafts ad") && text.includes("JOIN jobs")) {
+    if (!hasOwnedApplication) return { rows: [] };
+    return {
+      rows: [
+        {
+          id: JOB_ID,
+          jd_text: "Build reliable backend services with TypeScript and PostgreSQL.",
+          parsed: {},
+          company: "Relay Labs",
+          role_title: "Backend Engineer",
         },
       ],
     };
@@ -93,7 +110,7 @@ async function req(body: unknown): Promise<Response> {
       Authorization: `Bearer ${await makeJwt(USER_A)}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ applicationId: APPLICATION_ID, ...(body as object) }),
   });
 }
 
@@ -101,6 +118,7 @@ describe("POST /api/applications/prepare-from-jd", () => {
   beforeEach(() => {
     fetchCalls.length = 0;
     hasBaseResume = true;
+    hasOwnedApplication = true;
     agentResponder = () =>
       new Response(
         JSON.stringify({ application_id: "app-001", status: "review" }),
@@ -144,6 +162,49 @@ describe("POST /api/applications/prepare-from-jd", () => {
     ]);
   });
 
+  it("forwards an ownership-checked stored JD instead of forcing a refetch", async () => {
+    const res = await req({
+      jdUrl: "https://jobs.example.test/roles/backend",
+      applicationId: APPLICATION_ID,
+    });
+    expect(res.status).toBe(200);
+    const payload = JSON.parse(fetchCalls[0]!.init.body as string);
+    expect(payload.application_id).toBe(APPLICATION_ID);
+    expect(payload.job_id).toBe(JOB_ID);
+    expect(payload.jd_text).toContain("TypeScript and PostgreSQL");
+    expect(payload.company).toBe("Relay Labs");
+    expect(payload.role_title).toBe("Backend Engineer");
+  });
+
+  it("rejects a missing or foreign application before calling the agent", async () => {
+    hasOwnedApplication = false;
+    const res = await req({
+      jdUrl: "https://jobs.example.test/roles/backend",
+      applicationId: APPLICATION_ID,
+    });
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe("RESOURCE_NOT_FOUND");
+    expect(fetchCalls.length).toBe(0);
+  });
+
+  it("requires a canonical draft before starting agent work", async () => {
+    const res = await APP.request("/api/applications/prepare-from-jd", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await makeJwt(`${USER_A}-missing-draft`)}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jdUrl: "https://jobs.example.test/roles/backend",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe("VALIDATION_FAILED");
+    expect(fetchCalls.length).toBe(0);
+  });
+
   it("returns 502 (UPSTREAM) when the agent errors", async () => {
     agentResponder = () =>
       new Response("agent boom", { status: 500 });
@@ -157,7 +218,10 @@ describe("POST /api/applications/prepare-from-jd", () => {
     const res = await APP.request("/api/applications/prepare-from-jd", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" }),
+      body: JSON.stringify({
+        jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234",
+        applicationId: APPLICATION_ID,
+      }),
     });
     expect(res.status).toBe(401);
     expect(fetchCalls.length).toBe(0);
@@ -173,7 +237,10 @@ describe("POST /api/applications/prepare-from-jd", () => {
         "Content-Type": "application/json",
         "X-Relay-Locale": "zh",
       },
-      body: JSON.stringify({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" }),
+      body: JSON.stringify({
+        jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234",
+        applicationId: APPLICATION_ID,
+      }),
     });
     expect(res.status).toBe(200);
     expect(fetchCalls.length).toBe(1);
@@ -189,7 +256,10 @@ describe("POST /api/applications/prepare-from-jd", () => {
         "Content-Type": "application/json",
         "Accept-Language": "zh-CN,en;q=0.7",
       },
-      body: JSON.stringify({ jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234" }),
+      body: JSON.stringify({
+        jdUrl: "https://boards.greenhouse.io/synthetic/jobs/4071234",
+        applicationId: APPLICATION_ID,
+      }),
     });
     expect(res.status).toBe(200);
     const headers = fetchCalls[0]!.init.headers as Record<string, string>;

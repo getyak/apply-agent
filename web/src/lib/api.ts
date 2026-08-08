@@ -405,6 +405,139 @@ export interface PaginatedEnvelope<T> {
   };
 }
 
+export interface CareerGraphSummary {
+  id: string;
+  label: string;
+  source_resume_id: string | null;
+  current_revision_id: string | null;
+  revision: number;
+  node_count: number;
+  edge_count: number;
+  pending_change_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CareerGraphSourceResume {
+  id: string;
+  version: number;
+  label: string | null;
+  track: "original" | "optimized" | "tailored";
+  is_base: boolean;
+  created_at: string;
+}
+
+export interface CareerGraphEntity {
+  id: string;
+  type: string;
+  data?: Record<string, unknown>;
+  provenance?: {
+    source_type?: string;
+    source_ref?: string;
+  };
+  from?: string;
+  to?: string;
+}
+
+export interface CareerGraphEntityChange {
+  entity: "node" | "edge";
+  id: string;
+  change: "added" | "updated" | "removed";
+  before: CareerGraphEntity | null;
+  after: CareerGraphEntity | null;
+}
+
+export interface CareerGraphReviewSummary {
+  counts: {
+    added_nodes: number;
+    updated_nodes: number;
+    removed_nodes: number;
+    added_edges: number;
+    updated_edges: number;
+    removed_edges: number;
+  };
+  total_changes: number;
+  destructive: boolean;
+  nodes: CareerGraphEntityChange[];
+  edges: CareerGraphEntityChange[];
+}
+
+export interface CareerGraphChangeSet {
+  id: string;
+  graph_id: string;
+  base_revision_id: string | null;
+  summary: string;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  proposed_by: "user" | "codex" | "relay_agent" | "import";
+  decided_via: string | null;
+  created_at: string;
+  decided_at: string | null;
+  review_summary: CareerGraphReviewSummary;
+  confirmation: {
+    approve: string;
+    reject: string;
+  };
+}
+
+export interface CareerGraphOverview {
+  graphs: CareerGraphSummary[];
+  source_resumes: CareerGraphSourceResume[];
+  pending_changes: CareerGraphChangeSet[];
+  review_gate: {
+    proposal_changes_approved_graph: false;
+    exact_confirmation_required: true;
+  };
+}
+
+export const careerGraphs = {
+  overview: () => api<CareerGraphOverview>("/api/career-graphs"),
+
+  importResume: (input: {
+    resumeId: string;
+    graphId?: string;
+    graphLabel?: string;
+  }) =>
+    api<CareerGraphChangeSet & {
+      requires_human_approval: true;
+      import_report?: {
+        node_count: number;
+        edge_count: number;
+        warnings: string[];
+        upsert_only: true;
+      };
+    }>("/api/career-graphs/import", {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify(input),
+    }),
+
+  change: (changeSetId: string) =>
+    api<{ change: CareerGraphChangeSet }>(
+      `/api/career-graphs/changes/${encodeURIComponent(changeSetId)}`,
+    ),
+
+  decide: (
+    changeSetId: string,
+    decision: "approve" | "reject",
+    confirmation: string,
+  ) =>
+    api<{
+      ok: true;
+      change_set_id: string;
+      graph_id: string;
+      status: "approved" | "rejected";
+      revision?: number;
+      revision_id?: string;
+    }>(
+      `/api/career-graphs/changes/${encodeURIComponent(changeSetId)}/decision`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ decision, confirmation }),
+      },
+    ),
+};
+
 // Profile preferences mirror api/src/schemas.ts UserPreferencesSchema. NB the
 // API is camelCase + strict — unknown keys are rejected, so do NOT send
 // snake_case (target_roles etc.). All fields optional on the wire.
@@ -480,6 +613,35 @@ export const auth = {
   me: () =>
     api<{ user: { id: string; email: string; display_name: string; preferences: unknown } }>(
       "/api/auth/me",
+    ),
+};
+
+export interface McpAuthorizationRequest {
+  id: string;
+  client: {
+    id: string;
+    name: string;
+    uri: string | null;
+  };
+  scopes: string[];
+  resource: string | null;
+  status: "pending" | "approved" | "denied" | "consumed";
+  expiresAt: string;
+}
+
+export const mcpOAuth = {
+  request: (requestId: string) =>
+    api<{ request: McpAuthorizationRequest }>(
+      `/api/mcp-oauth/requests/${encodeURIComponent(requestId)}`,
+    ),
+
+  decide: (requestId: string, decision: "approve" | "deny") =>
+    api<{ redirectUrl: string }>(
+      `/api/mcp-oauth/requests/${encodeURIComponent(requestId)}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      },
     ),
 };
 
@@ -666,7 +828,16 @@ export const resumes = {
   download: async (
     resumeId: string,
     format: "md" | "json" | "pdf" | "docx",
-  ): Promise<void> => {
+  ): Promise<{
+    filename: string;
+    audit: {
+      rendererVersion: number;
+      format: "pdf" | "docx";
+      targetPages: number;
+      pageCount: number | null;
+      withinBudget: boolean | null;
+    } | null;
+  }> => {
     const token = getToken();
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -700,6 +871,49 @@ export const resumes = {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    const rendererVersionHeader = res.headers.get(
+      "x-relay-artifact-renderer-version",
+    );
+    const targetPagesHeader = res.headers.get(
+      "x-relay-artifact-target-pages",
+    );
+    const rendererVersion = Number(rendererVersionHeader);
+    const targetPages = Number(targetPagesHeader);
+    const pageCountHeader = res.headers.get("x-relay-artifact-page-count");
+    const withinBudgetHeader = res.headers.get(
+      "x-relay-artifact-within-budget",
+    );
+    const artifactFormat = res.headers.get("x-relay-artifact-format");
+    const normalizedArtifactFormat: "pdf" | "docx" | null =
+      artifactFormat === "pdf" || artifactFormat === "docx"
+        ? artifactFormat
+        : null;
+    const audit =
+      rendererVersionHeader !== null &&
+      targetPagesHeader !== null &&
+      Number.isInteger(rendererVersion) &&
+      rendererVersion >= 1 &&
+      (targetPages === 1 || targetPages === 2) &&
+      normalizedArtifactFormat
+        ? {
+            rendererVersion,
+            format: normalizedArtifactFormat,
+            targetPages,
+            pageCount:
+              pageCountHeader !== null &&
+              Number.isInteger(Number(pageCountHeader)) &&
+              Number(pageCountHeader) >= 1
+                ? Number(pageCountHeader)
+                : null,
+            withinBudget:
+              withinBudgetHeader === "true"
+                ? true
+                : withinBudgetHeader === "false"
+                  ? false
+                  : null,
+          }
+        : null;
+    return { filename, audit };
   },
 
   // ─── Publish (read-only short link) ─────────────────────────────────────
@@ -830,24 +1044,71 @@ export const jobs = {
       `/api/jobs/${jobId}/match`,
       { method: "POST" },
     ),
+
+  matches: (jobIds: string[]) =>
+    api<{
+      matches: Record<
+        string,
+        {
+          score: number;
+          matchedSkills: string[];
+          missingSkills: string[];
+          aiGenerated: boolean;
+        }
+      >;
+      unavailableJobIds: string[];
+      unavailableReason: "no_base_resume" | null;
+    }>("/api/jobs/matches", {
+      method: "POST",
+      body: JSON.stringify({ jobIds }),
+    }),
 };
 
 export const applications = {
-  prepare: (jobId: string, resumeId: string, coverLetter?: string) =>
+  prepare: (jobId: string, resumeId?: string, coverLetter?: string) =>
     api<{ application: { id: string; status: string } }>(
       "/api/applications/prepare",
       { method: "POST", body: JSON.stringify({ jobId, resumeId, coverLetter }) },
     ),
+
+  /** Run the full parse → tailor → cover-letter → form-answer saga for an
+   * existing draft. This prepares browser-extension artifacts; it never
+   * submits to an employer. */
+  prepareFromJD: (jdUrl: string, applicationId: string, formFields: Array<Record<string, unknown>> = []) =>
+    api<{
+      application_id: string;
+      status: "draft" | "review";
+      stage_status: Record<string, string>;
+      cover_letter?: { body?: string; [key: string]: unknown } | null;
+      form_answers?: Array<Record<string, unknown>>;
+      tailored_resume_id?: string | null;
+      company?: string | null;
+      role_title?: string | null;
+      last_error?: string | null;
+    }>("/api/applications/prepare-from-jd", {
+      method: "POST",
+      body: JSON.stringify({ jdUrl, applicationId, formFields }),
+      // This endpoint deliberately runs two guarded OpenRouter generations
+      // (résumé + cover letter). The global 15 s ceiling is right for normal
+      // CRUD, but would abort this saga while the server was still preparing
+      // the user's draft. Both generation stages have server-side timeouts, so
+      // this remains bounded and never submits anything to an employer.
+      signal: AbortSignal.timeout(70_000),
+    }),
 
   list: (status?: string) => {
     const qs = status ? `?status=${status}` : "";
     return api<
       PaginatedEnvelope<{
         id: string;
+        job_id?: string;
         status: string;
         company: string;
         role_title: string;
+        url?: string;
+        resume_version_id?: string | null;
         cover_letter?: string;
+        form_answers?: Array<Record<string, unknown>> | Record<string, unknown> | null;
         submitted_at?: string;
         created_at: string;
       }>

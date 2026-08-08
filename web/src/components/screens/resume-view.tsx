@@ -24,6 +24,7 @@ import { useVantage } from "@/lib/store";
 import { ResumeChangeLogPanel } from "@/components/studio/resume-change-log-panel";
 import { ResumeMarkdown } from "@/components/studio/resume-markdown";
 import { EditableDocumentPane } from "@/components/studio/editable-document-pane";
+import { mergeCompareWork } from "@/lib/resume-compare";
 import { ResumeDualTrack } from "@/components/screens/resume-dual-track";
 
 type ResumeTrack = "original" | "optimized" | "tailored";
@@ -212,13 +213,6 @@ export function ResumeView() {
   const [baseDoc, setBaseDoc] = useState<JsonResume | null>(null);
   const [baseDocLoading, setBaseDocLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  // Compare mode is fully derived from the active presentation tab. We used
-  // to keep an independent `compareOn` toggle in the header chrome, but it
-  // drifted out of sync (e.g. Exit-compare staying lit while Optimized was
-  // active). Collapsing the two into one source of truth removes the bug
-  // class entirely — Compare ↔ PresentationTabs `"compare"` are one and the
-  // same. See vantage-ui-mapping.md §11.2 and the round-12 audit.
-  const compareOn = presentation === "compare";
   const [error, setError] = useState<string | null>(null);
   // The proposed AI suggestion stack for the current original (design §6).
   // Rendered as accept/reject cards in the right pane's suggestions panel and
@@ -377,7 +371,16 @@ export function ResumeView() {
       .then((res) => {
         if (!alive) return;
         const r = res as { resume?: { content?: JsonResume } };
-        setBaseDoc(r.resume?.content ?? null);
+        const stored = r.resume?.content;
+        const parsed =
+          stored &&
+          typeof stored === "object" &&
+          "parsed" in stored &&
+          (stored as JsonResume & { parsed?: unknown }).parsed &&
+          typeof (stored as JsonResume & { parsed?: unknown }).parsed === "object"
+            ? ((stored as JsonResume & { parsed: JsonResume }).parsed)
+            : stored;
+        setBaseDoc(parsed ?? null);
       })
       .catch(() => {
         if (!alive) return;
@@ -1448,6 +1451,13 @@ function DocumentPane({
     diffOn && token.trim().length > 0 && !baseHighlights.has(token.trim());
   const isSkillAdded = (token: string): boolean =>
     diffOn && token.trim().length > 0 && !baseSkills.has(token.trim());
+  const renderedWork = useMemo(
+    () =>
+      diffOn
+        ? mergeCompareWork(work, baseDoc?.work ?? [])
+        : work,
+    [diffOn, work, baseDoc],
+  );
   return (
     <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "30px 0 60px" }}>
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "0 44px" }}>
@@ -1506,7 +1516,9 @@ function DocumentPane({
               overlaid by risk_level (gold safe, coral needs_review). The
               structured pane below still backs the Compare/Original/Extracted
               paths and remains the renderer when no markdown is available. */}
-          {presentation === "optimized" && markdown && markdown.trim().length > 0 ? (
+          {presentation === "optimized" &&
+          markdown &&
+          markdown.trim().length > 0 ? (
             <ResumeMarkdown
               markdown={markdown}
               suggestions={suggestions.map((s) => ({
@@ -1546,7 +1558,7 @@ function DocumentPane({
             </Section>
           )}
 
-          {work.length > 0 && (
+          {renderedWork.length > 0 && (
             <Section
               title={t("doc.experience")}
               trailing={
@@ -1568,8 +1580,8 @@ function DocumentPane({
                 ) : null
               }
             >
-              {work.map((w, i) => (
-                <div key={i} style={{ marginBottom: i === work.length - 1 ? 0 : 20 }}>
+              {renderedWork.map((w, i) => (
+                <div key={i} style={{ marginBottom: i === renderedWork.length - 1 ? 0 : 20 }}>
                   <div className="ds-body-sm" style={{ fontWeight: 600, fontSize: 14 }}>
                     {w.position} · {w.name}
                   </div>
@@ -1577,7 +1589,10 @@ function DocumentPane({
                     {[w.startDate, w.endDate].filter(Boolean).join(" – ").toUpperCase()}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {(w.highlights ?? []).map((h, hi) => {
+                    {[
+                      ...(w.summary?.trim() ? [w.summary.trim()] : []),
+                      ...(w.highlights ?? []),
+                    ].map((h, hi) => {
                       const added = isAdded(h);
                       return (
                         <div

@@ -181,6 +181,12 @@ def get_checkpointer():
                     conninfo=dsn,
                     min_size=1,
                     max_size=10,
+                    # PostgreSQL may close an otherwise-idle TCP connection
+                    # between turns. Validate every checkout so the pool
+                    # discards/replaces a stale socket before LangGraph tries
+                    # to consume checkpoint input from it.
+                    check=AsyncConnectionPool.check_connection,
+                    reconnect_timeout=10.0,
                     max_idle=300.0,  # recycle before PG's default idle timeout
                     max_lifetime=1800.0,
                     open=False,

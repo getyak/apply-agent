@@ -90,9 +90,11 @@ jobs:
 
       - name: Rollback newly added migrations
         if: steps.detect.outputs.files != ''
+        env:
+          MIGRATION_FILES: ${{ steps.detect.outputs.files }}
         run: |
           set -e
-          for f in $(echo "${{ steps.detect.outputs.files }}" | tac); do
+          printf '%s\n' "$MIGRATION_FILES" | sed '/^$/d' | sort -r | while IFS= read -r f; do
             # Project convention (011+):   <base>.up.sql + <base>.down.sql
             # Legacy convention (001-010): <base>.sql    + <base>.down.sql
             # Map either form to the matching `.down.sql` sibling.
@@ -111,12 +113,15 @@ jobs:
 
       - name: Re-apply (idempotency check)
         if: steps.detect.outputs.files != ''
+        env:
+          MIGRATION_FILES: ${{ steps.detect.outputs.files }}
         run: |
           set -e
-          for f in ${{ steps.detect.outputs.files }}; do
+          while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
             echo "==> Re-applying $f"
             psql -v ON_ERROR_STOP=1 -f "$f" 2>&1 | tee -a /tmp/migration-logs/reapply.log
-          done
+          done <<< "$MIGRATION_FILES"
 
       - name: Post failure log to PR
         if: failure()

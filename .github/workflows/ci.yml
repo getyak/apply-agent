@@ -97,6 +97,13 @@ jobs:
         working-directory: api
         run: bun install --frozen-lockfile
 
+      - name: Install résumé artifact renderers
+        working-directory: api
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc libreoffice-writer fonts-liberation fonts-noto-cjk
+          bunx playwright install --with-deps --only-shell chromium
+
       - name: Lint
         working-directory: api
         run: bun run lint
@@ -108,6 +115,10 @@ jobs:
       - name: Test
         working-directory: api
         run: NODE_ENV=test bun test --coverage
+
+      - name: Calibrate résumé artifacts with LibreOffice
+        working-directory: api
+        run: bun run calibrate:resume-artifacts:office
 
       - name: Upload coverage
         if: always()
@@ -157,6 +168,7 @@ jobs:
 
     env:
       DATABASE_URL: postgres://relay:relay@localhost:5433/relay_test
+      RELAY_PG_DSN: postgres://relay:relay@localhost:5433/relay_test
       REDIS_URL: redis://localhost:6380
       OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
       OPENROUTER_API_KEY: dummy-for-unit-tests

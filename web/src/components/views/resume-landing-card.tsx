@@ -70,6 +70,17 @@ function yearsOfExperience(
   return Math.max(0, Math.round(years));
 }
 
+function statedYearsOfExperience(summary: string | undefined): number | null {
+  if (!summary) return null;
+  const match =
+    /(?:^|\D)(\d{1,2})\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:professional\s+)?experience/i.exec(
+      summary,
+    ) ?? /(?:^|\D)(\d{1,2})\+?\s*年(?:以上)?(?:的)?(?:工作|专业)?经验/.exec(summary);
+  if (!match?.[1]) return null;
+  const years = Number(match[1]);
+  return Number.isFinite(years) && years >= 0 && years <= 60 ? years : null;
+}
+
 export function ResumeLandingCard() {
   const t = useTranslations("today.resumeLanding");
   const parsedResume = useVantage((s) => s.parsedResume);
@@ -146,7 +157,13 @@ export function ResumeLandingCard() {
     .filter((n): n is string => Boolean(n))
     .slice(0, 3);
   const latestRole = effectiveResume.work?.[0];
-  const years = yearsOfExperience(effectiveResume.work);
+  // Prefer the candidate's explicit statement over a date-derived estimate.
+  // Concurrent roles, career breaks, and month-less dates make subtraction
+  // inherently ambiguous; showing a computed "8 years" next to a résumé that
+  // says "5 years" damages trust.
+  const years =
+    statedYearsOfExperience(effectiveResume.basics?.summary) ??
+    yearsOfExperience(effectiveResume.work);
   const summary = effectiveResume.basics?.summary?.trim() ?? "";
 
   return (

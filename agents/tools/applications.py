@@ -56,11 +56,9 @@ _ALLOWED_STATUSES = {
     "offer",
     "rejected",
     "ghosted",
-    # "accepted" / "closed" are also recognised by the UI's status.ts → column
-    # mapping. Allow them so the agent can do "mark accepted" without us
-    # having to ship a router update first.
     "accepted",
     "closed",
+    "withdrawn",
 }
 
 
@@ -124,8 +122,8 @@ async def move_application(
     sets = ["status = %s"]
     params: list[Any] = [target_status]
     if target_status == "submitted":
-        sets.append("submitted_at = NOW()")
-        sets.append("submitted_via = %s")
+        sets.append("submitted_at = COALESCE(submitted_at, NOW())")
+        sets.append("submitted_via = COALESCE(submitted_via, %s)")
         params.append("client_extension")
     params.extend([str(application_id), str(user_id)])
 
@@ -138,6 +136,9 @@ async def move_application(
 
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT set_config('relay.application_event_source', 'agent_dock', true)"
+            )
             await cur.execute(sql, tuple(params))
             row = await cur.fetchone()
             await conn.commit()
@@ -180,6 +181,9 @@ async def update_application_outcome(
     """
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT set_config('relay.application_event_source', 'agent_dock', true)"
+            )
             await cur.execute(sql, (outcome or None, str(application_id), str(user_id)))
             row = await cur.fetchone()
             await conn.commit()

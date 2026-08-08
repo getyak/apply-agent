@@ -63,6 +63,19 @@ export const CustomizeResumeSchema = z.object({
   jobDescription: z.string().max(20_000).optional(),
 });
 
+// ── Career Graph ────────────────────────────────────────────────────────────
+
+export const ImportCareerGraphSchema = z.object({
+  resumeId: z.string().uuid(),
+  graphId: z.string().uuid().optional(),
+  graphLabel: z.string().trim().min(1).max(120).optional(),
+});
+
+export const DecideCareerGraphChangeSchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  confirmation: z.string().min(1).max(200),
+});
+
 // ── Applications ─────────────────────────────────────────────────────────────
 
 const APPLICATION_STATUSES = [
@@ -72,6 +85,10 @@ const APPLICATION_STATUSES = [
   "interview",
   "rejected",
   "offer",
+  "withdrawn",
+  "ghosted",
+  "accepted",
+  "closed",
 ] as const;
 export const ApplicationStatusSchema = z.enum(APPLICATION_STATUSES);
 
@@ -91,7 +108,10 @@ export const PrepareApplicationSchema = z.object({
 export const PrepareFromJDSchema = z.object({
   jdUrl: z.string().url(),
   formFields: z.array(z.record(z.string(), z.unknown())).optional(),
-  applicationId: z.string().uuid().optional(),
+  // Preparation enriches an existing, user-owned draft. Requiring its id
+  // keeps the workflow idempotent and gives every generated artifact a
+  // canonical persistence target before any LLM work begins.
+  applicationId: z.string().uuid(),
 });
 
 export const UpdateApplicationSchema = z
@@ -99,7 +119,7 @@ export const UpdateApplicationSchema = z
     status: ApplicationStatusSchema.optional(),
     coverLetter: z.string().optional(),
     formAnswers: z.record(z.string(), z.unknown()).optional(),
-    outcome: z.string().optional(),
+    outcome: z.string().trim().max(200).optional(),
     submittedVia: z.enum(SUBMIT_CHANNELS).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -169,6 +189,10 @@ export type CreateResume = z.infer<typeof CreateResumeSchema>;
 export type UpdateResume = z.infer<typeof UpdateResumeSchema>;
 export type ParseResume = z.infer<typeof ParseResumeSchema>;
 export type ParseResumeAsync = z.infer<typeof ParseResumeAsyncSchema>;
+export type ImportCareerGraph = z.infer<typeof ImportCareerGraphSchema>;
+export type DecideCareerGraphChange = z.infer<
+  typeof DecideCareerGraphChangeSchema
+>;
 export type PrepareApplication = z.infer<typeof PrepareApplicationSchema>;
 export type PrepareFromJD = z.infer<typeof PrepareFromJDSchema>;
 export type UpdateApplication = z.infer<typeof UpdateApplicationSchema>;

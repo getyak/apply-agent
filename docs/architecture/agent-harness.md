@@ -1,6 +1,7 @@
 # Agent Harness · LangGraph 执行框架
 
 > 可交互版本见 [`assets/agent-execution-deep-diagrams.html`](../assets/agent-execution-deep-diagrams.html)。
+> 可靠执行、幂等、对账和分类回退见 [`agent-recovery.md`](agent-recovery.md)。
 
 ## 设计理念
 
@@ -39,7 +40,7 @@
 |------|------|------|
 | ReAct 引擎 | LangGraph `create_react_agent` | 内置 ReAct 循环,5 个 agent 复用 |
 | 编排引擎 | LangGraph `StateGraph` | 固定 workflow 用显式 edge,对话式用 conditional edge |
-| LLM 接入 | `langchain_openai.ChatOpenAI` + OpenRouter | 通过 `base_url` 覆盖接入国产模型 |
+| LLM 接入 | `langchain_openrouter.ChatOpenRouter` | 使用 OpenRouter 原生 reasoning、provider routing 与结构化输出契约 |
 | HITL | LangGraph `interrupt()` + `Command(resume=...)` | 工具内动态断点,配合 checkpointer |
 | 持久化 | `langgraph-checkpoint-postgres` | 利用已有 PG (5433),支持 HITL resume |
 | 异步事件 | Redis Streams | 跨调用的异步事件触发（LangGraph 管单次调用内，Redis 管跨调用） |
@@ -60,12 +61,15 @@ LangGraph `create_react_agent` 内置 ReAct 循环（THINK → tool_use → OBSE
 
 ```python
 from langgraph.prebuilt import create_react_agent
-from langchain_openai import ChatOpenAI
+from langchain_openrouter import ChatOpenRouter
 
-model = ChatOpenAI(
+model = ChatOpenRouter(
     model="z-ai/glm-4.7",
     api_key=os.environ["OPENROUTER_API_KEY"],
     base_url=os.environ["OPENROUTER_BASE_URL"],
+    max_retries=0,  # durable retries are owned by harness/recovery.py
+    reasoning={"effort": "medium"},
+    openrouter_provider={"allow_fallbacks": True},
 )
 
 resume_agent = create_react_agent(
@@ -256,7 +260,7 @@ Dashboard 监控：成功率、延迟分布、成本趋势、错误模式。
 agents/
 ├── harness/                  # ── 自研封装层（基于 LangGraph）──
 │   ├── base.py              # BaseAgent: 包装 create_react_agent + 注入 hooks
-│   ├── llm.py               # ChatOpenRouter(ChatOpenAI): 模型选择/fallback/成本计算
+│   ├── llm.py               # ChatOpenRouter: 模型选择/fallback/reasoning/成本计算
 │   ├── checkpointer.py      # PostgresSaver 工厂(复用 PG 5433)
 │   ├── guards.py            # pre/post_model_hook: token/cost/error 计数 + 中止逻辑
 │   ├── permissions.py       # @requires_approval 装饰器 → 自动包裹 interrupt()
@@ -373,7 +377,13 @@ OpenRouter + 国产模型的 function calling 兼容性是最大风险。**MVP �
 # smoke_test.py — 在任何 agent 代码之前运行
 async def test_tool_calling():
     for model_id in ["deepseek/deepseek-v4-pro", "z-ai/glm-4.7", "deepseek/deepseek-v4-flash"]:
-        model = ChatOpenAI(model=model_id, base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
+        model = ChatOpenRouter(
+            model=model_id,
+            base_url=OPENROUTER_BASE_URL,
+            api_key=OPENROUTER_API_KEY,
+            max_retries=0,
+            openrouter_provider={"allow_fallbacks": True},
+        )
         agent = create_react_agent(model=model, tools=[dummy_tool])
         result = await agent.ainvoke({"messages": [("user", "Call the dummy_tool with arg='hello'")]})
         assert any(hasattr(m, "tool_calls") for m in result["messages"])

@@ -128,6 +128,7 @@ class PrepareApplicationState(TypedDict, total=False):
 
     # Inputs
     jd_url: str
+    jd_text: str
     base_resume_id: UUID
     base_resume_content: dict  # JSON Resume v1.0 dict
     base_resume_version: int

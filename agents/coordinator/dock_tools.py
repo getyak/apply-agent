@@ -734,9 +734,7 @@ async def trends_today() -> dict[str, Any]:
 
     top_skill = snapshot.skills[0]["skill"] if snapshot.skills else None
     lead_insight = snapshot.insights[0]["message"] if snapshot.insights else None
-    summary = (
-        f"Scanned {snapshot.total_jobs} live roles across {', '.join(snapshot.sources)}."
-    )
+    summary = f"Scanned {snapshot.total_jobs} live roles across {', '.join(snapshot.sources)}."
     if lead_insight:
         summary += f" Top actionable gap: {lead_insight}."
     elif top_skill:
@@ -814,10 +812,11 @@ async def recall_past_applications(limit: int = 10) -> dict[str, Any]:
 
         rows = await pg_query(
             """
-            SELECT company, role_title, status, updated_at
-            FROM application_drafts
-            WHERE user_id = %s
-            ORDER BY updated_at DESC NULLS LAST, created_at DESC
+            SELECT j.company, j.role_title, d.status, d.updated_at
+            FROM application_drafts AS d
+            JOIN jobs AS j ON j.id = d.job_id
+            WHERE d.user_id = %s
+            ORDER BY d.updated_at DESC NULLS LAST, d.created_at DESC
             LIMIT %s
             """,
             (str(user_id), limit),

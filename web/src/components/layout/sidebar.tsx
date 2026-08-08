@@ -16,6 +16,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Network,
 } from "lucide-react";
 import { useVantage } from "@/lib/store";
 import { useDock } from "@/lib/ask-vantage-store";
@@ -25,13 +26,21 @@ import { QuotaPanel } from "./quota-panel";
 
 // Ask Vantage is intentionally NOT in this nav anymore — the persistent dock
 // (mounted by AppLayout) is its sole surface, per vantage-ui-mapping.md §1.
-type NavId = "today" | "apps" | "interviews" | "builder" | "mock" | "settings";
+type NavId =
+  | "today"
+  | "apps"
+  | "interviews"
+  | "builder"
+  | "careerGraph"
+  | "mock"
+  | "settings";
 
 const ROUTES: Record<NavId, string> = {
   today: "/app/today",
   apps: "/app/applications",
   interviews: "/app/applications",
   builder: "/app/studio/resume",
+  careerGraph: "/app/studio/career-graph",
   mock: "/app/studio/mock",
   settings: "/app/settings",
 };
@@ -132,6 +141,7 @@ export function Sidebar() {
     if (id === "today") return pathname === "/app/today";
     if (id === "apps") return pathname === "/app/applications";
     if (id === "builder") return pathname === "/app/studio/resume" || pathname === "/app/resume";
+    if (id === "careerGraph") return pathname === "/app/studio/career-graph";
     if (id === "mock") return pathname === "/app/studio/mock";
     if (id === "settings") return pathname === "/app/settings";
     return false;
@@ -178,10 +188,40 @@ export function Sidebar() {
   };
 
   return (
-    <aside
+    <>
+      <nav
+        className="fixed inset-x-0 bottom-0 z-30 grid h-[72px] grid-cols-6 border-t border-border bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+        aria-label={t("workspace")}
+      >
+        {[
+          { id: "today" as const, icon: Home, label: t("today") },
+          { id: "apps" as const, icon: LayoutGrid, label: t("applications") },
+          { id: "builder" as const, icon: FileText, label: t("resumeStudio") },
+          { id: "careerGraph" as const, icon: Network, label: t("careerGraph") },
+          { id: "mock" as const, icon: MessageSquare, label: t("mock") },
+          { id: "settings" as const, icon: Settings, label: t("settings") },
+        ].map(({ id, icon: Icon, label }) => (
+          <Link
+            key={id}
+            href={ROUTES[id]}
+            onClick={() => onNavClick(id)}
+            aria-current={active(id) ? "page" : undefined}
+            className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[9px] px-0.5 text-center no-underline ${
+              active(id) ? "text-brown" : "text-ink-muted"
+            }`}
+          >
+            <Icon className="h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden="true" />
+            <span className="w-full truncate font-body text-[9px] font-medium leading-none">
+              {label}
+            </span>
+          </Link>
+        ))}
+      </nav>
+
+      <aside
       className={`width-ease ${
         collapsed ? "w-[74px] px-2" : "w-[248px] px-4"
-      } shrink-0 bg-white border-r border-border flex flex-col py-[22px]`}
+      } hidden shrink-0 bg-white border-r border-border md:flex flex-col py-[22px]`}
     >
       {/* Brand mark — also the "home" affordance. Clicking it routes to
           /app/today (the highest-signal landing screen — see app/page.tsx)
@@ -383,6 +423,17 @@ export function Sidebar() {
           );
         })()}
         <Link
+          href={ROUTES.careerGraph}
+          className={navItem(active("careerGraph"))}
+          onClick={() => onNavClick("careerGraph")}
+          title={collapsed ? t("careerGraph") : undefined}
+          aria-current={active("careerGraph") ? "page" : undefined}
+          data-active={active("careerGraph") ? "true" : undefined}
+        >
+          <Network data-nav-icon className="w-[18px] h-[18px] shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          {!collapsed && <span>{t("careerGraph")}</span>}
+        </Link>
+        <Link
           href={ROUTES.mock}
           className={navItem(active("mock"))}
           onClick={() => onNavClick("mock")}
@@ -458,6 +509,7 @@ export function Sidebar() {
           </button>
         )}
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -15,6 +15,7 @@ import type { AppEnv } from "./types";
 import authRoutes from "./routes/auth";
 import resumeRoutes from "./routes/resumes";
 import publicResumeRoutes from "./routes/public-resumes";
+import artifactDeliveryRoutes from "./routes/artifact-deliveries";
 import jobRoutes from "./routes/jobs";
 import applicationRoutes from "./routes/applications";
 import interviewRoutes from "./routes/interviews";
@@ -26,6 +27,10 @@ import userRoutes from "./routes/users";
 import askRoutes from "./routes/ask";
 import slashRoutes from "./routes/slash";
 import todayRoutes from "./routes/today";
+import mcpOAuthRoutes from "./routes/mcp-oauth";
+import careerGraphRoutes from "./routes/career-graphs";
+import operationRoutes from "./routes/operations";
+import { RESUME_ARTIFACT_AUDIT_HEADER_NAMES } from "./resume-artifact-profile";
 
 const app = new Hono<AppEnv>();
 
@@ -43,14 +48,34 @@ app.use(
     // Echo back only allowlisted web origins + the browser extension scheme.
     origin: (origin) => resolveCorsOrigin(origin) ?? "",
     credentials: true,
+    exposeHeaders: [
+      "Content-Disposition",
+      "X-Relay-Artifact-Compilation-Id",
+      "X-Relay-Artifact-Application-Id",
+      "X-Relay-Artifact-Purpose",
+      ...RESUME_ARTIFACT_AUDIT_HEADER_NAMES,
+    ],
   }),
 );
 
 app.route("/api/auth", authRoutes);
+// OAuth consent bridge for the remote Career Graph MCP. The Python MCP
+// service owns the OAuth protocol; this authenticated Hono route binds a
+// pending PKCE request to the signed-in Relay user through shared PostgreSQL.
+app.route("/api/mcp-oauth", mcpOAuthRoutes);
 app.route("/api/resumes", resumeRoutes);
+// Career Graph logic stays in the Python agent layer; Hono only verifies the
+// Relay JWT and proxies the owner identity over the established HTTP boundary.
+app.route("/api/career-graphs", careerGraphRoutes);
+app.route("/api/operations", operationRoutes);
 // Public résumé share links — NO auth. The token (16-byte hex) IS the
 // capability. See routes/public-resumes.ts for the security posture.
 app.route("/api/public/r", publicResumeRoutes);
+// Short-lived application-bound file delivery. The secret enters through a
+// POST body, moves to a path-scoped HttpOnly cookie for Chrome's download
+// manager, and is stored in PostgreSQL only as a digest; no public résumé
+// publish token or Relay login cookie is required.
+app.route("/api/public/artifacts", artifactDeliveryRoutes);
 app.route("/api/jobs", jobRoutes);
 app.route("/api/applications", applicationRoutes);
 app.route("/api/interviews", interviewRoutes);

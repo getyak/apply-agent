@@ -22,6 +22,7 @@ a crashed agent crashes the whole prepare.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -111,7 +112,10 @@ async def generate_cover_letter(
             # fell to the template letter with `fallback=True`. Opt out
             # of the reasoning passthrough so JSON lands in .content.
             model = pick_model(
-                "general", temperature=0.5, max_tokens=2048, reasoning_effort=None
+                "general",
+                temperature=0.5,
+                max_tokens=2048,
+                reasoning_effort=None,
             )
         except RuntimeError as exc:
             log.warning("appprep.cover.no_llm_key", error=str(exc))
@@ -195,7 +199,12 @@ async def refine_cover_letter(
             )
 
         try:
-            model = pick_model("general", temperature=0.5, max_tokens=2048)
+            model = pick_model(
+                "general",
+                temperature=0.5,
+                max_tokens=2048,
+                reasoning_effort=None,
+            )
         except RuntimeError as exc:
             log.warning("appprep.refine_cover.no_llm_key", error=str(exc))
             return CoverLetter(
@@ -294,6 +303,20 @@ def _template_cover_letter(
     )
 
 
+def template_cover_letter(
+    *,
+    base_resume: dict[str, Any],
+    company: str,
+    role_title: str,
+) -> CoverLetter:
+    """Public deterministic fallback for workflow time budgets."""
+    return _template_cover_letter(
+        role_title,
+        company,
+        _candidate_name(base_resume) or "Candidate",
+    )
+
+
 # ─── form answers ──────────────────────────────────────────────────────
 
 
@@ -310,6 +333,7 @@ SENSITIVE_TOKENS = (
     "ethnicity",
     "gender",
     "gender identity",  # round-13: Workday EEO panel uses this exact label
+    "pronoun",
     "sex",  # round-13: covers "legal sex", "sex assigned at birth"
     "disability",
     "veteran",
@@ -355,26 +379,45 @@ async def generate_form_answers(
         prepped: list[FormFieldAnswer] = []
         ask_llm: list[dict[str, Any]] = []
         for f in fields:
-            label = (f.get("label") or "").lower()
-            if any(token in label for token in SENSITIVE_TOKENS):
+            field_haystack = _field_haystack(f)
+            if any(token in field_haystack for token in SENSITIVE_TOKENS):
                 prepped.append(
                     FormFieldAnswer(
-                        id=str(f.get("id") or label or "unknown"),
+                        id=str(f.get("id") or f.get("label") or "unknown"),
                         answer=None,
                         skip=True,
                         reason="sensitive_field_user_decides",
                         confidence=1.0,
                     )
                 )
-            else:
-                ask_llm.append(f)
+                continue
+
+            # Identity/profile fields sometimes reach the cloud endpoint under
+            # ATS-generated ids (for example ``question_12074263004`` for
+            # "LinkedIn Profile"), so the browser's id-based local mapper
+            # cannot recognize them. Resolve those mechanically from the
+            # résumé before involving the LLM. Besides being faster and
+            # cheaper, this remains useful when the provider returns an empty
+            # completion and guarantees that every emitted value has a direct
+            # source in the user's own résumé.
+            grounded = _grounded_profile_answer(f, tailored_resume)
+            if grounded is not None:
+                prepped.append(grounded)
+                continue
+
+            ask_llm.append(f)
 
         if not ask_llm:
             return prepped
 
         # 2. Try the LLM for the rest.
         try:
-            model = pick_model("fast", temperature=0.2, max_tokens=2048)
+            model = pick_model(
+                "fast",
+                temperature=0.2,
+                max_tokens=2048,
+                reasoning_effort=None,
+            )
         except RuntimeError as exc:
             log.warning("appprep.form.no_llm_key", error=str(exc))
             return prepped + [_skip(f, reason="no_llm_key") for f in ask_llm]
@@ -427,6 +470,120 @@ def _skip(field: dict[str, Any], *, reason: str) -> FormFieldAnswer:
         reason=reason,
         confidence=0.0,
     )
+
+
+def _grounded_profile_answer(
+    field: dict[str, Any], resume: dict[str, Any]
+) -> FormFieldAnswer | None:
+    """Map an identity/profile field directly to a résumé value.
+
+    Only exact, non-inferential profile facts are eligible. Open questions,
+    legal/work-authorization questions, select/radio fields, and résumé text
+    uploads deliberately fall through to the LLM/manual path.
+    """
+    field_type = str(field.get("type") or "text").lower()
+    if field_type not in {"text", "email", "tel", "url"}:
+        return None
+
+    fid = str(field.get("id") or "")
+    haystack = _field_haystack(field)
+    basics = resume.get("basics")
+    if not isinstance(basics, dict):
+        return None
+
+    name = _nonempty_string(basics.get("name"))
+    name_parts = name.split() if name else []
+    email = _nonempty_string(basics.get("email"))
+    phone = _nonempty_string(basics.get("phone"))
+
+    value: str | None = None
+    reason = "grounded_resume_field"
+    confidence = 1.0
+    if re.search(r"\bpreferred[ _-]*name\b", haystack):
+        value = _nonempty_string(basics.get("preferredName"))
+        if value is None:
+            return FormFieldAnswer(
+                id=fid or str(field.get("label") or "unknown"),
+                answer=None,
+                skip=True,
+                reason="user_identity_input_required",
+                confidence=0.0,
+            )
+    elif re.search(r"\b(?:first|given|forename)[ _-]*name\b", haystack):
+        value = _nonempty_string(basics.get("firstName"))
+        if value is None and name_parts:
+            value = name_parts[0]
+            reason = "derived_resume_name"
+            confidence = 0.7
+    elif re.search(r"\b(?:last|family|sur)[ _-]*name\b", haystack):
+        value = _nonempty_string(basics.get("lastName"))
+        if value is None and len(name_parts) > 1:
+            value = name_parts[-1]
+            reason = "derived_resume_name"
+            confidence = 0.7
+    elif re.search(r"\b(?:full|legal)[ _-]*name\b", haystack) or fid.lower() == "name":
+        value = name
+    elif re.search(r"\be[- _]?mail\b", haystack):
+        value = email
+    elif re.search(r"\b(?:phone|mobile|telephone|cell)\b", haystack):
+        value = phone
+    elif "linkedin" in haystack:
+        value = _profile_url(basics, "linkedin")
+    elif "github" in haystack:
+        value = _profile_url(basics, "github")
+    elif re.search(r"\b(?:portfolio|personal site|website|homepage)\b", haystack):
+        value = _profile_url(basics, "portfolio") or _nonempty_string(basics.get("url"))
+    elif re.search(r"\b(?:current location|home location|location|city)\b", haystack):
+        value = _formatted_location(basics.get("location"))
+
+    if value is None:
+        return None
+    return FormFieldAnswer(
+        id=fid or str(field.get("label") or "unknown"),
+        answer=value,
+        skip=False,
+        reason=reason,
+        confidence=confidence,
+    )
+
+
+def _field_haystack(field: dict[str, Any]) -> str:
+    """Normalize every browser-visible/semantic field hint for policy checks."""
+    return " ".join(
+        str(field.get(key) or "") for key in ("id", "name", "label", "placeholder", "selector")
+    ).lower()
+
+
+def _nonempty_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _profile_url(basics: dict[str, Any], network: str) -> str | None:
+    profiles = basics.get("profiles")
+    if not isinstance(profiles, list):
+        return None
+    wanted = network.lower()
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        label = str(profile.get("network") or "").lower()
+        url = _nonempty_string(profile.get("url"))
+        if url and wanted in label:
+            return url
+    return None
+
+
+def _formatted_location(value: Any) -> str | None:
+    if isinstance(value, str):
+        return _nonempty_string(value)
+    if not isinstance(value, dict):
+        return None
+    parts = [_nonempty_string(value.get(key)) for key in ("city", "region", "countryCode")]
+    rendered = ", ".join(part for part in parts if part)
+    return rendered or None
 
 
 def _clean_answer(val: Any) -> str | None:

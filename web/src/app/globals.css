@@ -3450,3 +3450,49 @@ html[data-idle="true"] .footer-hearth.revealed {
   .footer-hearth { animation: none !important; opacity: 1 !important; transform: translateX(-50%) !important; filter: none !important; }
   .reveal-ready .footer-hearth:not(.revealed) { opacity: 1 !important; transform: translateX(-50%) !important; }
 }
+@media (max-width: 767px) {
+  .vantage-dock-launcher {
+    bottom: 82px !important;
+    right: 12px !important;
+    width: 52px !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    padding: 0 !important;
+    border-radius: 18px !important;
+  }
+
+  .vantage-dock-launcher-label {
+    display: none !important;
+  }
+
+  .vantage-dock-full .vantage-dock-header {
+    height: 58px !important;
+    gap: 8px !important;
+    padding: 0 10px !important;
+  }
+
+  .vantage-dock-full .vantage-dock-new-session,
+  .vantage-dock-full .vantage-dock-full-toggle,
+  .vantage-dock-full .vantage-dock-recent-rail,
+  .vantage-dock-full .vantage-dock-exit-hint {
+    display: none !important;
+  }
+
+  .vantage-dock-full .vantage-dock-exit-full {
+    padding: 7px 10px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .vantage-dock-full .vantage-dock-exit-label {
+    font-size: 12px !important;
+  }
+
+  .vantage-dock-full .vantage-dock-conversation {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .vantage-dock-full .vantage-dock-scroll {
+    padding: 18px 16px !important;
+  }
+}

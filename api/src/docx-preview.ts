@@ -12,9 +12,10 @@
 // one byte stream), a cache hit is permanent — we never reconvert the same id.
 
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** Candidate LibreOffice binaries, in preference order. */
 const SOFFICE_BINS = ["soffice", "libreoffice"];
@@ -57,18 +58,33 @@ export async function convertDocxToPdf(docx: Uint8Array): Promise<Uint8Array | n
   const dir = await mkdtemp(join(tmpdir(), "relay-docx-"));
   try {
     const inPath = join(dir, "in.docx");
+    const profileDir = join(dir, "libreoffice-profile");
+    await mkdir(profileDir);
     await writeFile(inPath, docx);
     const ok = await new Promise<boolean>((resolve) => {
       const p = spawn(
         bin,
-        ["--headless", "--convert-to", "pdf", "--outdir", dir, inPath],
-        { stdio: "ignore" },
+        [
+          "--headless",
+          `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
+          "--convert-to",
+          "pdf",
+          "--outdir",
+          dir,
+          inPath,
+        ],
+        {
+          stdio: "ignore",
+          // LibreOffice otherwise reuses the process user's shared profile.
+          // A request-local HOME/TMPDIR keeps concurrent conversions isolated.
+          env: { ...process.env, HOME: dir, TMPDIR: dir },
+        },
       );
       // Hard timeout so a wedged LibreOffice never hangs the request.
       const timer = setTimeout(() => {
         p.kill("SIGKILL");
         resolve(false);
-      }, 20_000);
+      }, 30_000);
       p.on("error", () => {
         clearTimeout(timer);
         resolve(false);

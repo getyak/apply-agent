@@ -8,11 +8,19 @@ by integration tests, not here.
 
 from __future__ import annotations
 
+import json
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+
+from agents.nodes import resume_agent
 from agents.nodes.resume_agent import (
     _apply_suggestions_to_parsed,
     _find_bullet,
     _validate_suggestions,
     assign_bullet_ids,
+    change_log_guard,
 )
 
 BASE = {
@@ -148,3 +156,124 @@ def test_apply_suggestions_summary_section() -> None:
     ]
     out = _apply_suggestions_to_parsed(BASE, suggestions)
     assert out["basics"]["summary"] == "API engineer, 5 years."
+
+
+def test_change_log_guard_marks_non_string_model_fields_unsupported() -> None:
+    out = change_log_guard(
+        BASE,
+        [
+            {
+                "change_type": "tighten",
+                "after": {"unexpected": "object"},
+                "source_evidence": ["also", "wrong"],
+            }
+        ],
+    )
+    assert out[0]["risk"] == "unsupported"
+
+
+async def test_customize_retries_invalid_output_and_never_saves_empty_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    tiers: list[str] = []
+
+    async def invalid_generation(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        tiers.append(_kwargs["tier"])
+        return {"tailored": {}, "change_log": []}
+
+    save = AsyncMock()
+    cache_write = AsyncMock()
+    monkeypatch.delenv("RELAY_PG_DSN", raising=False)
+    monkeypatch.setattr(resume_agent, "_generate_tailored", invalid_generation)
+    monkeypatch.setattr(resume_agent, "redis_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(resume_agent, "redis_setex", cache_write)
+    monkeypatch.setattr(resume_agent, "save_resume_version", save)
+    monkeypatch.setattr(resume_agent, "publish", AsyncMock())
+
+    result = await resume_agent.customize(
+        base_resume=BASE,
+        jd_text="Senior API engineer",
+        user_id=uuid4(),
+        base_version=1,
+        base_id=uuid4(),
+        job_id=uuid4(),
+    )
+
+    assert result == {
+        "ok": False,
+        "reason": "invalid_model_output",
+        "fabricated": [],
+    }
+    assert attempts == 3
+    assert tiers == ["general", "heavy", "fast"]
+    save.assert_not_awaited()
+    cache_write.assert_not_awaited()
+
+
+async def test_customize_caches_only_final_guard_clean_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fabricated = {
+        "tailored": {
+            **BASE,
+            "work": [
+                {
+                    **BASE["work"][0],
+                    "name": "FakeCorp Industries",
+                }
+            ],
+        },
+        "change_log": [],
+    }
+    clean = {"tailored": BASE, "change_log": []}
+    generate = AsyncMock(side_effect=[fabricated, clean])
+    cache_write = AsyncMock(return_value=True)
+
+    monkeypatch.delenv("RELAY_PG_DSN", raising=False)
+    monkeypatch.setattr(resume_agent, "_generate_tailored_with_retries", generate)
+    monkeypatch.setattr(resume_agent, "redis_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(resume_agent, "redis_setex", cache_write)
+    monkeypatch.setattr(
+        resume_agent,
+        "save_resume_version",
+        AsyncMock(return_value=(uuid4(), 2)),
+    )
+    monkeypatch.setattr(resume_agent, "publish", AsyncMock())
+
+    result = await resume_agent.customize(
+        base_resume=BASE,
+        jd_text="Senior API engineer",
+        user_id=uuid4(),
+        base_version=1,
+        base_id=uuid4(),
+        job_id=uuid4(),
+    )
+
+    assert result["ok"] is True
+    assert generate.await_count == 2
+    cache_write.assert_awaited_once()
+    cached_json = cache_write.await_args.args[2]
+    assert "FakeCorp" not in cached_json
+    assert json.loads(cached_json)["tailored"] == BASE
+
+
+async def test_tailored_generation_falls_back_after_model_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tiers: list[str] = []
+
+    async def flaky_generation(*_args, **kwargs):
+        tiers.append(kwargs["tier"])
+        if kwargs["tier"] == "general":
+            raise TimeoutError("provider timed out")
+        return {"tailored": BASE, "change_log": []}
+
+    monkeypatch.setattr(resume_agent, "_generate_tailored", flaky_generation)
+
+    result = await resume_agent._generate_tailored_with_retries(BASE, "API engineer")
+
+    assert result == {"tailored": BASE, "change_log": []}
+    assert tiers == ["general", "heavy"]

@@ -10,7 +10,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+  buildAskRequestBody,
   hydrateFromHistory,
+  toUserFacingStreamError,
   useAgentStream,
   type HistoryRow,
 } from "../store";
@@ -163,5 +165,25 @@ describe("sendAsk no-reset contract", () => {
     expect(step("history:h1")).toBeDefined();
     expect(useAgentStream.getState().isStreaming).toBe(true);
     newCtrl.abort();
+  });
+});
+
+describe("Ask request contract", () => {
+  it("uses FastAPI's message field and keeps routing metadata explicit", () => {
+    expect(
+      buildAskRequestBody("list my applications", "ask_vantage:user-1", "applications"),
+    ).toEqual({
+      message: "list my applications",
+      thread_id: "ask_vantage:user-1",
+      surface: "applications",
+    });
+  });
+
+  it("does not expose schema parser internals to the timeline", () => {
+    const copy = toUserFacingStreamError(
+      new Error("invalid_union_discriminator: missing type"),
+    );
+    expect(copy).not.toContain("invalid_union");
+    expect(copy).not.toContain("discriminator");
   });
 });

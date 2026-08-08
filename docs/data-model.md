@@ -51,6 +51,7 @@ ApplicationDraft {
   user_id       UUID,
   job_id        UUID,
   status        TEXT,     -- draft | review | submitted | interview | rejected | offer
+                              | withdrawn | ghosted | accepted | closed
   resume_version UUID,
   cover_letter  TEXT,
   form_answers  JSONB,
@@ -60,6 +61,110 @@ ApplicationDraft {
   interview_date DATE
 }
 ```
+
+### ApplicationOutcomeEvent
+```sql
+ApplicationOutcomeEvent {
+  id                  UUID PRIMARY KEY,
+  user_id             UUID,
+  application_id      UUID,
+  event_kind          TEXT,       -- baseline | created | changed
+  event_source        TEXT,       -- web_api | browser_extension | codex_mcp_*
+  changed_fields      TEXT[],
+  from_status         TEXT,
+  to_status           TEXT,
+  from_outcome        TEXT,
+  to_outcome          TEXT,
+  submitted_at        TIMESTAMP,
+  submitted_via       TEXT,
+  interview_date      DATE,
+  resume_version_id   UUID,
+  job_id              UUID,
+  occurred_at         TIMESTAMP
+}
+```
+
+`application_drafts` remains the current kanban projection. Database triggers
+append every lifecycle mutation to `application_outcome_events`, including
+writes from the API, Agent, MCP, and browser extension. Direct event
+update/delete is rejected; parent account/application deletion can still
+cascade for privacy deletion. Career Graph feedback uses the furthest observed
+stage, never silently classifies free-text outcomes, and labels small cohorts
+as insufficient rather than causal evidence.
+
+### ApplicationQuestionnaire
+```sql
+ApplicationQuestionnaire {
+  id                UUID PRIMARY KEY,
+  user_id           UUID,
+  application_id    UUID,
+  compilation_id    UUID,
+  revision          INT,
+  status            TEXT,       -- draft | approved | rejected
+  job_identity      JSONB,      -- expected/observed company, title, ATS id
+  fields            JSONB,      -- fill/manual/skip, answer, sensitivity, evidence
+  summary           JSONB,
+  created_at        TIMESTAMP,
+  reviewed_at       TIMESTAMP,
+  approval_source   TEXT        -- codex_mcp_exact_confirmation
+}
+```
+
+This versioned artifact is the review boundary between browser inspection and
+browser filling. Fill answers require a verified reference to the approved
+résumé, approved Career Graph revision, or a current user response. The server
+forces legal, immigration, compensation, and demographic questions into the
+sensitive path even if a caller marks them otherwise. A partial unique index
+allows only one draft per application. This table deliberately does not reuse
+legacy `application_drafts.form_answers`, whose shape belongs to the
+Coordinator workflow.
+
+### ApplicationSubmissionAuthorization
+```sql
+ApplicationSubmissionAuthorization {
+  id                           UUID PRIMARY KEY,
+  user_id                      UUID,
+  application_id               UUID,
+  compilation_id               UUID,
+  expected_job_url_fingerprint TEXT, -- SHA-256 only
+  observed_url_fingerprint     TEXT, -- SHA-256 only
+  confirmation_digest          TEXT, -- SHA-256 only
+  authorization_source         TEXT, -- codex_mcp_exact_confirmation
+  authorized_at                TIMESTAMP,
+  expires_at                   TIMESTAMP,
+  consumed_at                  TIMESTAMP,
+  invalidated_at               TIMESTAMP
+}
+```
+
+This is not a submission capability. It records an owner-confirmed,
+application-bound authorization immediately before one final click in the
+user's browser. A receipt expires after five minutes; a replacement or a new
+questionnaire revision invalidates the prior unused receipt, and only the first
+`codex_mcp_browser_confirmation` transition to `submitted` can atomically
+consume it. The raw URL and confirmation phrase are never stored. User-reported
+manual progress and non-MCP writers remain separate evidence paths.
+
+### CareerGraphPublicationEvent
+```sql
+CareerGraphPublicationEvent {
+  id                    UUID PRIMARY KEY,
+  user_id               UUID,
+  graph_id              UUID,
+  event_kind            TEXT,       -- baseline | published | updated | revoked
+  event_source          TEXT,       -- migration_backfill | codex_mcp_*
+  from_compilation_id   UUID,
+  to_compilation_id     UUID,
+  public_token_digest   TEXT,       -- SHA-256 only; never the bearer token
+  occurred_at           TIMESTAMP
+}
+```
+
+Career Graph public updates transfer the same `resumes.publish_token` from an
+old immutable compilation artifact to a different, separately approved
+compilation in one transaction. The public URL therefore remains stable while
+the event table records the version transition. Revocation clears the active
+token but preserves the compilation and append-only history.
 
 ### InterviewSession + InterviewQuestion ⭐(数据飞轮核心)
 ```sql

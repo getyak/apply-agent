@@ -26,7 +26,7 @@ import json
 import os  # noqa: E402
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, NoReturn
 from uuid import UUID, uuid4
 
 from dotenv import load_dotenv
@@ -37,7 +37,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 # Why: when the developer's shell exports `all_proxy=socks5://...` (common on
 # macOS with Clash / Surge / V2Ray), httpx auto-discovers it and tries to
 # build a SOCKS transport — which requires the optional `socksio` package.
-# Without socksio, `ChatOpenAI(...)` raises ImportError at construction time
+# Without socksio, the chat-model client raises ImportError at construction time
 # and the Bun gateway surfaces it as "Vantage's reasoning engine returned an
 # error". OpenRouter is on the public internet via HTTPS; the dev's local
 # proxy must not sit between agents and OpenRouter. Honor an explicit
@@ -63,39 +63,25 @@ from pydantic import BaseModel, Field, field_validator  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from agents.api.deps import UserDep  # noqa: E402
+from agents.career_graph import store as career_graph_store  # noqa: E402
+from agents.career_graph.model import GraphValidationError  # noqa: E402
+from agents.career_graph.store import (  # noqa: E402
+    CareerGraphConflictError,
+    CareerGraphNotFoundError,
+    CareerGraphStateError,
+)
 from agents.coordinator.router import (  # noqa: E402
-    cheap_intent_classifier,
     classify_intent,
     dispatch,
     persist_turn,
 )
 from agents.coordinator.workflows import build_from_scratch_graph  # noqa: E402
 
-# Sprint 1 of docs/design/chat-agent-system-redesign.md: when the env flag is
-# set, the LLM-fallback branch of /ask/stream is delegated to the new Dock
-# ReAct agent (P0-A). The regex fast path stays as-is so confident command-
-# like prompts ("list applications", "mock me on Stripe") never pay the
-# main-loop LLM tax.
-#
-# Default is now ON. The legacy path emits `event: thinking/intent/result/done`
-# SSE frames that the AG-UI consumer (web/src/lib/agent-events/consumer.ts,
-# transformHttpEventStream) cannot parse — they are silently dropped and the
-# dock UI renders nothing for agent reasoning/tool/narrator/plan. Setting
-# RELAY_DOCK_REACT=0 explicitly restores the legacy vocabulary for tests that
-# still rely on it.
+# The native AG-UI Dock loop is the production path. RELAY_DOCK_REACT=0 only
+# exists as a temporary compatibility switch for legacy integration tests.
+# Never mix the old `thinking/intent/result/done` vocabulary into an AG-UI
+# response: @ag-ui/client rejects those frames as schema-invalid.
 _DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "1") == "1"
-# Threshold for skipping the dock and going straight to dispatch on a cheap
-# regex hit.
-#
-# P3-1 fix: lowered default from 0.95 → 0.85. The earlier audit found that
-# turning _DOCK_REACT_ENABLED on with a 0.95 cutoff silently lost 5 intents
-# (analyze_resume / optimize_resume / map_career_moves / surface_roles /
-# list_resume_versions) whose regex confidences sit in 0.85–0.92 — they
-# wouldn't fast-path AND they have no dock_tool wrapper, so they fell into
-# the dock LLM as free-form turns. 0.85 matches router.REGEX_ACCEPT_THRESHOLD,
-# so every regex-confident intent now goes straight to dispatch via the same
-# rule. Override with RELAY_DOCK_FAST_PATH to be stricter / looser per env.
-_DOCK_REGEX_FAST_PATH_THRESHOLD = float(os.environ.get("RELAY_DOCK_FAST_PATH", "0.85"))
 from agents.harness.audit import redact_exception_text  # noqa: E402
 from agents.harness.checkpointer import (  # noqa: E402
     ask_vantage_thread_id,
@@ -681,43 +667,11 @@ async def ask_stream(
                 yield chunk
             return
 
-        # Dock ReAct branch (P0-A): when the env flag is set and the cheap
-        # regex isn't sure enough to fast-path, delegate the whole turn to
-        # the Dock agent. The dock now streams native AG-UI frames (RUN_STARTED
-        # … RUN_FINISHED) — no legacy thinking/done wrapper.
+        # Dock ReAct branch (P0-A): every production turn goes through the
+        # native AG-UI loop. The former high-confidence regex shortcut emitted
+        # legacy SSE frames inside this branch, which made clear commands such
+        # as "list my applications" fail client-side parsing.
         if _DOCK_REACT_ENABLED:
-            cheap = cheap_intent_classifier(payload.message)
-            if cheap and cheap.confidence >= _DOCK_REGEX_FAST_PATH_THRESHOLD:
-                # Fast path: emit an intent frame + dispatch directly, just
-                # like the legacy router would. Skips the dock loop entirely.
-                # Still on the legacy SSE vocabulary (behind RELAY_DOCK_REACT,
-                # default off); the web AG-UI client only sees this once the
-                # fast path is migrated in a follow-up.
-                yield _sse({"event": "thinking", "agent": "coordinator"})
-                yield _sse(
-                    {
-                        "event": "intent",
-                        "intent": cheap.intent,
-                        "confidence": cheap.confidence,
-                        "via": "regex_fast_path",
-                        "args": cheap.args,
-                    }
-                )
-                async for chunk in _dispatch_and_persist(
-                    intent=cheap,
-                    user_id=user_id,
-                    message=payload.message,
-                    thread_id=thread_id,
-                    surface=surface,
-                    locale=locale,
-                    trace_id=trace_id,
-                    request_id=req_id,
-                ):
-                    yield chunk
-                yield _sse({"event": "done"})
-                return
-
-            # Main-loop dock path — emits native AG-UI frames.
             async for chunk in _stream_dock_turn(
                 message=payload.message,
                 user_id=user_id,
@@ -766,7 +720,9 @@ async def ask_stream(
     # persistence substrate is unavailable, ``resume_enabled()`` is False
     # and this branch degrades to the pre-021 pipeline (fresh stream).
     header_cursor = last_event_id_from_headers(request.headers)
-    body_cursor = payload.last_event_id if payload.last_event_id and payload.last_event_id > 0 else None
+    body_cursor = (
+        payload.last_event_id if payload.last_event_id and payload.last_event_id > 0 else None
+    )
     cursor = header_cursor or body_cursor
     if cursor is not None and cursor > 0 and resume_enabled():
         log.info(
@@ -1449,17 +1405,152 @@ async def resume_propose_bullet_edit(
 
 
 # ───────────────────────────────────────────────────────────────────────
+# Career Graph — Web review gate over the canonical Python store
+# ───────────────────────────────────────────────────────────────────────
+
+
+class CareerGraphImportPayload(BaseModel):
+    resume_id: UUID
+    graph_id: UUID | None = None
+    graph_label: str = Field(default="Career Graph", min_length=1, max_length=120)
+
+    @field_validator("graph_label")
+    @classmethod
+    def normalize_graph_label(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("graph_label must not be blank")
+        return normalized
+
+
+class CareerGraphDecisionPayload(BaseModel):
+    decision: Literal["approve", "reject"]
+    confirmation: str = Field(min_length=1, max_length=200)
+
+
+def _raise_career_graph_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, CareerGraphNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, CareerGraphConflictError | CareerGraphStateError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, GraphValidationError):
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "career_graph_validation_failed", "errors": exc.errors},
+        ) from exc
+    raise exc
+
+
+@app.get("/career-graphs")
+async def career_graph_overview(user_id: UserDep) -> dict[str, Any]:
+    """Return the signed-in user's graphs, import sources, and pending reviews."""
+
+    try:
+        graphs = await career_graph_store.list_graphs(user_id)
+        source_resumes = await career_graph_store.list_source_resumes(user_id)
+        pending_changes = await career_graph_store.list_change_sets(user_id)
+    except Exception as exc:  # noqa: BLE001 — translate domain errors at HTTP boundary
+        _raise_career_graph_error(exc)
+    return {
+        "graphs": graphs,
+        "source_resumes": source_resumes,
+        "pending_changes": pending_changes,
+        "review_gate": {
+            "proposal_changes_approved_graph": False,
+            "exact_confirmation_required": True,
+        },
+    }
+
+
+@app.post("/career-graphs/import")
+async def career_graph_import(
+    payload: CareerGraphImportPayload,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    """Turn a parsed PDF/DOCX/JSON résumé row into a pending graph proposal."""
+
+    try:
+        return await career_graph_store.propose_resume_import(
+            user_id,
+            payload.resume_id,
+            graph_id=payload.graph_id,
+            graph_label=payload.graph_label,
+        )
+    except Exception as exc:  # noqa: BLE001 — translate domain errors at HTTP boundary
+        _raise_career_graph_error(exc)
+
+
+@app.get("/career-graph-changes/{change_set_id}")
+async def career_graph_change(
+    change_set_id: UUID,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    change = await career_graph_store.get_change_set(user_id, change_set_id)
+    if not change:
+        raise HTTPException(status_code=404, detail="Career Graph change set not found")
+    return {"change": change}
+
+
+@app.post("/career-graph-changes/{change_set_id}/decision")
+async def career_graph_change_decision(
+    change_set_id: UUID,
+    payload: CareerGraphDecisionPayload,
+    user_id: UserDep,
+) -> dict[str, Any]:
+    """Approve/reject only after the Web user retypes the per-change phrase."""
+
+    verb = "APPROVE" if payload.decision == "approve" else "REJECT"
+    expected = f"{verb} CAREER CHANGE {change_set_id}"
+    if payload.confirmation != expected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"exact human confirmation required: {expected}",
+        )
+    try:
+        if payload.decision == "approve":
+            result = await career_graph_store.approve_change_set(
+                user_id,
+                change_set_id,
+                decided_via="relay_web_exact_confirmation",
+            )
+        else:
+            result = await career_graph_store.reject_change_set(
+                user_id,
+                change_set_id,
+                decided_via="relay_web_exact_confirmation",
+            )
+    except Exception as exc:  # noqa: BLE001 — translate domain errors at HTTP boundary
+        _raise_career_graph_error(exc)
+    return result
+
+
+@app.get("/career-graphs/{graph_id}")
+async def career_graph_detail(graph_id: UUID, user_id: UserDep) -> dict[str, Any]:
+    graph = await career_graph_store.get_graph(user_id, graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Career Graph not found")
+    return {"graph": graph}
+
+
+# ───────────────────────────────────────────────────────────────────────
 # Applications — delivery loop (docs/architecture/delivery-loop-plan.md)
 # ───────────────────────────────────────────────────────────────────────
 
 
 class PrepareApplicationPayload(BaseModel):
     jd_url: str
+    jd_text: str | None = None
+    job_id: UUID | None = None
+    parsed_jd: dict[str, Any] | None = None
+    company: str | None = None
+    role_title: str | None = None
     base_resume_id: UUID
     base_resume_content: dict[str, Any]
     base_resume_version: int = 1
     form_fields: list[dict[str, Any]] = []  # ATS field descriptors; may be empty
-    application_id: UUID | None = None  # idempotency: reuse a draft row
+    # The gateway ownership-checks this canonical persistence target before
+    # invoking the workflow. Preparation never creates an unlinked draft.
+    application_id: UUID
 
 
 @app.post("/applications/prepare")
@@ -1494,6 +1585,11 @@ async def applications_prepare(
         form_fields=payload.form_fields,
         application_id=payload.application_id,
         ui_locale=ui_locale,
+        job_id=payload.job_id,
+        jd_text=payload.jd_text,
+        parsed_jd=payload.parsed_jd,
+        company=payload.company,
+        role_title=payload.role_title,
     )
 
 
@@ -1508,7 +1604,7 @@ class ApplicationSubmittedPayload(BaseModel):
 
     company: str | None = None
     role_title: str | None = None
-    submitted_via: str = "client_extension"
+    submitted_via: Literal["client_extension", "api", "manual", "email"] = "client_extension"
 
 
 @app.post("/applications/{application_id}/submitted")
@@ -1527,36 +1623,107 @@ async def applications_submitted(
     the event fire is the real product surface — if PG is down for some
     reason we still emit so the consumers see the submit.
     """
+    import psycopg
+
     from agents.events.bus import publish
-    from agents.tools.auto import pg_query
 
-    # Best-effort DB update — drop the application into 'submitted' state
-    # and stamp submitted_at. If the row is owned by another user we
-    # silently no-op (don't leak existence).
-    try:
-        await pg_query(
-            "UPDATE application_drafts "
-            "   SET status = 'submitted', "
-            "       submitted_at = COALESCE(submitted_at, now()), "
-            "       submitted_via = COALESCE(submitted_via, %s), "
-            "       updated_at = now() "
-            " WHERE id = %s AND user_id = %s",
-            (payload.submitted_via, str(application_id), str(user_id)),
-        )
-    except Exception as exc:  # noqa: BLE001 boundary
-        log.warning("applications.submitted.db_write_failed", error=redact_exception_text(str(exc)))
-
-    entry_id = await publish(
-        "application:submitted",
-        {
-            "user_id": str(user_id),
-            "application_id": str(application_id),
-            "company": payload.company,
-            "role_title": payload.role_title,
-            "submitted_via": payload.submitted_via,
-        },
+    # The old implementation sent this UPDATE through the read-only pg_query
+    # helper, which unconditionally called fetchall(). PostgreSQL therefore
+    # raised "no result" and rolled the transition back. Use a real write
+    # transaction so the database history trigger observes the browser event.
+    dsn = (
+        os.environ.get("RELAY_PG_DSN")
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
     )
-    return {"ok": True, "event_id": entry_id, "application_id": str(application_id)}
+    db_persisted = False
+    transition_changed = False
+    if dsn:
+        try:
+            pending_transition_changed = False
+            async with await psycopg.AsyncConnection.connect(dsn) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT set_config("
+                        "'relay.application_event_source', "
+                        "'browser_extension', true)"
+                    )
+                    await cur.execute(
+                        """
+                        SELECT status, submitted_at, submitted_via
+                          FROM application_drafts
+                         WHERE id = %s AND user_id = %s
+                         FOR UPDATE
+                        """,
+                        (str(application_id), str(user_id)),
+                    )
+                    row = await cur.fetchone()
+                    if not row:
+                        raise HTTPException(status_code=404, detail="application not found")
+                    current_status, submitted_at, submitted_via = row
+                    should_record_submit = current_status in {
+                        "draft",
+                        "review",
+                    } or (
+                        current_status == "submitted"
+                        and (submitted_at is None or submitted_via is None)
+                    )
+                    if should_record_submit:
+                        await cur.execute(
+                            """
+                            UPDATE application_drafts
+                               SET status = 'submitted',
+                                   submitted_at = COALESCE(submitted_at, now()),
+                                   submitted_via = COALESCE(submitted_via, %s),
+                                   updated_at = now()
+                             WHERE id = %s AND user_id = %s
+                            RETURNING id
+                            """,
+                            (
+                                payload.submitted_via,
+                                str(application_id),
+                                str(user_id),
+                            ),
+                        )
+                        updated = await cur.fetchone()
+                        if not updated:
+                            raise HTTPException(
+                                status_code=404,
+                                detail="application not found",
+                            )
+                        pending_transition_changed = True
+                await conn.commit()
+            db_persisted = True
+            transition_changed = pending_transition_changed
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 boundary
+            log.warning(
+                "applications.submitted.db_write_failed",
+                error=redact_exception_text(str(exc)),
+            )
+
+    entry_id = None
+    if transition_changed or not db_persisted:
+        entry_id = await publish(
+            "application:submitted",
+            {
+                "user_id": str(user_id),
+                "application_id": str(application_id),
+                "company": payload.company,
+                "role_title": payload.role_title,
+                "submitted_via": payload.submitted_via,
+                "db_persisted": db_persisted,
+                "transition_changed": transition_changed,
+            },
+        )
+    return {
+        "ok": True,
+        "event_id": entry_id,
+        "application_id": str(application_id),
+        "db_persisted": db_persisted,
+        "transition_changed": transition_changed,
+    }
 
 
 # ───────────────────────────────────────────────────────────────────────

@@ -125,7 +125,12 @@ def _detect_ats(url: str) -> dict[str, object]:
     if _GH_HOST.match(host):
         company = parts[0] if len(parts) > 0 else None
         external = parts[2] if len(parts) > 2 else None
-        return {"source": "greenhouse", "externalId": external, "companySlug": company, "jdUrl": url}
+        return {
+            "source": "greenhouse",
+            "externalId": external,
+            "companySlug": company,
+            "jdUrl": url,
+        }
     if _LEVER_HOST.match(host):
         return {
             "source": "lever",

@@ -50,7 +50,7 @@ import time
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import structlog
@@ -75,7 +75,7 @@ from agents.harness.checkpointer import get_checkpointer
 from agents.harness.context import dock_pre_model_hook
 from agents.harness.events import RelayEmitter
 from agents.harness.guards import post_model_hook
-from agents.harness.llm import pick_model
+from agents.harness.llm import Tier, pick_model
 
 log = structlog.get_logger("agents.coordinator.dock_agent")
 
@@ -146,7 +146,7 @@ def build_dock_graph(tier: str = "general"):
     """
     if tier not in ("heavy", "general", "fast"):
         raise ValueError(f"invalid dock tier: {tier!r}")
-    model = pick_model(tier, temperature=0.4, max_tokens=2_048)
+    model = pick_model(cast(Tier, tier), temperature=0.4, max_tokens=2_048)
     checkpointer = get_checkpointer()
     graph = create_react_agent(
         model=model,
@@ -173,7 +173,6 @@ async def run_dock_turn(
     """Yield encoded AG-UI SSE frame strings for one dock turn.
 
     The caller (``agents.api.server.ask_stream``) is responsible for:
-      - regex fast-path (skip this when a cheap classifier is confident)
       - setting the dock contextvars via ``dock_tools.set_dock_context``
         *before* calling this generator
       - wrapping the output in the heartbeat generator + StreamingResponse

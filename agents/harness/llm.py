@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
-from langchain_openai import ChatOpenAI
+from langchain_openrouter import ChatOpenRouter
+from pydantic import SecretStr
 
 Tier = Literal["heavy", "general", "fast"]
 ReasoningEffort = Literal["low", "medium", "high"]
@@ -40,8 +41,9 @@ def pick_model(
     temperature: float = 0.3,
     max_tokens: int = 4096,
     reasoning_effort: ReasoningEffort | None = "medium",
-) -> ChatOpenAI:
-    """Return a ChatOpenAI bound to OpenRouter with the chosen tier.
+    json_mode: bool = False,
+) -> Any:
+    """Return a ChatOpenRouter bound to the chosen tier.
 
     ``reasoning_effort`` opts the request into OpenRouter's extended-thinking
     passthrough. DeepSeek V4 Pro and GLM-4.7 return a ``reasoning`` field on
@@ -55,45 +57,44 @@ def pick_model(
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
 
-    extra_body: dict[str, object] = {
-        # Lock provider routing for stability on critical prompts (see
-        # cicd-aiops-harness.md § 6 pitfall #2 — OpenRouter silent provider swaps).
-        "provider": {"allow_fallbacks": True},
-    }
+    reasoning: dict[str, object] | None = None
     if reasoning_effort is not None:
-        # OpenRouter extended-thinking passthrough. The `reasoning` field
-        # asks the upstream provider to surface chain-of-thought; the
-        # `include_reasoning: True` belt-and-braces is for providers that
-        # honor the legacy flag instead. dock_agent reads the deltas from
-        # AIMessageChunk.additional_kwargs["reasoning"] and emits them as
-        # `reasoning_delta` SSE frames the dock renders inline.
-        extra_body["reasoning"] = {"effort": reasoning_effort}
-        extra_body["include_reasoning"] = True
+        # OpenRouter's unified `reasoning` parameter supersedes the legacy
+        # `include_reasoning` flag and returns reasoning unless excluded.
+        # Source: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+        reasoning = {"effort": reasoning_effort}
 
     # Cost tracking — every model call writes usage into the active
     # CostTally via contextvar. Hooks (guards.post_model_hook) read pending
     # cents; audit() reads totals on exit. See harness/cost_tracker.py.
     from agents.harness.cost_tracker import COST_TRACKING_CALLBACK
 
-    return ChatOpenAI(
+    # Use the provider-specific adapter so OpenRouter reasoning chunks survive
+    # as LangChain content/additional-kwargs consumed by ag-ui-langgraph.
+    # Source: https://docs.langchain.com/oss/python/integrations/chat/openrouter
+    model = ChatOpenRouter(
         model=spec.openrouter_id,
-        api_key=api_key,
+        api_key=SecretStr(api_key),
         base_url=base_url,
         temperature=temperature,
         max_tokens=max_tokens,
-        # LLM1 (round-8): the round-8 audit found the prior config let a
-        # single OpenRouter 429 / 5xx / connection wobble propagate as a
-        # hard failure into the saga, even though langchain_openai already
-        # ships a tenacity-backed retry loop. Setting max_retries=3
-        # enables exponential backoff (~1s, 2s, 4s) for transient upstream
-        # errors. request_timeout matches the router's 30s wait_for so a
-        # hung provider can't outlive its enclosing asyncio.wait_for and
-        # leak file descriptors.
-        max_retries=3,
-        request_timeout=30,
-        model_kwargs={"extra_body": extra_body},
+        # Durable retries are owned by harness/recovery.py so the SDK, graph
+        # node, and external client cannot multiply attempt and cost budgets.
+        # ChatOpenRouter's timeout is milliseconds; this bounds one attempt at
+        # the same 30-second ceiling as the surrounding recovery policy.
+        max_retries=0,
+        timeout=30_000,
+        reasoning=reasoning,
+        openrouter_provider={"allow_fallbacks": True},
         callbacks=[COST_TRACKING_CALLBACK],
     )
+    if json_mode:
+        # OpenRouter supports OpenAI-compatible JSON mode. Binding the
+        # response format at the runnable layer keeps provider-specific
+        # routing options in ``extra_body`` while asking the model to emit a
+        # syntactically complete top-level JSON object.
+        return model.bind(response_format={"type": "json_object"})
+    return model
 
 
 def cost_cents(tier: Tier, tokens_in: int, tokens_out: int) -> float:

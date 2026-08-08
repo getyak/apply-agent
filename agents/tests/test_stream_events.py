@@ -94,7 +94,7 @@ def test_prepend_sse_id_stamps_id_line():
     assert stamped.startswith("id: 42\n")
     # For frames without a rawEvent envelope we inject a fresh one so
     # the client can read stream_seq without a special case.
-    assert "\"stream_seq\": 42" in stamped or '"stream_seq":42' in stamped
+    assert '"stream_seq": 42' in stamped or '"stream_seq":42' in stamped
 
 
 def test_prepend_sse_id_injects_stream_seq_into_rawEvent():

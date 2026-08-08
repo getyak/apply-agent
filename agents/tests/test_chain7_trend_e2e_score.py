@@ -77,7 +77,19 @@ import structlog  # noqa: E402
 from agents.harness import audit as audit_mod  # noqa: E402
 from agents.nodes import trend_agent as ta  # noqa: E402
 
-_HAS_KEY = bool(os.environ.get("OPENROUTER_API_KEY"))
+
+def _has_real_openrouter_key() -> bool:
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    lower = key.lower()
+    return bool(
+        len(key) >= 40
+        and not lower.startswith(("dummy", "test", "fake", "placeholder"))
+        and "change_me" not in lower
+        and "changeme" not in lower
+    )
+
+
+_HAS_KEY = _has_real_openrouter_key()
 pytestmark = pytest.mark.skipif(
     not _HAS_KEY,
     reason="chain7 needs a real OPENROUTER_API_KEY (root .env) — it drives the live LLM + feed",

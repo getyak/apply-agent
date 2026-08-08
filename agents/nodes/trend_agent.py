@@ -294,7 +294,12 @@ def _load_prompt(name: str) -> str:
 
 async def _parse_all(raw_jobs: list[_RawJob]) -> list[_ParsedJob]:
     try:
-        model = pick_model("fast", temperature=0.0, max_tokens=1024, reasoning_effort=None)
+        model = pick_model(
+            "fast",
+            temperature=0.0,
+            max_tokens=1024,
+            reasoning_effort=None,
+        )
     except RuntimeError as exc:
         log.warning("trend.no_llm_key", error=redact_exception_text(str(exc)))
         return [_fallback_parsed(j) for j in raw_jobs]

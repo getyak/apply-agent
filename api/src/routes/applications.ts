@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { config } from "../config";
 import { query } from "../db";
-import { ConflictError, UpstreamError } from "../errors";
+import { ConflictError, NotFoundError, UpstreamError } from "../errors";
 import { resolveLocale } from "../locale";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
@@ -46,10 +46,25 @@ app.post("/prepare", idempotency(), validateBody(PrepareApplicationSchema), asyn
     "validatedBody",
   ) as PrepareApplication;
 
+  // A résumé id is optional (the preparation saga can select the current
+  // base résumé), but when the caller supplies one it must belong to the
+  // authenticated user. The FK alone only proves that the UUID exists and
+  // would otherwise allow a draft to reference another user's private data.
+  if (resumeId) {
+    await requireOwnership("resumes", resumeId, userId, "id");
+  }
+
   const result = await query(
-    `INSERT INTO application_drafts (user_id, job_id, resume_version_id, cover_letter, form_answers, status)
-     VALUES ($1, $2, $3, $4, $5, 'draft')
-     RETURNING *`,
+    `WITH event_context AS MATERIALIZED (
+       SELECT set_config('relay.application_event_source', 'web_api', true) AS source
+     )
+     INSERT INTO application_drafts (
+       user_id, job_id, resume_version_id, cover_letter, form_answers, status
+     )
+     SELECT $1, $2, $3, $4, $5, 'draft'
+       FROM event_context
+      WHERE event_context.source = 'web_api'
+     RETURNING application_drafts.*`,
     [userId, jobId, resumeId || null, coverLetter || null, formAnswers ? JSON.stringify(formAnswers) : null],
   );
   return c.json({ application: result.rows[0] }, 201);
@@ -91,8 +106,43 @@ app.post(
       );
     }
     const base = baseResume.rows[0]!;
-    const content =
+    const storedContent =
       typeof base.content === "string" ? JSON.parse(base.content) : base.content;
+    const content =
+      storedContent &&
+      typeof storedContent === "object" &&
+      !Array.isArray(storedContent) &&
+      "parsed" in storedContent &&
+      (storedContent as { parsed?: unknown }).parsed &&
+      typeof (storedContent as { parsed?: unknown }).parsed === "object"
+        ? (storedContent as { parsed: unknown }).parsed
+        : storedContent;
+
+    // Reuse the canonical JD already attached to this user-owned draft. The
+    // previous flow re-fetched the public URL, which was slower and could
+    // correctly trip SSRF/DNS-rebinding defenses even though the source text
+    // was already safely stored in PostgreSQL.
+    const draftJob = await query<{
+      id: string;
+      jd_text: string | null;
+      parsed: unknown;
+      company: string;
+      role_title: string;
+    }>(
+      `SELECT j.id, j.jd_text, j.parsed, j.company, j.role_title
+         FROM application_drafts ad
+         JOIN jobs j ON j.id = ad.job_id
+        WHERE ad.id = $1 AND ad.user_id = $2
+        LIMIT 1`,
+      [applicationId, userId],
+    );
+    const job = draftJob.rows[0];
+    if (!job) {
+      // Keep absent and foreign ids indistinguishable, and stop before the
+      // Python workflow receives an application id it is not authorized to
+      // mutate.
+      throw new NotFoundError("Application not found");
+    }
 
     // 2. Forward to the Python agent layer.
     const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/applications/prepare`;
@@ -124,6 +174,12 @@ app.post(
         base_resume_version: base.version,
         form_fields: formFields ?? [],
         application_id: applicationId,
+        job_id: job.id,
+        jd_text: job.jd_text,
+        parsed_jd:
+          typeof job.parsed === "string" ? JSON.parse(job.parsed) : job.parsed,
+        company: job.company,
+        role_title: job.role_title,
       }),
     });
     if (!agentResp.ok) {
@@ -186,6 +242,27 @@ app.get("/:id", async (c) => {
   return c.json({ application: withDerived(result.rows[0]) });
 });
 
+app.get("/:id/history", async (c) => {
+  const userId = c.get("userId");
+  const id = c.req.param("id")!;
+  await requireOwnership("application_drafts", id, userId, "id");
+  const result = await query(
+    `SELECT id, event_kind, event_source, changed_fields,
+            from_status, to_status, from_outcome, to_outcome,
+            submitted_at, submitted_via, interview_date, occurred_at
+       FROM application_outcome_events
+      WHERE application_id = $1 AND user_id = $2
+      ORDER BY occurred_at, id
+      LIMIT 501`,
+    [id, userId],
+  );
+  return c.json({
+    applicationId: id,
+    events: result.rows.slice(0, 500),
+    truncated: result.rows.length > 500,
+  });
+});
+
 app.patch("/:id", validateBody(UpdateApplicationSchema), async (c) => {
   const userId = c.get("userId");
   const id = c.req.param("id")!;
@@ -213,16 +290,22 @@ app.patch("/:id", validateBody(UpdateApplicationSchema), async (c) => {
     params.push(body.outcome);
   }
   if (body.status === "submitted") {
-    updates.push(`submitted_at = NOW()`);
-    updates.push(`submitted_via = $${idx++}`);
+    updates.push(`submitted_at = COALESCE(submitted_at, NOW())`);
+    updates.push(`submitted_via = COALESCE(submitted_via, $${idx++})`);
     params.push(body.submittedVia || "client_extension");
   }
 
   params.push(id, userId);
   const result = await query(
-    `UPDATE application_drafts SET ${updates.join(", ")}
-     WHERE id = $${idx++} AND user_id = $${idx}
-     RETURNING *`,
+    `WITH event_context AS MATERIALIZED (
+       SELECT set_config('relay.application_event_source', 'web_api', true) AS source
+     )
+     UPDATE application_drafts
+        SET ${updates.join(", ")}
+       FROM event_context
+      WHERE id = $${idx++} AND user_id = $${idx}
+        AND event_context.source = 'web_api'
+     RETURNING application_drafts.*`,
     params,
   );
   return c.json({ application: withDerived(result.rows[0]) });
@@ -263,7 +346,12 @@ function deriveNextAction(row: {
   // historical interview_date is a closure prompt, not a "go practise"
   // prompt. (Stale interview_date on a rejected row happens whenever
   // the user logs an outcome after the interview already happened.)
-  if (status === "rejected" || status === "offer" || row.outcome) {
+  if (
+    ["rejected", "offer", "withdrawn", "ghosted", "accepted", "closed"].includes(
+      status,
+    ) ||
+    row.outcome
+  ) {
     return { next_action_derived: "close_loop", next_action_due_derived: null };
   }
 

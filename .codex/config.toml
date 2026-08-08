@@ -41,6 +41,106 @@ args = [
     "@modelcontextprotocol/server-sequential-thinking",
 ]
 
+[mcp_servers.relay-career]
+command = "uv"
+args = [
+    "--directory",
+    "agents",
+    "run",
+    "python",
+    "-m",
+    "agents.mcp_relay.server",
+]
+cwd = "."
+env_vars = [
+    "RELAY_MCP_FAKE",
+    "RELAY_USER_ID",
+    "RELAY_PG_DSN",
+    "RELAY_PUBLIC_BASE_URL",
+    "RELAY_API_BASE_URL",
+]
+startup_timeout_sec = 15
+tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
+
+[mcp_servers.relay-career.tools.approve_career_graph_change]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.approve_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.publish_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.update_published_resume]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.revoke_published_resume]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.prepare_resume_artifact_review]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.prepare_application_handoff]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.authorize_application_submission]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.approve_application_questionnaire]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career.tools.reject_application_questionnaire]
+approval_mode = "prompt"
+
+# Remote multi-user surface. Enable this and disable the STDIO entry above
+# after `make mcp-remote`; then run `codex mcp login relay-career-remote`.
+# Production deployments must replace the loopback URLs with HTTPS.
+[mcp_servers.relay-career-remote]
+url = "http://127.0.0.1:8002/mcp"
+auth = "oauth"
+oauth_resource = "http://127.0.0.1:8002/mcp"
+scopes = [
+    "career:read",
+    "career:write",
+    "resume:publish",
+    "application:prepare",
+]
+enabled = false
+startup_timeout_sec = 15
+tool_timeout_sec = 120
+default_tools_approval_mode = "writes"
+
+[mcp_servers.relay-career-remote.tools.approve_career_graph_change]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.approve_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.publish_resume_compilation]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.update_published_resume]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.revoke_published_resume]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.prepare_resume_artifact_review]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.prepare_application_handoff]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.authorize_application_submission]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.approve_application_questionnaire]
+approval_mode = "prompt"
+
+[mcp_servers.relay-career-remote.tools.reject_application_questionnaire]
+approval_mode = "prompt"
+
 [features]
 multi_agent = true
 

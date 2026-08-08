@@ -29,6 +29,7 @@ from typing import Any
 from uuid import UUID
 
 from agents.coordinator import dock_tools
+from agents.harness.recovery import get_operation_envelope
 
 
 def _with_user(user_id: str | UUID):
@@ -80,6 +81,17 @@ async def list_my_applications(user_id: str, limit: int = 25) -> dict[str, Any]:
         return await dock_tools.list_my_applications.ainvoke({"limit": limit})
     finally:
         dock_tools.reset_dock_context(tokens)
+
+
+async def get_operation_status(user_id: str, operation_id: str) -> dict[str, Any]:
+    envelope = await get_operation_envelope(UUID(operation_id), UUID(user_id))
+    if envelope is None:
+        return {
+            "status": "not_found",
+            "operation_id": operation_id,
+            "recovery": {"action": "stop"},
+        }
+    return envelope
 
 
 async def start_mock_interview(
@@ -224,6 +236,22 @@ TOOL_CATALOG: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50},
             },
             "required": ["user_id"],
+        },
+    },
+    {
+        "name": "get_operation_status",
+        "func": get_operation_status,
+        "description": (
+            "Read a durable Relay operation and follow recovery.action. Never repeat a "
+            "side effect while the operation is reconciling or awaiting human review."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string"},
+                "operation_id": {"type": "string"},
+            },
+            "required": ["user_id", "operation_id"],
         },
     },
     {

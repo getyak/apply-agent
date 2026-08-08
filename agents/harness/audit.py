@@ -13,7 +13,7 @@ import asyncio
 import os
 import re
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -87,6 +87,7 @@ class AuditRecord:
     latency_ms: int = 0
     model_used: str | None = None
     cache_hit: bool = False
+    operation_id: UUID | None = None
     started_at: float = field(default_factory=time.time)
 
 
@@ -108,8 +109,8 @@ async def _insert(record: AuditRecord) -> None:
             id, user_id, session_id, agent_type, action,
             input_params, output_result, status, error_message,
             total_tokens, total_cost_cents, latency_ms, model_used, cache_hit,
-            completed_at
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            operation_id, completed_at
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
     """
     params = (
         str(uuid4()),
@@ -126,6 +127,7 @@ async def _insert(record: AuditRecord) -> None:
         record.latency_ms,
         record.model_used,
         record.cache_hit,
+        str(record.operation_id) if record.operation_id else None,
     )
     try:
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
@@ -171,15 +173,15 @@ async def audit(
 ):
     """Async context manager: records start, captures exceptions, logs end.
 
-    Opens a fresh ``CostTally`` for the duration so any LLM calls made
-    inside the block (whether via dock graph or direct ``model.ainvoke``)
-    accumulate into ``record.total_tokens / total_cost_cents / model_used``
-    automatically. Caller can still overwrite these fields manually if
-    they have better data (e.g. cached responses).
+    Reuses an active ``CostTally`` when this audit is nested inside a wider
+    workflow/scorecard; otherwise opens a fresh tally. Each record captures
+    only the usage delta produced inside its own block, while the outer tally
+    retains the full workflow total. Caller can still overwrite these fields
+    manually if they have better data (e.g. cached responses).
     """
     # Lazy import to keep audit.py importable even when langchain isn't
     # installed (e.g. early CI bootstrap).
-    from agents.harness.cost_tracker import open_tally
+    from agents.harness.cost_tracker import get_tally, open_tally
 
     record = AuditRecord(
         user_id=user_id,
@@ -188,8 +190,18 @@ async def audit(
         session_id=session_id,
         input_params=input_params or {},
     )
+    # Bind node-level audit/cost evidence to the durable operation without
+    # leaking operation plumbing into every node signature.
+    from agents.harness.recovery import current_operation_id
+
+    record.operation_id = current_operation_id()
     start = time.perf_counter()
-    with open_tally() as tally:
+    active_tally = get_tally()
+    tally_scope = nullcontext(active_tally) if active_tally is not None else open_tally()
+    with tally_scope as tally:
+        start_tokens = tally.total_tokens
+        start_cost_cents = tally.total_cost_cents
+        start_call_count = len(tally.calls)
         try:
             yield record
             record.status = "completed"
@@ -215,9 +227,9 @@ async def audit(
             # their own totals (typically 0), so we only fill in what's
             # missing.
             if record.total_tokens == 0:
-                record.total_tokens = tally.total_tokens
+                record.total_tokens = tally.total_tokens - start_tokens
             if record.total_cost_cents == 0.0:
-                record.total_cost_cents = round(tally.total_cost_cents, 4)
-            if record.model_used is None:
-                record.model_used = tally.last_model
+                record.total_cost_cents = round(tally.total_cost_cents - start_cost_cents, 4)
+            if record.model_used is None and len(tally.calls) > start_call_count:
+                record.model_used = tally.calls[-1].model_id
             _spawn_insert(record)

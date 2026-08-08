@@ -1,6 +1,6 @@
 # Relay - Development Commands
 
-.PHONY: up down restart logs ps db-shell redis-shell db-health db-reset minio-console
+.PHONY: up down restart logs ps db-shell redis-shell db-health db-reset minio-console mcp-remote
 
 # Start all infrastructure services
 up:
@@ -46,3 +46,12 @@ minio-console:
 	@echo "MinIO Console: http://localhost:9001"
 	@echo "Login: $${S3_ACCESS_KEY:-relay_minio_access} / (see .env for password)"
 	@open http://localhost:9001 2>/dev/null || xdg-open http://localhost:9001 2>/dev/null || true
+
+# Start the OAuth-protected Streamable HTTP Career Graph MCP server.
+# The Python and Hono layers exchange only protocol state through shared PG;
+# Relay passwords never enter the MCP process.
+mcp-remote:
+	@set -a; . ./.env; set +a; \
+	export RELAY_PG_DSN="$${RELAY_PG_DSN:-$${DATABASE_URL}}"; \
+	export RELAY_MCP_TRANSPORT=streamable-http; \
+	uv --directory agents run python -m agents.mcp_relay.server

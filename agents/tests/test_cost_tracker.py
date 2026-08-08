@@ -9,7 +9,7 @@ What this locks down (closes the round-15 P0-1 audit finding):
     state.total_cost_cents, raising BudgetExhausted when over cap
 
 No live LLM call — we drive the callback manually with a synthetic LLMResult,
-which is exactly what langchain emits from ChatOpenAI on_llm_end internally.
+which is exactly what LangChain emits from ChatOpenRouter on_llm_end internally.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def _isolate_env(monkeypatch):
 def _make_llm_result(
     *, model_name: str, prompt_tokens: int, completion_tokens: int, content: str = "ok"
 ) -> LLMResult:
-    """Build the exact LLMResult shape ChatOpenAI hands to on_llm_end."""
+    """Build the exact LLMResult shape ChatOpenRouter hands to on_llm_end."""
     msg = AIMessage(
         content=content,
         usage_metadata={
@@ -159,6 +159,31 @@ async def test_audit_does_not_overwrite_caller_provided_totals():
     assert record.total_tokens == 999
     assert record.total_cost_cents == 1.23
     assert record.model_used == "cache"
+
+
+async def test_nested_audit_reuses_outer_tally_and_records_only_its_delta():
+    """A workflow-level tally keeps nested usage without inflating its audit row."""
+    user_id = uuid4()
+    with open_tally() as outer:
+        outer.add(CallUsage("z-ai/glm-4.7", 20, 10, 0.01))
+
+        async with audit(user_id, "resume_agent", "customize") as record:
+            assert get_tally() is outer
+            await COST_TRACKING_CALLBACK.on_llm_end(
+                _make_llm_result(
+                    model_name="deepseek/deepseek-v4-flash",
+                    prompt_tokens=1_000,
+                    completion_tokens=500,
+                )
+            )
+
+        assert get_tally() is outer
+        assert outer.total_tokens == 1_530
+        assert outer.total_cost_cents == pytest.approx(0.0296, rel=1e-3)
+
+    assert record.total_tokens == 1_500
+    assert record.total_cost_cents == pytest.approx(0.0196, rel=1e-3)
+    assert record.model_used == "deepseek/deepseek-v4-flash"
 
 
 # ─────────────────────────────────────────────────────────────────────
