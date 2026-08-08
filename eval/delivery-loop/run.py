@@ -141,9 +141,11 @@ async def _run_case(case: dict) -> CaseResult:
     from uuid import uuid4
 
     expected_status = case.get("expect_status", "review")
+    application_id = uuid4()
 
     result = await workflows.run_prepare_application(
         user_id=uuid4(),
+        application_id=application_id,
         jd_url=case["jd_url"],
         base_resume_id=uuid4(),
         base_resume_content=BASE_RESUME,

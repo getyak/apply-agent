@@ -20,6 +20,9 @@ paths = [
   '''\.env\.example$''',
   '''.*\.test\.ts$''',
   '''.*\.test\.tsx$''',
+  # This browser smoke test registers a disposable example.com user with a
+  # synthetic password; limit the exception to that exact fixture path.
+  '''web/tests/e2e/dock-smoke\.spec\.ts$''',
   # Python test fixtures (agents/tests/test_*.py + */tests/test_*.py + *_test.py)
   # contain synthetic secrets used to verify redaction / parsing / auth logic.
   # Without this allowlist the redaction unit tests (test_redaction.py) trip
