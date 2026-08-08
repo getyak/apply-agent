@@ -168,6 +168,7 @@ jobs:
 
     env:
       DATABASE_URL: postgres://relay:relay@localhost:5433/relay_test
+      RELAY_PG_DSN: postgres://relay:relay@localhost:5433/relay_test
       REDIS_URL: redis://localhost:6380
       OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
       OPENROUTER_API_KEY: dummy-for-unit-tests
