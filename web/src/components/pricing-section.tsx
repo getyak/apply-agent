@@ -1,196 +1,152 @@
 "use client";
 
-import { Check } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useTranslations } from "next-intl";
-
-function FeatureList({
-  features,
-  inverse = false,
-}: {
-  features: string[];
-  inverse?: boolean;
-}) {
-  return (
-    <div className="grid gap-3">
-      {features.map((feature) => (
-        <div
-          key={feature}
-          className={`flex gap-2.5 text-[14px] leading-[1.45] ${
-            inverse
-              ? "text-[var(--landing-on-contrast-muted)]"
-              : "text-[var(--landing-muted)]"
-          }`}
-        >
-          <Check
-            size={15}
-            strokeWidth={2}
-            aria-hidden
-            className={`mt-0.5 shrink-0 ${
-              inverse
-                ? "text-[var(--landing-on-contrast)]"
-                : "text-[var(--landing-accent)]"
-            }`}
-          />
-          <span>{feature}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+import { Check } from "lucide-react";
 
 export default function PricingSection() {
   const t = useTranslations("landing.pricing");
-  const [annual, setAnnual] = useState(true);
   const freeFeatures = t.raw("free.features") as string[];
   const proFeatures = t.raw("pro.features") as string[];
   const maxFeatures = t.raw("max.features") as string[];
+  const [annual, setAnnual] = useState(true);
+
+  // Sliding billing thumb — measured from the real label widths so the gold
+  // pill tracks whichever option is active, then glides between them on the
+  // shared motion spring. Stays null (thumb unrendered, buttons readable in
+  // ink) until measured, so there is never a light-on-light flash pre-hydration.
+  const monthlyRef = useRef<HTMLButtonElement>(null);
+  const annualRef = useRef<HTMLButtonElement>(null);
+  const [thumb, setThumb] = useState<{ left: number; width: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const measure = () => {
+      const el = annual ? annualRef.current : monthlyRef.current;
+      if (!el) return;
+      setThumb({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    // Re-measure once webfonts settle — label widths can shift on swap-in.
+    const t = window.setTimeout(measure, 280);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.clearTimeout(t);
+    };
+  }, [annual]);
+
   const proPrice = annual ? "19" : "24";
   const maxPrice = annual ? "39" : "49";
   const period = annual ? t("periodAnnual") : t("periodMonthly");
 
+  const pillBase =
+    "seg-item relative z-10 press cursor-pointer bg-transparent border-none font-body font-semibold text-[13px] px-[18px] py-[9px] rounded-full transition-colors";
+  // Active label only flips to light once the dark thumb is measured + behind
+  // it; before that both read as ink on the cream track.
+  const textFor = (active: boolean) =>
+    thumb
+      ? active
+        ? "text-[#FAF8F6]"
+        : "text-ink-light"
+      : active
+        ? "text-ink"
+        : "text-ink-light";
+
   return (
-    <section
-      id="pricing"
-      className="border-t border-[var(--landing-line)] bg-[var(--landing-surface)]"
-    >
-      <div className="mx-auto max-w-[1320px] px-5 py-24 sm:px-8 md:py-32">
-        <div className="grid items-end gap-7 md:grid-cols-[1fr_auto]">
-          <h2 className="m-0 max-w-[760px] text-balance font-display text-[clamp(2.7rem,5vw,4.8rem)] font-bold leading-[0.96] tracking-[-0.055em]">
-            {t("title")}
-          </h2>
-          <div
-            role="group"
-            aria-label={t("eyebrow")}
-            className="flex w-fit rounded-[9px] border border-[var(--landing-line-strong)] bg-[var(--landing-bg)] p-1"
+    <section id="pricing" className="max-w-[1140px] mx-auto px-6 sm:px-8 py-16 md:py-[84px]">
+      <div data-reveal className="text-center mb-3.5">
+        <span className="font-display font-bold text-xs tracking-[1.8px] uppercase text-amber">
+          <span className="eyebrow-dot" aria-hidden />{t("eyebrow")}
+        </span>
+      </div>
+      <h2 data-reveal style={{ "--reveal-delay": "60ms" } as CSSProperties} className="text-center font-display font-bold text-[38px] tracking-[-0.6px] text-ink m-0 mb-[22px]">
+        {t("title")}
+      </h2>
+      <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties} className="flex justify-center mb-11">
+        <div className="seg-track flex gap-[3px] bg-[#F3F0EB] border border-border rounded-full p-1">
+          {/* Gold thumb glides under the active option (v18). */}
+          {thumb && (
+            <span
+              aria-hidden
+              className="seg-thumb"
+              style={{ left: `${thumb.left}px`, width: `${thumb.width}px` }}
+            />
+          )}
+          <button
+            ref={monthlyRef}
+            onClick={() => setAnnual(false)}
+            className={`${pillBase} ${textFor(!annual)}`}
           >
-            <button
-              type="button"
-              aria-pressed={!annual}
-              onClick={() => setAnnual(false)}
-              className={`min-h-11 cursor-pointer rounded-[6px] border-0 px-4 text-[13px] font-semibold transition-colors duration-200 ${
-                annual
-                  ? "bg-transparent text-[var(--landing-muted)]"
-                  : "bg-[var(--landing-ink)] text-[var(--landing-bg)]"
-              }`}
-            >
-              {t("toggleMonthly")}
-            </button>
-            <button
-              type="button"
-              aria-pressed={annual}
-              onClick={() => setAnnual(true)}
-              className={`min-h-11 cursor-pointer rounded-[6px] border-0 px-4 text-[13px] font-semibold transition-colors duration-200 ${
-                annual
-                  ? "bg-[var(--landing-ink)] text-[var(--landing-bg)]"
-                  : "bg-transparent text-[var(--landing-muted)]"
-              }`}
-            >
-              {t("toggleAnnual")}
-            </button>
+            {t("toggleMonthly")}
+          </button>
+          <button
+            ref={annualRef}
+            onClick={() => setAnnual(true)}
+            className={`${pillBase} ${textFor(annual)}`}
+          >
+            {t("toggleAnnual")}
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-[22px] items-start">
+        <div data-reveal data-glow className="card-glow lift rim spotlight bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-ink-light mb-2">{t("free.name")}</div>
+          <div className="font-body text-[13.5px] text-ink-muted mb-5">{t("free.tagline")}</div>
+          <div className="flex items-baseline gap-1 mb-6">
+            <span className="font-display font-bold text-[42px] text-ink">$0</span>
+            <span className="font-body text-sm text-ink-muted">{t("free.period")}</span>
+          </div>
+          <a href="/auth?plan=free" className="lift-pop block text-center no-underline font-body font-semibold text-sm text-ink bg-white border border-border-dark py-3 rounded-[10px] mb-6 hover:border-brown transition-colors">{t("free.cta")}</a>
+          <div className="flex flex-col gap-3">
+            {freeFeatures.map((f) => (
+              <div key={f} className="flex gap-2.5 font-body text-sm text-[#3a352e]">
+                <Check size={16} className="text-ink-muted shrink-0 mt-0.5" strokeWidth={2} />
+                <span>{f}</span>
+              </div>
+            ))}
           </div>
         </div>
-
-        <div className="mt-14 grid gap-5 lg:grid-cols-[1.25fr_0.75fr]">
-          <article className="flex min-h-[520px] flex-col rounded-[var(--landing-frame-radius)] bg-[var(--landing-contrast)] p-7 text-[var(--landing-on-contrast)] sm:p-10">
-            <p className="m-0 text-[12px] font-bold uppercase tracking-[0.12em] text-[var(--landing-on-contrast-muted)]">
-              {t("pro.badge")}
-            </p>
-            <div className="mt-7 grid gap-7 sm:grid-cols-[1fr_auto] sm:items-start">
-              <div>
-                <h3 className="m-0 font-display text-[34px] font-semibold tracking-[-0.035em]">
-                  {t("pro.name")}
-                </h3>
-                <p className="mb-0 mt-2 text-[15px] text-[var(--landing-on-contrast-muted)]">
-                  {t("pro.tagline")}
-                </p>
+        <div data-reveal data-glow style={{ "--reveal-delay": "90ms" } as CSSProperties} className="card-glow on-dark lift halo-card rim bg-dark border border-dark rounded-2xl p-[30px] shadow-[0_20px_50px_rgba(40,25,5,0.20)] relative">
+          <span className="badge-glint orbit-ring absolute -top-[11px] left-[30px] font-mono text-[10px] tracking-[0.6px] uppercase text-dark bg-gold px-[11px] py-[5px] rounded-[6px]">{t("pro.badge")}</span>
+          <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-dark-gold mb-2">{t("pro.name")}</div>
+          <div className="font-body text-[13.5px] text-[#9a9082] mb-5">{t("pro.tagline")}</div>
+          <div className="flex items-baseline gap-1 mb-6">
+            <span key={proPrice} className="animate-price-swap font-display font-bold text-[42px] text-[#FAF8F6]">${proPrice}</span>
+            <span className="font-body text-sm text-[#9a9082]">{period}</span>
+          </div>
+          <a href="/auth?plan=pro" className="lift-pop block text-center no-underline font-body font-semibold text-sm text-dark bg-gold py-3 rounded-[10px] mb-6 hover:bg-gold-light transition-colors">{t("pro.cta")}</a>
+          <div className="flex flex-col gap-3">
+            {proFeatures.map((f) => (
+              <div key={f} className="flex gap-2.5 font-body text-sm text-[#e6ddd0]">
+                <Check size={16} className="text-dark-gold shrink-0 mt-0.5" strokeWidth={2} />
+                <span>{f}</span>
               </div>
-              <div className="flex items-baseline gap-1">
-                <span className="font-display text-[58px] font-bold leading-none tracking-[-0.055em]">
-                  ${proPrice}
-                </span>
-                <span className="max-w-[92px] text-[12px] leading-[1.4] text-[var(--landing-on-contrast-muted)]">
-                  {period}
-                </span>
-              </div>
-            </div>
-            <div className="mt-10 max-w-[600px] sm:columns-2 sm:gap-10">
-              <FeatureList features={proFeatures} inverse />
-            </div>
-            <a
-              href="/auth?plan=pro"
-              className="mt-auto inline-flex min-h-12 w-fit items-center justify-center rounded-[8px] bg-[var(--landing-on-contrast)] px-5 text-[14px] font-semibold text-[var(--landing-contrast)] no-underline transition-transform duration-200 hover:-translate-y-0.5 active:translate-y-px"
-            >
-              {t("pro.cta")}
-            </a>
-          </article>
-
-          <div className="grid gap-5">
-            <article className="rounded-[var(--landing-frame-radius)] border border-[var(--landing-line-strong)] bg-[var(--landing-bg)] p-7">
-              <div className="flex items-start justify-between gap-5">
-                <div>
-                  <h3 className="m-0 font-display text-[25px] font-semibold tracking-[-0.025em]">
-                    {t("free.name")}
-                  </h3>
-                  <p className="mb-0 mt-1.5 text-[13px] text-[var(--landing-muted)]">
-                    {t("free.tagline")}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="font-display text-[38px] font-bold tracking-[-0.045em]">
-                    $0
-                  </span>
-                  <span className="ml-1 text-[12px] text-[var(--landing-subtle)]">
-                    {t("free.period")}
-                  </span>
-                </div>
-              </div>
-              <div className="mt-6">
-                <FeatureList features={freeFeatures} />
-              </div>
-              <a
-                href="/auth?plan=free"
-                className="evidence-button evidence-button-secondary mt-7 min-h-11 px-4 text-[13px]"
-              >
-                {t("free.cta")}
-              </a>
-            </article>
-
-            <article className="rounded-[var(--landing-frame-radius)] border border-[var(--landing-line-strong)] bg-[var(--landing-bg)] p-7">
-              <div className="flex items-start justify-between gap-5">
-                <div>
-                  <h3 className="m-0 font-display text-[25px] font-semibold tracking-[-0.025em]">
-                    {t("max.name")}
-                  </h3>
-                  <p className="mb-0 mt-1.5 text-[13px] text-[var(--landing-muted)]">
-                    {t("max.tagline")}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="font-display text-[38px] font-bold tracking-[-0.045em]">
-                    ${maxPrice}
-                  </span>
-                  <span className="ml-1 text-[12px] text-[var(--landing-subtle)]">
-                    {period}
-                  </span>
-                </div>
-              </div>
-              <div className="mt-6">
-                <FeatureList features={maxFeatures} />
-              </div>
-              <a
-                href="/auth?plan=max"
-                className="evidence-button evidence-button-primary mt-7 min-h-11 px-4 text-[13px]"
-              >
-                {t("max.cta")}
-              </a>
-            </article>
+            ))}
           </div>
         </div>
-
-        <p className="mb-0 mt-7 max-w-[760px] text-[13px] leading-[1.55] text-[var(--landing-subtle)]">
-          {t("footnote")}
-        </p>
+        <div data-reveal data-glow style={{ "--reveal-delay": "180ms" } as CSSProperties} className="card-glow lift rim spotlight bg-white border border-border rounded-2xl p-[30px] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+          <div className="font-display font-bold text-[13px] tracking-[1px] uppercase text-ink-light mb-2">{t("max.name")}</div>
+          <div className="font-body text-[13.5px] text-ink-muted mb-5">{t("max.tagline")}</div>
+          <div className="flex items-baseline gap-1 mb-6">
+            <span key={maxPrice} className="animate-price-swap font-display font-bold text-[42px] text-ink">${maxPrice}</span>
+            <span className="font-body text-sm text-ink-muted">{period}</span>
+          </div>
+          <a href="/auth?plan=max" className="lift-pop block text-center no-underline font-body font-semibold text-sm text-[#FAF8F6] bg-brown py-3 rounded-[10px] mb-6 hover:bg-brown-light transition-colors">{t("max.cta")}</a>
+          <div className="flex flex-col gap-3">
+            {maxFeatures.map((f) => (
+              <div key={f} className="flex gap-2.5 font-body text-sm text-[#3a352e]">
+                <Check size={16} className="text-brown shrink-0 mt-0.5" strokeWidth={2} />
+                <span>{f}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div data-reveal className="text-center mt-[26px] font-body text-[13.5px] text-ink-muted">
+        {t("footnote")}
       </div>
     </section>
   );
