@@ -14,6 +14,7 @@ attach it as an artifact and the post-comment job can render a table.
 Usage:
     uv run --project agents python eval/delivery-loop/run.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -75,7 +76,9 @@ def _stub_llm(monkeypatch_target):
     """Replace every LLM-touching call with a deterministic, cost-free stub."""
     from uuid import uuid4
 
-    async def fake_customize(*, base_resume, jd_text, user_id, base_version, base_id, job_id):
+    async def fake_customize(
+        *, base_resume, jd_text, user_id, base_version, base_id, job_id
+    ):
         return {
             "ok": True,
             "tailored": {**base_resume, "summary": "Tailored stub"},
@@ -162,7 +165,7 @@ async def _run_case(case: dict) -> CaseResult:
         success=(result["status"] == expected_status),
         parse_jd_ok=parse_jd_ok,
         fabrication_attempts=0,  # populated below from ttar sink
-        latency_ms=0,             # populated below from ttar sink
+        latency_ms=0,  # populated below from ttar sink
         stage_status=stage_status,
         status=result["status"],
         last_error=result.get("last_error"),
@@ -194,6 +197,7 @@ async def _main_async() -> int:
 
     # Use a lightweight monkeypatch — `pytest.MonkeyPatch` works outside pytest.
     import pytest
+
     mp = pytest.MonkeyPatch()
     ttar_sink: list[dict] = []
     try:
@@ -226,8 +230,8 @@ async def _main_async() -> int:
     success_rate = successful / total
     # We want parse_jd_success over the cases that *expected* parse to succeed.
     expected_parse_ok = [r for r in results if r.expected_status == "review"]
-    parse_jd_success_rate = (
-        sum(1 for r in expected_parse_ok if r.parse_jd_ok) / max(len(expected_parse_ok), 1)
+    parse_jd_success_rate = sum(1 for r in expected_parse_ok if r.parse_jd_ok) / max(
+        len(expected_parse_ok), 1
     )
 
     latencies = [r.latency_ms for r in results if r.parse_jd_ok]
@@ -282,9 +286,15 @@ async def _main_async() -> int:
     # Stdout summary for CI logs.
     print("─" * 60)
     print(f"TTAR gate — {total} cases")
-    print(f"  success_rate         {success_rate:.2%}  (≥ {threshold.get('success_min'):.0%})")
-    print(f"  parse_jd_success     {parse_jd_success_rate:.2%}  (≥ {threshold.get('parse_jd_success_min'):.0%})")
-    print(f"  fabrication_rate     {fabrication_rate}  (= {threshold.get('fabrication_max')})")
+    print(
+        f"  success_rate         {success_rate:.2%}  (≥ {threshold.get('success_min'):.0%})"
+    )
+    print(
+        f"  parse_jd_success     {parse_jd_success_rate:.2%}  (≥ {threshold.get('parse_jd_success_min'):.0%})"
+    )
+    print(
+        f"  fabrication_rate     {fabrication_rate}  (= {threshold.get('fabrication_max')})"
+    )
     print(f"  median_latency_ms    {median_latency_ms}")
     print(f"  p95_latency_ms       {p95_latency_ms}")
     print(f"  report               {REPORT_PATH}")
