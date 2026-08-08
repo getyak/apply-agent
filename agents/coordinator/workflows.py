@@ -15,20 +15,37 @@ paired with chip candidate answers to avoid blank-page anxiety.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any
 from uuid import UUID, uuid4
 
+import structlog
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 from langgraph.types import interrupt
 
 from agents.harness.audit import audit
 from agents.harness.checkpointer import build_resume_thread_id, get_checkpointer
+from agents.harness.recovery import (
+    ActorType,
+    EffectClass,
+    OperationSpec,
+    ReconcileOutcome,
+    ReconcileResult,
+    execute_with_recovery,
+)
 from agents.harness.state import BuildResumeState, PrepareApplicationState
 from agents.harness.ttar import measure_ttar
 from agents.nodes import appprep_agent, jobmatch_agent, resume_agent
+
+log = structlog.get_logger("agents.coordinator.workflows")
+
+
+class ApplicationPersistenceError(RuntimeError):
+    """Preparation artifacts could not be saved to their owned draft."""
+
 
 # Chip candidates per question — hand-curated to nudge specificity.
 TARGET_ROLE_CHIPS = [
@@ -317,6 +334,29 @@ async def start_build_from_scratch(user_id: UUID) -> dict[str, Any]:
 async def _parse_jd_node(state: PrepareApplicationState) -> dict[str, Any]:
     """Stage 1: pull JD from URL, structure it, write to jobs table."""
     started = time.perf_counter()
+    # The gateway can provide an ownership-checked JD already stored in PG.
+    # Prefer it over refetching the external page: this is faster, preserves
+    # the exact source the user reviewed, and avoids false SSRF/DNS blocks.
+    if state.get("jd_text"):
+        try:
+            parsed = state.get("parsed_jd") or jobmatch_agent.structure_stored_jd(state["jd_text"])
+        except Exception as exc:  # noqa: BLE001 — stage boundary
+            return _stage_failed(
+                state,
+                "parse_jd",
+                str(exc),
+                elapsed_ms_=time.perf_counter() - started,
+            )
+        stages = dict(state.get("stage_status") or {})
+        stages["parse_jd"] = "ok"
+        return {
+            "parsed_jd": parsed,
+            "stage_status": stages,
+            "_stage_timings": {
+                **(state.get("_stage_timings") or {}),  # type: ignore[misc]
+                "parse_jd_ms": int((time.perf_counter() - started) * 1000),
+            },
+        }
     try:
         result = await jobmatch_agent.parse_jd_from_url(
             state["jd_url"], user_id=state["user_id"], persist=True
@@ -350,14 +390,30 @@ async def _customize_resume_node(state: PrepareApplicationState) -> dict[str, An
 
     job_id = state.get("job_id") or uuid4()  # synthetic when persist hit no DSN
     try:
-        result = await resume_agent.customize(
-            base_resume=base,
-            jd_text=_render_jd_for_customize(parsed_jd, state.get("role_title")),
-            user_id=state["user_id"],
-            base_version=state.get("base_resume_version", 1),
-            base_id=state["base_resume_id"],
-            job_id=job_id,
+        result = await asyncio.wait_for(
+            resume_agent.customize(
+                base_resume=base,
+                jd_text=state.get("jd_text")
+                or _render_jd_for_customize(parsed_jd, state.get("role_title")),
+                user_id=state["user_id"],
+                base_version=state.get("base_resume_version", 1),
+                base_id=state["base_resume_id"],
+                job_id=job_id,
+            ),
+            timeout=35,
         )
+    except TimeoutError:
+        stages = dict(state.get("stage_status") or {})
+        stages["customize_resume"] = "fallback"
+        return {
+            "tailored_resume": base,
+            "tailored_resume_id": state["base_resume_id"],
+            "stage_status": stages,
+            "_stage_timings": {
+                **(state.get("_stage_timings") or {}),  # type: ignore[misc]
+                "customize_ms": int((time.perf_counter() - started) * 1000),
+            },
+        }
     except Exception as exc:  # noqa: BLE001 — saga catches all
         return _stage_failed(
             state, "customize_resume", str(exc), elapsed_ms_=time.perf_counter() - started
@@ -401,14 +457,24 @@ async def _cover_letter_node(state: PrepareApplicationState) -> dict[str, Any]:
     parsed_jd = state.get("parsed_jd") or {}
     company = state.get("company") or "the company"
     role_title = state.get("role_title") or "this role"
-    cover = await appprep_agent.generate_cover_letter(
-        tailored_resume=tailored,
-        base_resume=state.get("base_resume_content") or tailored,
-        parsed_jd=parsed_jd,
-        company=company,
-        role_title=role_title,
-        user_id=state["user_id"],
-    )
+    try:
+        cover = await asyncio.wait_for(
+            appprep_agent.generate_cover_letter(
+                tailored_resume=tailored,
+                base_resume=state.get("base_resume_content") or tailored,
+                parsed_jd=parsed_jd,
+                company=company,
+                role_title=role_title,
+                user_id=state["user_id"],
+            ),
+            timeout=25,
+        )
+    except TimeoutError:
+        cover = appprep_agent.template_cover_letter(
+            base_resume=state.get("base_resume_content") or tailored,
+            company=company,
+            role_title=role_title,
+        )
     stages = dict(state.get("stage_status") or {})
     stages["cover_letter"] = "fallback" if cover.fallback else "ok"
     return {
@@ -557,14 +623,20 @@ async def run_prepare_application(
     base_resume_id: UUID,
     base_resume_content: dict[str, Any],
     base_resume_version: int,
+    application_id: UUID,
     form_fields: list[dict[str, Any]] | None = None,
-    application_id: UUID | None = None,
     ui_locale: str | None = None,
+    job_id: UUID | None = None,
+    jd_text: str | None = None,
+    parsed_jd: dict[str, Any] | None = None,
+    company: str | None = None,
+    role_title: str | None = None,
 ) -> dict[str, Any]:
     """End-to-end driver — runs the graph wrapped in TTAR measurement.
 
-    Returns the final state plus the persisted application_id (creating a
-    row in application_drafts upfront so the TTAR write target exists).
+    Returns the final state plus the persisted application_id. The caller
+    must provide a user-owned draft so generated artifacts always have a
+    canonical, authorization-scoped write target.
 
     ``ui_locale`` (X-Relay-Locale, normalized to "en" / "zh") is stashed
     in the workflow state so future cover-letter / form-answer generators
@@ -572,14 +644,17 @@ async def run_prepare_application(
     cover-letter body) still follows the JD per
     ``agents/harness/locale.py`` ``artifact_language_directive``.
     """
-    app_id = application_id or await _create_application_draft(
-        user_id=user_id, base_resume_id=base_resume_id
-    )
+    app_id = application_id
 
     initial: PrepareApplicationState = {
         "user_id": user_id,
         "application_id": app_id,
         "jd_url": jd_url,
+        "job_id": job_id,
+        "jd_text": jd_text or "",
+        "parsed_jd": parsed_jd,
+        "company": company,
+        "role_title": role_title,
         "base_resume_id": base_resume_id,
         "base_resume_content": base_resume_content,
         "base_resume_version": base_resume_version,
@@ -591,89 +666,154 @@ async def run_prepare_application(
     }
 
     graph = build_prepare_application_graph()
-    async with measure_ttar(app_id) as ttar:
-        final_state = await graph.ainvoke(initial, config={"recursion_limit": 25})
-        # Push per-stage timings the nodes recorded in state into the TTAR record.
-        for stage, ms in (final_state.get("_stage_timings") or {}).items():
-            ttar.stage(stage, int(ms))
-        ttar.fabrication_attempts = int(final_state.get("fabrication_attempts", 0))
-        stage_status = final_state.get("stage_status") or {}
-        ttar.success = (
-            stage_status.get("parse_jd") == "ok"
-            and stage_status.get("customize_resume") in ("ok", "fallback")
-            and bool(final_state.get("cover_letter"))
+
+    async def execute() -> dict[str, Any]:
+        ready_for_review = False
+        async with measure_ttar(app_id, user_id=user_id) as ttar:
+            final_state = await graph.ainvoke(initial, config={"recursion_limit": 25})
+            # Push per-stage timings the nodes recorded in state into the TTAR record.
+            for stage, ms in (final_state.get("_stage_timings") or {}).items():
+                ttar.stage(stage, int(ms))
+            ttar.fabrication_attempts = int(final_state.get("fabrication_attempts", 0))
+            stage_status = final_state.get("stage_status") or {}
+            ready_for_review = (
+                stage_status.get("parse_jd") == "ok"
+                and stage_status.get("customize_resume") in ("ok", "fallback")
+                and bool(final_state.get("cover_letter"))
+            )
+            ttar.success = ready_for_review
+            persisted = await _patch_application_draft(
+                app_id,
+                user_id=user_id,
+                tailored_resume_id=final_state.get("tailored_resume_id"),
+                cover_letter=(final_state.get("cover_letter") or {}).get("body"),
+                form_answers=final_state.get("form_answers"),
+                status="review" if ready_for_review else "draft",
+            )
+            if not persisted:
+                raise ApplicationPersistenceError(
+                    "Application preparation completed but its artifacts could not be saved."
+                )
+
+        return {
+            "application_id": str(app_id),
+            "status": "review" if ready_for_review else "draft",
+            "stage_status": final_state.get("stage_status") or {},
+            "cover_letter": final_state.get("cover_letter"),
+            "form_answers": final_state.get("form_answers"),
+            "tailored_resume_id": (
+                str(final_state["tailored_resume_id"])
+                if final_state.get("tailored_resume_id")
+                else None
+            ),
+            "company": final_state.get("company"),
+            "role_title": final_state.get("role_title"),
+            "last_error": final_state.get("last_error"),
+        }
+
+    async def reconcile() -> ReconcileResult:
+        projection = await _application_prepare_projection(app_id, user_id=user_id)
+        if projection is None:
+            return ReconcileResult(
+                ReconcileOutcome.INCONCLUSIVE,
+                observation={"application_found": False},
+            )
+        applied = projection["status"] == "review" and (
+            bool(projection["cover_letter"]) or bool(projection["tailored_resume_id"])
         )
-        # Persist the workflow outputs back to the application_drafts row.
-        await _patch_application_draft(
-            app_id,
-            tailored_resume_id=final_state.get("tailored_resume_id"),
-            cover_letter=(final_state.get("cover_letter") or {}).get("body"),
-            form_answers=final_state.get("form_answers"),
-            status="review" if ttar.success else "draft",
+        return ReconcileResult(
+            ReconcileOutcome.APPLIED if applied else ReconcileOutcome.NOT_APPLIED,
+            result=projection if applied else None,
+            observation={
+                "application_found": True,
+                "observed_status": projection["status"],
+                "has_artifact": bool(
+                    projection["cover_letter"] or projection["tailored_resume_id"]
+                ),
+            },
         )
 
-    return {
-        "application_id": str(app_id),
-        "status": "review"
-        if (final_state.get("stage_status") or {}).get("parse_jd") == "ok"
-        else "draft",
-        "stage_status": final_state.get("stage_status") or {},
-        "cover_letter": final_state.get("cover_letter"),
-        "form_answers": final_state.get("form_answers"),
-        "tailored_resume_id": (
-            str(final_state["tailored_resume_id"])
-            if final_state.get("tailored_resume_id")
-            else None
+    envelope = await execute_with_recovery(
+        OperationSpec(
+            user_id=user_id,
+            operation_type="workflow.prepare_application",
+            idempotency_key=f"prepare-application:{app_id}",
+            request_payload={
+                "application_id": str(app_id),
+                "job_id": str(job_id) if job_id else None,
+                "jd_url": jd_url,
+                "base_resume_id": str(base_resume_id),
+                "base_resume_version": base_resume_version,
+                "form_fields": form_fields or [],
+                "ui_locale": ui_locale,
+            },
+            request_summary={"application_id": str(app_id)},
+            resource_ref={"application_id": str(app_id)},
+            actor_type=ActorType.RELAY,
+            effect_class=EffectClass.LOCAL_WRITE,
         ),
-        "company": final_state.get("company"),
-        "role_title": final_state.get("role_title"),
-        "last_error": final_state.get("last_error"),
-    }
+        execute,
+        reconcile=reconcile,
+        propagate_exceptions=(ApplicationPersistenceError,),
+    )
+    if envelope["status"] == "succeeded" and isinstance(envelope.get("result"), dict):
+        operation = {key: value for key, value in envelope.items() if key != "result"}
+        return {**envelope["result"], "operation": operation}
+    return envelope
 
 
-async def _create_application_draft(*, user_id: UUID, base_resume_id: UUID) -> UUID:
-    """INSERT a draft row so the TTAR write target exists; no-op without DSN."""
+async def _application_prepare_projection(
+    application_id: UUID, *, user_id: UUID
+) -> dict[str, Any] | None:
+    """Read-only reconciliation probe for an interrupted preparation write."""
+
     dsn = os.environ.get("RELAY_PG_DSN")
     if not dsn:
-        return uuid4()  # synthetic id for hermetic tests
+        return None
     try:
         import psycopg
-    except ImportError:
-        return uuid4()
-    sql = (
-        "INSERT INTO application_drafts (user_id, job_id, resume_version_id, status) "
-        "VALUES (%s, gen_random_uuid(), %s, 'draft') "
-        "RETURNING id"
-    )
-    # job_id is NOT NULL on the table; we don't know the real one yet, so use
-    # a placeholder UUID. parse_jd_node will UPDATE it in a later refactor;
-    # for now this row is the TTAR sink, the linked job is in jobs table.
-    try:
+
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql, (str(user_id), str(base_resume_id)))
+                await cur.execute(
+                    """
+                    SELECT status, tailored_resume_id, cover_letter
+                      FROM application_drafts
+                     WHERE id = %s AND user_id = %s
+                     LIMIT 1
+                    """,
+                    (str(application_id), str(user_id)),
+                )
                 row = await cur.fetchone()
-            await conn.commit()
-        return row[0] if row else uuid4()
-    except Exception:  # noqa: BLE001 boundary
-        return uuid4()
+        if not row:
+            return None
+        return {
+            "application_id": str(application_id),
+            "status": row[0],
+            "tailored_resume_id": str(row[1]) if row[1] else None,
+            "cover_letter": row[2],
+        }
+    except Exception:  # noqa: BLE001 - reconciliation remains read-only/fail-safe
+        return None
 
 
 async def _patch_application_draft(
     application_id: UUID,
     *,
+    user_id: UUID,
     tailored_resume_id: UUID | None,
     cover_letter: str | None,
     form_answers: list[dict] | None,
     status: str,
-) -> None:
+) -> bool:
     dsn = os.environ.get("RELAY_PG_DSN")
     if not dsn:
-        return
+        return True
     try:
         import psycopg
     except ImportError:
-        return
+        log.error("prepare_application.psycopg_missing")
+        return False
     import json as _json
 
     sql = (
@@ -683,7 +823,8 @@ async def _patch_application_draft(
         "       form_answers = COALESCE(%s::jsonb, form_answers), "
         "       status = %s, "
         "       updated_at = now() "
-        " WHERE id = %s"
+        " WHERE id = %s AND user_id = %s "
+        "RETURNING id"
     )
     params = (
         str(tailored_resume_id) if tailored_resume_id else None,
@@ -691,11 +832,27 @@ async def _patch_application_draft(
         _json.dumps(form_answers) if form_answers is not None else None,
         status,
         str(application_id),
+        str(user_id),
     )
     try:
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
+                row = await cur.fetchone()
             await conn.commit()
-    except Exception:  # noqa: BLE001 boundary
-        return
+        if row is None:
+            log.warning(
+                "prepare_application.draft_not_found",
+                application_id=str(application_id),
+                user_id=str(user_id),
+            )
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001 boundary
+        log.error(
+            "prepare_application.persist_failed",
+            application_id=str(application_id),
+            user_id=str(user_id),
+            error=str(exc),
+        )
+        return False

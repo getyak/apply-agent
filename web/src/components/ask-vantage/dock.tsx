@@ -451,11 +451,11 @@ export function AskVantageDock() {
       // Don't fight the slash palette or other inner popovers — they call
       // stopPropagation in their own Esc handlers, so by the time the event
       // bubbles here, those layers have closed first.
-      useDock.setState({ state: "docked" });
+      toggleFull();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state]);
+  }, [state, toggleFull]);
 
   // Auto-scroll to bottom as steps stream in.
   const stepCount = useAgentStream((s) => s.order.length);
@@ -513,6 +513,7 @@ export function AskVantageDock() {
   if (state === "closed") {
     return (
       <button
+        className="vantage-dock-launcher"
         onClick={toggleDock}
         data-tour="dock"
         type="button"
@@ -550,6 +551,7 @@ export function AskVantageDock() {
         }}
       >
         <span
+          className="vantage-dock-launcher-mark"
           aria-hidden
           style={{
             width: 28,
@@ -565,6 +567,7 @@ export function AskVantageDock() {
           <VantageMark size={16} />
         </span>
         <span
+          className="vantage-dock-launcher-label"
           aria-hidden
           style={{
             writingMode: "vertical-rl",
@@ -583,9 +586,10 @@ export function AskVantageDock() {
 
   const isFull = state === "full";
 
-  return (
+    return (
     <aside
       data-tour="dock"
+      className={`vantage-dock-shell${isFull ? " vantage-dock-full" : ""}`}
       style={
         isFull
           ? {
@@ -619,7 +623,7 @@ export function AskVantageDock() {
       )}
 
       <div
-        className="ds-backdrop"
+        className="ds-backdrop vantage-dock-header"
         style={{
           height: 60,
           flexShrink: 0,
@@ -672,6 +676,7 @@ export function AskVantageDock() {
             Triggers the same Bun /api/ask/sessions POST as the slash
             /new command and the popover's own "+ New session" button. */}
         <button
+          className="vantage-dock-new-session"
           onClick={async () => {
             try {
               const res = await ask.sessions.create();
@@ -716,6 +721,7 @@ export function AskVantageDock() {
           </svg>
         </button>
         <button
+          className="vantage-dock-full-toggle"
           onClick={toggleFull}
           title={isFull ? t("fullscreen.exit") : t("fullscreen.enter")}
           style={iconBtnStyle()}
@@ -737,7 +743,8 @@ export function AskVantageDock() {
             terse collapse chevron. */}
         {isFull ? (
           <button
-            onClick={() => useDock.setState({ state: "docked" })}
+            className="vantage-dock-exit-full"
+            onClick={toggleFull}
             title={t("fullscreen.exit")}
             aria-label={t("fullscreen.exit")}
             style={{
@@ -769,9 +776,11 @@ export function AskVantageDock() {
             <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
-            {t("fullscreen.exit")}
+            <span className="vantage-dock-exit-label">
+              {t("fullscreen.exit")}
+            </span>
             <span
-              className="ds-mono-9"
+              className="ds-mono-9 vantage-dock-exit-hint"
               style={{
                 padding: "1px 5px",
                 border: "1px solid #E8DCCA",
@@ -797,9 +806,10 @@ export function AskVantageDock() {
         )}
       </div>
 
-      <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
+      <div className="vantage-dock-body" style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
         {isFull && (
           <aside
+            className="vantage-dock-recent-rail"
             style={{
               width: 264,
               flexShrink: 0,
@@ -828,9 +838,10 @@ export function AskVantageDock() {
             <RecentRail scrollRoot={scrollRef} />
           </aside>
         )}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div className="vantage-dock-conversation" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div
             ref={scrollRef}
+            className="vantage-dock-scroll"
             style={{
               flex: 1,
               minHeight: 0,

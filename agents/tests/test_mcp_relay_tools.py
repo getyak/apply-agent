@@ -1073,9 +1073,7 @@ async def test_questionnaire_rejects_unreviewed_answers_and_fake_evidence() -> N
     await tools.reject_application_questionnaire(
         compilation_id=compilation_id,
         job_url=common["job_url"],
-        confirmation=(
-            f"REJECT QUESTIONNAIRE {programming_languages['application_id']}"
-        ),
+        confirmation=(f"REJECT QUESTIONNAIRE {programming_languages['application_id']}"),
     )
     with pytest.raises(CareerGraphStateError, match="must be empty"):
         await tools.propose_application_questionnaire(
@@ -1291,6 +1289,40 @@ async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None
         ]["invalidated_at"]
         is not None
     )
+    keyed_authorization = await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
+        visible_text="Submit application",
+        confirmation=phrase,
+        observed_field_ids=["resume_cv"],
+        completed_field_ids=["resume_cv"],
+        idempotency_key="authorize-browser-click-001",
+    )
+    authorization_count = len(tools.FAKE_STORE.submission_authorizations)
+    replayed_authorization = await tools.authorize_application_submission(
+        compilation_id=compilation_id,
+        job_url="https://jobs.lever.co/example/abc",
+        observed_url="https://jobs.lever.co/example/abc/apply",
+        observed_company="Example",
+        observed_role_title="Engineer",
+        visible_text="Submit application",
+        confirmation=phrase,
+        observed_field_ids=["resume_cv"],
+        completed_field_ids=["resume_cv"],
+        idempotency_key="authorize-browser-click-001",
+    )
+    assert (
+        replayed_authorization["submission_authorization_id"]
+        == (keyed_authorization["submission_authorization_id"])
+    )
+    assert (
+        replayed_authorization["operation"]["operation_id"]
+        == (keyed_authorization["operation"]["operation_id"])
+    )
+    assert len(tools.FAKE_STORE.submission_authorizations) == authorization_count
     revised = await tools.propose_application_questionnaire(
         compilation_id=compilation_id,
         job_url="https://jobs.lever.co/example/abc",
@@ -1308,9 +1340,9 @@ async def test_browser_checkpoint_is_owned_and_never_authorizes_submit() -> None
         ],
     )
     assert (
-        tools.FAKE_STORE.submission_authorizations[
-            authorization["submission_authorization_id"]
-        ]["invalidated_at"]
+        tools.FAKE_STORE.submission_authorizations[authorization["submission_authorization_id"]][
+            "invalidated_at"
+        ]
         is not None
     )
     await tools.approve_application_questionnaire(

@@ -19,6 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { useAgentStream } from "../store";
+import { buildStreamRequestParts } from "../consumer";
 import type { AgentEvent } from "../schema";
 
 function resetStore() {
@@ -87,5 +88,37 @@ describe("D4 helper semantics (via public contract)", () => {
     } as unknown as AgentEvent;
     const asAny = evt as unknown as { reason?: unknown };
     expect(asAny.reason).toBe("buffer_evicted");
+  });
+});
+
+describe("Ask routing headers", () => {
+  it("moves thread and surface to headers and keeps them out of AskPayload", () => {
+    const { payload, headers } = buildStreamRequestParts(
+      {
+        message: "hello",
+        thread_id: "ask_vantage:user-1",
+        surface: "resume_studio",
+      },
+      "jwt",
+      "zh",
+      0,
+      false,
+    );
+    expect(payload).toEqual({ message: "hello", locale: "zh" });
+    expect(headers["X-Relay-Thread-Id"]).toBe("ask_vantage:user-1");
+    expect(headers["X-Relay-Surface"]).toBe("resume_studio");
+    expect(headers.Authorization).toBe("Bearer jwt");
+  });
+
+  it("sends a resume cursor in both body and Last-Event-ID", () => {
+    const { payload, headers } = buildStreamRequestParts(
+      { command: { resume: "approve" }, thread_id: "ask_vantage:user-1" },
+      null,
+      "en",
+      42,
+      true,
+    );
+    expect(payload.last_event_id).toBe(42);
+    expect(headers["Last-Event-ID"]).toBe("42");
   });
 });

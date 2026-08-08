@@ -5,7 +5,7 @@ Relay — AI job-search copilot. Status: infra ready, no app code yet.
 ## Gotchas (read every time)
 
 - **Hybrid backend**: API layer is TypeScript (Hono/Bun), Agent layer is Python (FastAPI + LangGraph). Never mix — they communicate only via HTTP + Redis + shared PG.
-- **LLM via OpenRouter**: NOT Codex API. Uses `OPENROUTER_BASE_URL` + `ChatOpenAI` with `base_url` override. Models: DeepSeek V4 Pro (heavy) / GLM-4.7 (general) / DeepSeek V4 Flash (fast).
+- **LLM via OpenRouter**: NOT Codex API. Uses the provider-native `langchain-openrouter` `ChatOpenRouter` adapter so reasoning/tool metadata survives streaming. Models: DeepSeek V4 Pro (heavy) / GLM-4.7 (general) / DeepSeek V4 Flash (fast).
 - **Agent framework**: LangGraph `create_react_agent`, NOT legacy LangChain `AgentExecutor`. HITL uses `interrupt()` + `Command(resume=...)`.
 - **Client-side execution**: Job submissions happen in user's browser extension, NEVER server-side. This is the core design constraint.
 - **Non-standard ports**: PG on `5433`, Redis on `6380` (local machine has default ports occupied).

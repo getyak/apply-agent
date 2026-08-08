@@ -165,9 +165,7 @@ def assess_browser_checkpoint(
                     observed_role_title
                 )
                 if not role_matches:
-                    reasons.append(
-                        "browser job role title does not match the tracked application"
-                    )
+                    reasons.append("browser job role title does not match the tracked application")
         if resolved_expected_job_id:
             job_id_matches = resolved_expected_job_id == resolved_observed_job_id
             if not job_id_matches:

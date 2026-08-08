@@ -90,7 +90,11 @@ def seed():
         "parsed": {
             "basics": {"name": "Chain Eight"},
             "work": [
-                {"name": "Acme", "position": "Engineer", "highlights": ["Led migration of the monolith"]}
+                {
+                    "name": "Acme",
+                    "position": "Engineer",
+                    "highlights": ["Led migration of the monolith"],
+                }
             ],
         },
         "raw": "Chain Eight — Engineer at Acme",
@@ -106,7 +110,12 @@ def seed():
             """INSERT INTO resumes
                  (id, user_id, version, content, is_base, track, bullet_index)
                VALUES (%s, %s, 0, %s, true, 'original', %s)""",
-            (str(original_id), str(user_id), json.dumps(original_content), json.dumps(bullet_index)),
+            (
+                str(original_id),
+                str(user_id),
+                json.dumps(original_content),
+                json.dumps(bullet_index),
+            ),
         )
         cur.execute(
             """INSERT INTO resumes
@@ -178,7 +187,9 @@ def test_original_immutability(seed):
         conn.commit()
         label_ok = cur.rowcount == 1
 
-    _dim("original-immutability", 15, blocked and label_ok, f"blocked={blocked} label_ok={label_ok}")
+    _dim(
+        "original-immutability", 15, blocked and label_ok, f"blocked={blocked} label_ok={label_ok}"
+    )
     assert blocked, "content UPDATE on track='original' was NOT blocked by the trigger"
     assert label_ok, "metadata-only UPDATE on original should be allowed"
 
@@ -315,7 +326,9 @@ def test_list_and_trace_and_envelope(client, seed):
         body_ok = False
 
     _dim("trace-propagation", 10, trace_ok, f"sent={trace_id} echoed={echoed}")
-    _dim("envelope-shape", 10, status_ok and body_ok, f"status={resp.status_code} body_ok={body_ok}")
+    _dim(
+        "envelope-shape", 10, status_ok and body_ok, f"status={resp.status_code} body_ok={body_ok}"
+    )
     assert status_ok, f"expected 404 for a non-existent suggestion, got {resp.status_code}"
     assert trace_ok, f"X-Trace-Id not echoed: sent={trace_id!r} got={echoed!r}"
     assert body_ok, f"error envelope shape unexpected: {resp.text[:200]}"

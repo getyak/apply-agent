@@ -422,8 +422,7 @@ async def replay_frames(thread_id: str, *, after_seq: int) -> ReplayResult:
                 # very rows.
                 if not frames and after_seq > 0:
                     await cur.execute(
-                        "SELECT MAX(sequence) "
-                        "FROM ask_stream_events WHERE thread_id = %s",
+                        "SELECT MAX(sequence) FROM ask_stream_events WHERE thread_id = %s",
                         (thread_id,),
                     )
                     maxrow = await cur.fetchone()

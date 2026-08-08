@@ -103,13 +103,7 @@ async def test_initialize_lists_review_gated_tools_without_user_id() -> None:
                 "confirmation",
                 "observed_field_ids",
                 "completed_field_ids",
-            }.issubset(
-                set(
-                    by_name["authorize_application_submission"].inputSchema[
-                        "required"
-                    ]
-                )
-            )
+            }.issubset(set(by_name["authorize_application_submission"].inputSchema["required"]))
             checkpoint_schema = by_name["assess_application_browser_checkpoint"].inputSchema[
                 "properties"
             ]

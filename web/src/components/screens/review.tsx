@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useVantage, JOBS } from "@/lib/store";
 import { Button, Card as UICard, CardHeader as UICardHeader, Badge, ScoreRing } from "@/components/ui";
@@ -36,10 +37,19 @@ function escapeHtml(s: string): string {
 
 export function ReviewScreen() {
   const t = useTranslations("apply");
+  const router = useRouter();
   const activeId = useVantage((s) => s.activeId);
   const backHome = useVantage((s) => s.backHome);
   const submitReview = useVantage((s) => s.submitReview);
   const apiJobs = useVantage((s) => s.apiJobs);
+  const returnToToday = () => {
+    backHome();
+    router.push("/app/today");
+  };
+  const preparePackage = () => {
+    submitReview();
+    router.push("/app/applications");
+  };
 
   const job = JOBS.find((j) => j.id === activeId);
   const apiJob = apiJobs.find((j) => j.id === activeId);
@@ -48,7 +58,8 @@ export function ReviewScreen() {
 
   if (apiJob && !job) {
     const p = apiJob.parsed;
-    const match = apiJob.matchScore ?? 50;
+    const match = apiJob.matchScore;
+    const scored = typeof match === "number";
     const location = p?.locations?.join(", ") || (p?.remote ? "Remote" : "");
     const salary = p?.salary_min && p?.salary_max ? `$${Math.round(p.salary_min / 1000)}–${Math.round(p.salary_max / 1000)}k` : "";
     const skills = p?.skills || [];
@@ -56,12 +67,12 @@ export function ReviewScreen() {
     const missing = apiJob.missingSkills || [];
 
     const TopBar = (
-      <div className="h-[60px] shrink-0 border-b border-border bg-paper flex items-center px-5 gap-4">
-        <Button onClick={backHome} variant="ghost" size="sm" leadingIcon={<ArrowLeft size={15} />} className="!px-1">
+      <div className="h-[60px] shrink-0 border-b border-border bg-paper flex items-center px-4 sm:px-5 gap-3 sm:gap-4">
+        <Button onClick={returnToToday} variant="ghost" size="sm" leadingIcon={<ArrowLeft size={15} />} className="!px-1">
           {t("review.back")}
         </Button>
         <span className="w-px h-5 bg-border-dark" />
-        <span className="font-body text-[13.5px] text-ink-light">
+        <span className="min-w-0 truncate font-body text-[13.5px] text-ink-light">
           {t("review.reviewApplication")} · <span className="font-semibold text-ink">{apiJob.company}</span>
         </span>
       </div>
@@ -70,8 +81,8 @@ export function ReviewScreen() {
     return (
       <div className="h-screen flex flex-col bg-paper">
         {TopBar}
-        <div className="flex-1 flex min-h-0">
-          <aside className="w-[360px] shrink-0 bg-cream border-r border-border overflow-y-auto p-7">
+        <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-y-auto lg:overflow-hidden">
+          <aside className="w-full lg:w-[360px] shrink-0 bg-cream border-b lg:border-b-0 lg:border-r border-border lg:overflow-y-auto p-5 sm:p-7">
             <div className="w-[54px] h-[54px] rounded-[13px] bg-paper border border-cream-border flex items-center justify-center mb-4 font-mono font-semibold text-[20px] text-brown">
               {apiJob.company.charAt(0)}
             </div>
@@ -80,13 +91,27 @@ export function ReviewScreen() {
               {apiJob.company}{location ? ` · ${location}` : ""}{salary ? ` · ${salary}` : ""}
             </div>
             <div className="mt-7 flex items-center gap-4">
-              <ScoreRing value={match} size={72} />
+              {scored ? (
+                <ScoreRing value={match} size={72} />
+              ) : (
+                <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-full border border-border bg-paper font-display text-[22px] font-bold text-ink-muted">
+                  —
+                </div>
+              )}
               <div>
                 <div className="font-display font-bold text-[15px] text-ink">
-                  {match >= 85 ? t("review.strongFit") : match >= 70 ? t("review.goodFit") : t("review.fairFit")}
+                  {scored
+                    ? match >= 85
+                      ? t("review.strongFit")
+                      : match >= 70
+                        ? t("review.goodFit")
+                        : t("review.fairFit")
+                    : t("review.notScored")}
                 </div>
                 <div className="font-body text-[13px] text-ink-light leading-[1.4]">
-                  {t("review.skillsMatched", { count: matched.length })}
+                  {scored
+                    ? t("review.skillsMatched", { count: matched.length })
+                    : t("review.scorePending")}
                 </div>
               </div>
             </div>
@@ -112,10 +137,17 @@ export function ReviewScreen() {
             )}
           </aside>
 
-          <section className="flex-1 overflow-y-auto">
-            <div className="max-w-[640px] mx-auto px-8 py-8">
+          <section className="flex-1 lg:overflow-y-auto">
+            <div className="max-w-[640px] mx-auto px-5 sm:px-8 py-7 sm:py-8">
               <h2 className="font-display font-bold text-[20px] text-ink">{t("review.yourApplication")}</h2>
               <p className="font-body text-[13.5px] text-ink-light mt-1 mb-6">{t("review.reviewDetails")}</p>
+
+              <div className="mb-5 flex items-start gap-2.5 rounded-[11px] border border-cream-border bg-cream p-3.5 font-body text-[12.5px] leading-[1.5] text-ink-light">
+                <span className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-green-bg">
+                  <Check size={11} className="text-green" strokeWidth={2.6} />
+                </span>
+                {t("review.safetyNote")}
+              </div>
 
               <UICard padding="md">
                 <UICardHeader title={t("review.jobDetails")} tag={t("review.fromDatabase")} />
@@ -131,18 +163,23 @@ export function ReviewScreen() {
           </section>
         </div>
 
-        <div className="shrink-0 border-t border-border bg-white flex items-center gap-4 px-6 py-3.5">
+        <div className="shrink-0 border-t border-border bg-white flex flex-wrap items-center gap-3 px-4 sm:px-6 py-3.5">
           <div className="flex items-center gap-2 font-body text-[13px] text-ink-light">
             <span className="w-[18px] h-[18px] rounded-full bg-green-bg flex items-center justify-center shrink-0" aria-hidden>
               <Check size={11} className="text-green" strokeWidth={2.6} />
             </span>
             <span>
-              <span className="font-semibold text-ink">{t("review.matchPct", { pct: match })}</span> · {t("review.skillsAligned", { count: matched.length })}
+              <span className="font-semibold text-ink">
+                {scored
+                  ? t("review.matchPct", { pct: match })
+                  : t("review.notScored")}
+              </span>
+              {scored ? ` · ${t("review.skillsAligned", { count: matched.length })}` : null}
             </span>
           </div>
           <div className="ml-auto flex items-center gap-2.5">
-            <Button onClick={backHome} variant="secondary" size="md">{t("review.saveForLater")}</Button>
-            <Button onClick={submitReview} size="md" trailingIcon={<ArrowRight size={15} />}>
+            <Button onClick={returnToToday} variant="secondary" size="md">{t("review.saveForLater")}</Button>
+            <Button onClick={preparePackage} size="md" trailingIcon={<ArrowRight size={15} />}>
               {t("review.submitApplication")}
             </Button>
           </div>
@@ -154,16 +191,16 @@ export function ReviewScreen() {
   if (!job) return null;
 
   const TopBar = (
-    <div className="h-[60px] shrink-0 border-b border-border bg-paper flex items-center px-5 gap-4">
+    <div className="h-[60px] shrink-0 border-b border-border bg-paper flex items-center px-4 sm:px-5 gap-3 sm:gap-4">
       <button
-        onClick={backHome}
+        onClick={returnToToday}
         className="cursor-pointer inline-flex items-center gap-1.5 font-body font-medium text-[13.5px] text-ink-light hover:text-ink transition-colors bg-transparent border-none"
       >
         <ArrowLeft size={15} />
         {t("review.back")}
       </button>
       <span className="w-px h-5 bg-border-dark" />
-      <span className="font-body text-[13.5px] text-ink-light">
+      <span className="min-w-0 truncate font-body text-[13.5px] text-ink-light">
         {t("review.reviewApplication")} ·{" "}
         <span className="font-semibold text-ink">{job.co}</span>
       </span>
@@ -194,7 +231,7 @@ export function ReviewScreen() {
             <p className="font-body text-[13px] text-ink-muted mb-6">
               {t("review.externalRole")}
             </p>
-            <Button onClick={backHome} size="md">{t("review.backToToday")}</Button>
+            <Button onClick={returnToToday} size="md">{t("review.backToToday")}</Button>
           </div>
         </div>
       </div>
@@ -205,9 +242,9 @@ export function ReviewScreen() {
     <div className="h-full flex flex-col bg-paper">
       {TopBar}
 
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-y-auto lg:overflow-hidden">
         {/* Left panel */}
-        <aside className="w-[360px] shrink-0 bg-cream border-r border-border overflow-y-auto p-7">
+        <aside className="w-full lg:w-[360px] shrink-0 bg-cream border-b lg:border-b-0 lg:border-r border-border lg:overflow-y-auto p-5 sm:p-7">
           <div className="w-[54px] h-[54px] rounded-[13px] bg-paper border border-cream-border flex items-center justify-center mb-4 font-mono font-semibold text-[20px] text-brown">
             {job.mono}
           </div>
@@ -252,8 +289,8 @@ export function ReviewScreen() {
         </aside>
 
         {/* Right panel */}
-        <section className="flex-1 overflow-y-auto">
-          <div className="max-w-[640px] mx-auto px-8 py-8">
+        <section className="flex-1 lg:overflow-y-auto">
+          <div className="max-w-[640px] mx-auto px-5 sm:px-8 py-7 sm:py-8">
             <h2 className="font-display font-bold text-[20px] text-ink">
               {t("review.yourApplication")}
             </h2>
@@ -308,7 +345,7 @@ export function ReviewScreen() {
       </div>
 
       {/* Sticky submit bar */}
-      <div className="shrink-0 border-t border-border bg-white flex items-center gap-4 px-6 py-3.5">
+      <div className="shrink-0 border-t border-border bg-white flex flex-wrap items-center gap-3 px-4 sm:px-6 py-3.5">
         <div className="flex items-center gap-2 font-body text-[13px] text-ink-light">
           <span className="w-[18px] h-[18px] rounded-full bg-green-bg flex items-center justify-center shrink-0" aria-hidden>
             <Check size={11} className="text-green" strokeWidth={2.6} />
@@ -318,8 +355,8 @@ export function ReviewScreen() {
           </span>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
-          <Button onClick={backHome} variant="secondary" size="md">{t("review.saveForLater")}</Button>
-          <Button onClick={submitReview} size="md" trailingIcon={<ArrowRight size={15} />}>
+          <Button onClick={returnToToday} variant="secondary" size="md">{t("review.saveForLater")}</Button>
+          <Button onClick={preparePackage} size="md" trailingIcon={<ArrowRight size={15} />}>
             {t("review.looksRightSubmit")}
           </Button>
         </div>

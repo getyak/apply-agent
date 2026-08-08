@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { config } from "../config";
 import { query } from "../db";
-import { ConflictError, UpstreamError } from "../errors";
+import { ConflictError, NotFoundError, UpstreamError } from "../errors";
 import { resolveLocale } from "../locale";
 import { authMiddleware } from "../middleware/auth";
 import { idempotency } from "../middleware/idempotency";
@@ -45,6 +45,14 @@ app.post("/prepare", idempotency(), validateBody(PrepareApplicationSchema), asyn
   const { jobId, resumeId, coverLetter, formAnswers } = c.get(
     "validatedBody",
   ) as PrepareApplication;
+
+  // A résumé id is optional (the preparation saga can select the current
+  // base résumé), but when the caller supplies one it must belong to the
+  // authenticated user. The FK alone only proves that the UUID exists and
+  // would otherwise allow a draft to reference another user's private data.
+  if (resumeId) {
+    await requireOwnership("resumes", resumeId, userId, "id");
+  }
 
   const result = await query(
     `WITH event_context AS MATERIALIZED (
@@ -98,8 +106,43 @@ app.post(
       );
     }
     const base = baseResume.rows[0]!;
-    const content =
+    const storedContent =
       typeof base.content === "string" ? JSON.parse(base.content) : base.content;
+    const content =
+      storedContent &&
+      typeof storedContent === "object" &&
+      !Array.isArray(storedContent) &&
+      "parsed" in storedContent &&
+      (storedContent as { parsed?: unknown }).parsed &&
+      typeof (storedContent as { parsed?: unknown }).parsed === "object"
+        ? (storedContent as { parsed: unknown }).parsed
+        : storedContent;
+
+    // Reuse the canonical JD already attached to this user-owned draft. The
+    // previous flow re-fetched the public URL, which was slower and could
+    // correctly trip SSRF/DNS-rebinding defenses even though the source text
+    // was already safely stored in PostgreSQL.
+    const draftJob = await query<{
+      id: string;
+      jd_text: string | null;
+      parsed: unknown;
+      company: string;
+      role_title: string;
+    }>(
+      `SELECT j.id, j.jd_text, j.parsed, j.company, j.role_title
+         FROM application_drafts ad
+         JOIN jobs j ON j.id = ad.job_id
+        WHERE ad.id = $1 AND ad.user_id = $2
+        LIMIT 1`,
+      [applicationId, userId],
+    );
+    const job = draftJob.rows[0];
+    if (!job) {
+      // Keep absent and foreign ids indistinguishable, and stop before the
+      // Python workflow receives an application id it is not authorized to
+      // mutate.
+      throw new NotFoundError("Application not found");
+    }
 
     // 2. Forward to the Python agent layer.
     const target = `${config.AGENT_BASE_URL.replace(/\/$/, "")}/applications/prepare`;
@@ -131,6 +174,12 @@ app.post(
         base_resume_version: base.version,
         form_fields: formFields ?? [],
         application_id: applicationId,
+        job_id: job.id,
+        jd_text: job.jd_text,
+        parsed_jd:
+          typeof job.parsed === "string" ? JSON.parse(job.parsed) : job.parsed,
+        company: job.company,
+        role_title: job.role_title,
       }),
     });
     if (!agentResp.ok) {

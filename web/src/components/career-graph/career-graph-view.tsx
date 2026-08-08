@@ -40,6 +40,33 @@ function valueText(value: unknown): string {
   return "—";
 }
 
+const UUID_PATTERN =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+
+export function displayChangeSummary(
+  summary: string,
+  importLabel = "Import résumé",
+): string {
+  return summary
+    .replace(new RegExp(`:\\s*${UUID_PATTERN.source}`, "gi"), "")
+    .replace(UUID_PATTERN, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^Import résumé\b/i, importLabel)
+    .trim();
+}
+
+function displayEntityReference(reference: string): string {
+  if (UUID_PATTERN.test(reference)) {
+    UUID_PATTERN.lastIndex = 0;
+    return "";
+  }
+  UUID_PATTERN.lastIndex = 0;
+  const label = reference.includes(":")
+    ? reference.slice(reference.indexOf(":") + 1)
+    : reference;
+  return label.replaceAll(/[-_]/g, " ").trim();
+}
+
 function entityTitle(entity: CareerGraphEntity | null): string {
   if (!entity) return "—";
   const data = entity.data ?? {};
@@ -50,18 +77,32 @@ function entityTitle(entity: CareerGraphEntity | null): string {
     data.organization ??
     data.institution ??
     data.language;
-  return typeof candidate === "string" && candidate.trim() ? candidate : entity.id;
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate
+    : entity.type.replaceAll(/[-_]/g, " ");
 }
 
 function EntitySnapshot({
   entity,
   label,
+  referenceLabels,
 }: {
   entity: CareerGraphEntity | null;
   label: string;
+  referenceLabels: Map<string, string>;
 }) {
+  const t = useTranslations("careerGraph");
   if (!entity) return null;
   const data = Object.entries(entity.data ?? {});
+  const from = entity.from
+    ? referenceLabels.get(entity.from) ?? displayEntityReference(entity.from)
+    : "";
+  const to = entity.to
+    ? referenceLabels.get(entity.to) ?? displayEntityReference(entity.to)
+    : "";
+  const sourceVersion = entity.provenance?.source_ref?.match(
+    /^resume:[^:]+:v(\d+)$/,
+  )?.[1];
   return (
     <div className="min-w-0 rounded-[10px] border border-border bg-white px-3.5 py-3">
       <div className="mb-2 font-mono text-[9px] font-semibold uppercase tracking-[0.8px] text-ink-muted">
@@ -69,9 +110,9 @@ function EntitySnapshot({
       </div>
       {entity.from && entity.to ? (
         <div className="flex items-center gap-2 font-mono text-[11px] text-ink-light">
-          <span className="truncate">{entity.from}</span>
+          <span className="truncate">{from || t("review.factReference")}</span>
           <ArrowRight className="h-3.5 w-3.5 shrink-0 text-amber" aria-hidden />
-          <span className="truncate">{entity.to}</span>
+          <span className="truncate">{to || t("review.factReference")}</span>
         </div>
       ) : (
         <dl className="space-y-1.5">
@@ -90,14 +131,24 @@ function EntitySnapshot({
       {entity.provenance?.source_ref && (
         <div className="mt-3 flex items-center gap-1.5 border-t border-border pt-2 font-mono text-[9.5px] text-ink-muted">
           <Link2 className="h-3 w-3 shrink-0" aria-hidden />
-          <span className="truncate">{entity.provenance.source_ref}</span>
+          <span className="truncate">
+            {sourceVersion
+              ? t("review.resumeSource", { version: sourceVersion })
+              : t("review.recordedSource")}
+          </span>
         </div>
       )}
     </div>
   );
 }
 
-function EntityChangeCard({ item }: { item: CareerGraphEntityChange }) {
+function EntityChangeCard({
+  item,
+  referenceLabels,
+}: {
+  item: CareerGraphEntityChange;
+  referenceLabels: Map<string, string>;
+}) {
   const t = useTranslations("careerGraph");
   const active = item.after ?? item.before;
   const tone =
@@ -109,7 +160,7 @@ function EntityChangeCard({ item }: { item: CareerGraphEntityChange }) {
 
   return (
     <article
-      data-testid={`career-change-${item.entity}-${item.id}`}
+      data-testid={`career-change-${item.entity}`}
       className="rounded-[12px] border border-border bg-cream/35 p-3.5"
     >
       <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
@@ -118,7 +169,7 @@ function EntityChangeCard({ item }: { item: CareerGraphEntityChange }) {
             {entityTitle(active)}
           </div>
           <div className="mt-0.5 truncate font-mono text-[9.5px] text-ink-muted">
-            {active?.type ?? item.entity} · {item.id}
+            {active?.type ?? item.entity}
           </div>
         </div>
         <span
@@ -135,10 +186,18 @@ function EntityChangeCard({ item }: { item: CareerGraphEntityChange }) {
         }
       >
         {item.before && (
-          <EntitySnapshot entity={item.before} label={t("review.before")} />
+          <EntitySnapshot
+            entity={item.before}
+            label={t("review.before")}
+            referenceLabels={referenceLabels}
+          />
         )}
         {item.after && (
-          <EntitySnapshot entity={item.after} label={t("review.after")} />
+          <EntitySnapshot
+            entity={item.after}
+            label={t("review.after")}
+            referenceLabels={referenceLabels}
+          />
         )}
       </div>
     </article>
@@ -171,6 +230,12 @@ export function CareerGraphReviewPanel({
     ...change.review_summary.nodes,
     ...change.review_summary.edges,
   ];
+  const referenceLabels = new Map<string, string>();
+  for (const item of change.review_summary.nodes) {
+    for (const entity of [item.after, item.before]) {
+      if (entity) referenceLabels.set(entity.id, entityTitle(entity));
+    }
+  }
 
   return (
     <section
@@ -193,11 +258,8 @@ export function CareerGraphReviewPanel({
               id="career-change-review-title"
               className="font-display text-[18px] font-bold tracking-[-0.3px] text-ink"
             >
-              {change.summary}
+              {displayChangeSummary(change.summary, t("review.importSummary"))}
             </h2>
-            <p className="mt-1 font-mono text-[10px] text-ink-muted">
-              {change.id}
-            </p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-[9px] bg-green-bg px-3 py-2">
@@ -230,7 +292,13 @@ export function CareerGraphReviewPanel({
 
       <div className="max-h-[46vh] space-y-3 overflow-y-auto px-5 py-4">
         {items.length > 0 ? (
-          items.map((item) => <EntityChangeCard key={`${item.entity}:${item.id}`} item={item} />)
+          items.map((item) => (
+            <EntityChangeCard
+              key={`${item.entity}:${item.id}`}
+              item={item}
+              referenceLabels={referenceLabels}
+            />
+          ))
         ) : (
           <EmptyState title={t("review.noDiff")} description={t("review.noDiffBody")} />
         )}
@@ -577,7 +645,8 @@ export function CareerGraphView() {
               >
                 {overview.source_resumes.map((resume) => (
                   <option key={resume.id} value={resume.id}>
-                    {resume.label || t("import.unnamed")} · v{resume.version} · {resume.track}
+                    {resume.label || t("import.unnamed")} · v{resume.version} ·{" "}
+                    {t(`import.track.${resume.track}`)}
                   </option>
                 ))}
               </select>
@@ -625,7 +694,7 @@ export function CareerGraphView() {
                 <button
                   key={change.id}
                   type="button"
-                  data-testid={`career-change-select-${change.id}`}
+                  data-testid="career-change-select"
                   aria-current={active ? "true" : undefined}
                   onClick={() => chooseChange(change.id)}
                   className={`w-full rounded-[10px] border px-3 py-3 text-left transition-colors ${
@@ -635,7 +704,7 @@ export function CareerGraphView() {
                   }`}
                 >
                   <div className="line-clamp-2 font-body text-[12.5px] font-semibold leading-[1.35] text-ink">
-                    {change.summary}
+                    {displayChangeSummary(change.summary, t("review.importSummary"))}
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <span className="font-mono text-[9px] uppercase tracking-[0.4px] text-ink-muted">

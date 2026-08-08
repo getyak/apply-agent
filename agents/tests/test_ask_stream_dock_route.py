@@ -282,42 +282,34 @@ def test_ask_stream_dock_persists_assistant_text(client, monkeypatch):
     assert kwargs["assistant_text"] == "Hello there."
 
 
-def test_ask_stream_dock_fast_path_skips_react(client, monkeypatch):
-    """High-confidence regex bypasses the dock loop and goes to dispatch."""
+def test_ask_stream_dock_clear_command_stays_on_agui(client, monkeypatch):
+    """Clear commands must not fall back to the legacy SSE vocabulary."""
     monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
-    monkeypatch.setattr(srv, "_DOCK_REGEX_FAST_PATH_THRESHOLD", 0.9)
     tc, _ = client
-
-    async def fake_dispatch(*args, **kwargs):
-        return {"agent": "applications", "action": "list", "count": 0, "items": []}
 
     dock_called = {"n": 0}
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[str]:
         dock_called["n"] += 1
-        if False:  # pragma: no cover
-            yield ""
+        for frame in _agui_frames(with_tool=False):
+            yield frame
 
     with (
-        patch("agents.api.server.dispatch", new=fake_dispatch),
         patch.object(dock_agent, "run_dock_turn", new=fake_run_dock_turn),
         patch("agents.api.server.persist_turn", new=AsyncMock()),
     ):
         resp = tc.post("/ask/stream", json={"message": "list my applications please"})
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
-    types = [e.get("event") for e in events]
-    assert "intent" in types
-    assert "result" in types
-    assert dock_called["n"] == 0
-    intent_evt = next(e for e in events if e.get("event") == "intent")
-    assert intent_evt["via"] == "regex_fast_path"
+    assert dock_called["n"] == 1
+    assert any(e.get("type") == "RUN_STARTED" for e in events)
+    assert any(e.get("type") == "RUN_FINISHED" for e in events)
+    assert not any(e.get("event") in ("thinking", "intent", "result", "done") for e in events)
 
 
 def test_ask_stream_dock_error_emits_run_error(client, monkeypatch):
     """An exception inside the dock turn surfaces as an AG-UI RUN_ERROR frame."""
     monkeypatch.setattr(srv, "_DOCK_REACT_ENABLED", True)
-    monkeypatch.setattr(srv, "_DOCK_REGEX_FAST_PATH_THRESHOLD", 0.99)
     tc, _ = client
 
     async def fake_run_dock_turn(**_kw) -> AsyncIterator[str]:

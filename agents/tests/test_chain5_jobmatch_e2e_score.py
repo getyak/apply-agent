@@ -258,7 +258,11 @@ CASES: list[dict] = [
     },
     {
         "case_id": "malformed_degrades",
-        "url": "https://example.com/careers/whatever",
+        # Use a literal public address so this mock-transport case stays
+        # independent of local DNS proxies (for example Clash fake-IP maps
+        # example.com into 198.18.0.0/15, which the production SSRF guard
+        # correctly rejects before the malformed response can be exercised).
+        "url": "https://1.1.1.1/careers/whatever",
         "degraded": True,
     },
 ]

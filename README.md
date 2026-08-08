@@ -2,141 +2,206 @@
 
 # Relay
 
-**一个简历全生命周期的 AI 求职副驾 · An open, client-side AI job-search copilot**
+### 开源的 AI 求职执行系统
 
-_发现职位 → 定制简历 → 一键投递 → 面试准备 → 追踪沉淀_
+**让智能体找职位、定制简历、准备投递和面试。让人保留事实与最终提交权。**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-3a3fd6.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-read-0b9d7e.svg)](docs/README.md)
-[![Status](https://img.shields.io/badge/status-design--spec-e8a317.svg)](docs/roadmap.md)
+[![CI](https://github.com/getyak/apply-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/getyak/apply-agent/actions/workflows/ci.yml)
+[![Secrets scan](https://github.com/getyak/apply-agent/actions/workflows/secrets-scan.yml/badge.svg)](https://github.com/getyak/apply-agent/actions/workflows/secrets-scan.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6b3b0b.svg)](LICENSE)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-2b2822.svg)](web/package.json)
+[![LangGraph](https://img.shields.io/badge/agents-LangGraph-c99016.svg)](agents/pyproject.toml)
+
+[产品演示](#真实产品演示) · [核心机制](#它如何工作) · [本地运行](#本地运行) · [系统架构](#系统架构) · [文档](docs/README.md)
 
 </div>
 
-> **Relay 是项目代号(placeholder)。** Fork 后可替换为你自己的品牌名。
+<p align="center">
+  <img
+    src="web/public/demo/relay-product-tour.webp"
+    alt="Vantage 真实产品演示：工作区、职位匹配与投递审核"
+    width="900"
+  />
+</p>
 
----
+<p align="center">
+  <sub>真实界面录制：从 Ask Vantage 工作区，到匹配结果，再到投递包审核。</sub>
+</p>
 
-## 这是什么
+## Relay 是什么
 
-Relay 是一个**开源的求职 agent 系统设计**,目标是把求职这件繁琐、焦虑、重复的事,压缩成几次轻量的点击。它不是又一个"批量轰炸投递"的工具——那条路市场已经证明走不通(转化率持续下滑、雇主反感、账号被封)。
+Relay 是一套可以自托管的 AI 求职基础设施。仓库覆盖 Web 工作区、Hono API、FastAPI + LangGraph 智能体、PostgreSQL 数据层、Redis 事件流和 Manifest V3 浏览器扩展。
 
-Relay 的赌注是另一条路:
+仓库里的用户界面当前使用 **Vantage** 品牌。可以把 Relay 理解为开源系统，把 Vantage 理解为这套系统的产品界面。
 
-- **质量优先,而非数量优先。** 少投、投准、投好。
-- **客户端执行,零封号风险。** 投递发生在用户自己的浏览器、自己的登录态、自己的 IP 下,平台无法区分"人工"还是"AI 辅助"。
-- **数据飞轮是护城河,而非自动化本身。** 你的简历版本、投递历史、面试问答会随使用不断积累,越用越懂你——这是自动化脚本无法复制的资产。
-- **AI 先做,用户后审。** 把高认知负担的"创造"任务,变成低负担的"审核"任务。
+它不追求无差别批量投递。Relay 把最费脑的工作交给智能体，把不可逆的决定留给用户：
 
-这个仓库目前是**完整的产品 + 架构 + 设计规格(design spec)**,可作为自建实现的蓝图,也欢迎贡献成可运行的参考实现。
+| 智能体负责 | 用户负责 |
+|---|---|
+| 解析真实履历，维护可追溯的 Career Graph | 审核事实变更 |
+| 发现和排序更匹配的职位 | 决定值得投入的机会 |
+| 定制简历、求职信和表单答案 | 接受、编辑或拒绝草稿 |
+| 在浏览器中准备 ATS 字段 | 在雇主页面亲自点击最终 Submit |
+| 生成面试练习和后续建议 | 记录真实结果与反馈 |
 
----
+> 核心边界：不保存求职平台密码，不绕过 CAPTCHA，不编造经历，不在服务器端代替用户提交职位申请。
 
-## 为什么是现在
+## 真实产品演示
 
-求职市场正在经历一场 "AI 投递潮 vs 雇主反制" 的军备竞赛:
+<table>
+  <tr>
+    <td width="50%">
+      <img src="web/public/demo/live-matches.png" alt="Vantage 职位匹配工作区" />
+    </td>
+    <td width="50%">
+      <img src="web/public/demo/application-review.png" alt="Vantage 投递包审核界面" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub>实时职位匹配：把机会、契合度和技能缺口放在同一屏。</sub></td>
+    <td align="center"><sub>投递前审核：职位证据、准备材料和智能体协作同时可见。</sub></td>
+  </tr>
+</table>
 
-- 通过 LinkedIn 提交的申请激增,平台一度记录到每分钟上万份申请;
-- 招聘方上线了重复申请标记、更多现场面试来甄别真人;
-- 数据显示**体量腐蚀质量**:投 11–20 份的面试转化率,是投 100+ 份的三倍多。
+这些画面来自实际运行的 Next.js 产品界面，不是为 README 手工绘制的概念图。
 
-结论很清晰:**autofill 已是红海(Simplify/Jobright 免费且用户众多),真正服务不足的是"面试情报采集"和"可积累的个人职业上下文层"。** Relay 把切入点放在后者。
+## 它如何工作
 
-详见 [市场分析](docs/market-analysis.md)。
+1. **建立事实源**：导入简历，Relay 将证据暂存为 Career Graph 变更提案。
+2. **人工确认事实**：用户审核 diff 后，事实才进入不可变版本历史。
+3. **发现机会**：JobMatch Agent 读取公开职位源，解析 JD 并计算匹配。
+4. **准备投递包**：Resume Agent 与 AppPrep Agent 生成定制简历、求职信和表单答案。
+5. **浏览器内交付**：扩展在用户已有登录态、本机 IP 和真实浏览器中填充字段。
+6. **用户最终提交**：最后一次 Submit 只能由用户在雇主页面确认。
+7. **闭环学习**：投递和面试结果进入可审计历史，用于改进排序，不会反向改写事实。
 
----
+## 为什么不是又一个 mass-apply bot
 
-## 核心特性
+**事实有来源。** 简历只是编译产物，Career Graph 才是证据支持的事实源。AI 可以重述，不能发明。
 
-| 能力 | 说明 | 状态 |
-|------|------|------|
-| 📄 简历管理 | 上传即解析为结构化 JSON Resume,版本控制 + diff | spec |
-| ✨ AI 优化 | 针对行业/JD 优化简历,诚实重述而非编造 | spec |
-| 🎯 JD 定制 | 一个 JD → 一份量身简历 + cover letter + 表单答案 | spec |
-| 🤖 客户端投递 | 浏览器扩展在用户本地填表,用户亲自提交 | spec |
-| 🎤 面试准备 | 基于 JD 生成问题、评估回答、采集真实面试题 | spec |
-| 📈 市场趋势 | 每日聚合在招职位,个性化技能缺口分析 | spec |
-| 🔁 数据飞轮 | 投递/面试/反馈持续沉淀为个人职业上下文 | spec |
+**执行有边界。** 云端负责理解、生成和编排，客户端负责在用户浏览器中交付，最终提交始终是人的动作。
 
----
+**每一步可恢复。** LangGraph checkpoint、事件流恢复、审计记录和明确的 HITL gate 让长任务可以暂停、审核和继续。
 
-## 文档导航
+**结果进入闭环。** Relay 记录真实申请进度与面试结果，但把它们当作排序信号，不伪装成因果结论。
 
-完整文档在 [`docs/`](docs/README.md)。建议阅读顺序:
+## 系统架构
 
-1. **[产品愿景与原则](docs/vision.md)** — Relay 相信什么、不做什么
-2. **[市场分析](docs/market-analysis.md)** — 竞争格局、机会、为什么不做批量投递
-3. **[产品规格](docs/product-spec.md)** — 6 大功能的详细定义
-4. **架构**
-   - [系统总架构](docs/architecture/system-overview.md)
-   - [Agent 架构](docs/architecture/agent-architecture.md)
-   - [Agent Harness](docs/architecture/agent-harness.md)
-   - [Codex × Career Graph 原生集成](docs/architecture/codex-career-graph.md)
-   - [客户端投递方案](docs/architecture/client-side-delivery.md) ⭐ 核心
-5. **设计**
-   - [设计哲学](docs/design/design-philosophy.md) — 把"创造"变成"审核"
-   - [设计系统](docs/design/design-system.md) — tokens、色彩、组件
-   - [UX 流程](docs/design/ux-flows.md)
-6. **[数据模型](docs/data-model.md)**
-7. **[隐私与安全](docs/privacy-security.md)**
-8. **[路线图](docs/roadmap.md)**
-
-可交互的架构图与 UI 原型见 [`docs/assets/`](docs/assets/)(用浏览器打开 HTML 文件)。
-
----
-
-## 架构一览
-
-```
-┌─────────── 用户的浏览器(本地) ───────────┐     ┌──── 你的云端后端 ────┐
-│                                          │     │                      │
-│  浏览器扩展 (Manifest V3)                 │     │  Web 账户系统         │
-│  ├── content script  扫描+填充表单        │     │  ├── 简历/版本/投递    │
-│  ├── service worker  协调 + profile      │◄───►│  ├── 面试/趋势/飞轮    │
-│  └── popup           审核 UI             │     │  └── LLM API 端点      │
-│                                          │     │      map-fields       │
-│  ✓ 真实指纹 ✓ 真实登录 ✓ 真实 IP          │     │      answer-question  │
-│  ✓ 用户亲自点 submit → 零封号             │     │      tailor-resume    │
-└──────────────────────────────────────────┘     └──────────────────────┘
-       智能在云端  ·  执行在本地  ·  提交靠用户
+```mermaid
+flowchart LR
+    U[用户] --> W[Next.js Web]
+    W --> A[Hono API / Bun]
+    A --> G[FastAPI / LangGraph Agents]
+    A <--> P[(PostgreSQL)]
+    G <--> P
+    G <--> R[(Redis Streams)]
+    A --> X[Manifest V3 Extension]
+    X -->|本地填表| ATS[雇主 ATS 页面]
+    U -->|最终审核与 Submit| ATS
 ```
 
-详见 [客户端投递方案](docs/architecture/client-side-delivery.md)。
+| 层 | 技术 | 职责 |
+|---|---|---|
+| Web | Next.js 16, React 19, Tailwind CSS 4 | 工作区、Career Graph、简历、投递、面试与趋势 |
+| API | Hono, Bun, PostgreSQL | 身份、业务 API、文件、事件转发与权限边界 |
+| Agents | FastAPI, LangGraph, OpenRouter | Resume、JobMatch、Interview、AppPrep、Trend 与 Coordinator |
+| Delivery | Chrome Manifest V3 extension | 本地字段识别、填充、审核和浏览器交付 |
+| Data | PostgreSQL 16 + pgvector, Redis 7, MinIO | 事实、checkpoint、事件流、缓存与文件 |
 
----
+TypeScript API 与 Python Agent 层只通过 HTTP、Redis 和共享 PostgreSQL 协作。智能体模型通过 OpenRouter 接入，不把某一家模型 API 写死进运行时。
 
-## 设计原则速览
+## 本地运行
 
-- **0 配置启动** — 上传简历即用,不填表单
-- **3 次点击投递** — 从看到职位到完成提交
-- **AI 先做,用户后审** — 永不让用户面对空白
-- **一屏一焦点** — 每屏一个主操作,消除决策疲劳
-- **颜色即语言** — 珊瑚橙 = AI 生成需过目,靛蓝 = 你的主操作,薄荷绿 = 安全/成功
-- **零封号** — 本地执行,用户亲自提交
+### 依赖
 
----
+- Docker 与 Docker Compose
+- [Bun](https://bun.sh/)
+- [uv](https://docs.astral.sh/uv/)
+- Python 3.11+
 
-## 状态与贡献
+### 1. 准备环境
 
-Relay 目前处于 **设计规格阶段(design spec)**。仓库提供完整的产品/架构/设计蓝图,参考实现正在规划中。
+```bash
+cp .env.example .env
+# 编辑 .env，至少替换数据库、Redis、MinIO、JWT 与 OpenRouter 配置
 
-欢迎以下形式参与:
+make up
+make db-health
+```
 
-- 💬 对设计与架构提出意见(开 issue)
-- 🧩 认领某个模块的参考实现
-- 📝 改进文档、补充 ATS 适配清单
-- 🎨 贡献设计与原型
+本地基础设施使用 PostgreSQL `5433`、Redis `6380`、MinIO `9000/9001`，避免占用常见的默认端口。
 
-请先读 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [行为准则](CODE_OF_CONDUCT.md)。
+### 2. 启动三个服务
 
----
+```bash
+# Terminal 1: API, http://localhost:3001
+cd api
+bun install
+bun run dev
+```
 
-## 重要声明
+```bash
+# Terminal 2: Agents, http://localhost:8000
+cd agents
+uv sync --all-extras
+uv run uvicorn agents.api.server:app --reload --port 8000
+```
 
-- Relay **不鼓励**任何违反平台服务条款的大规模自动投递。客户端方案的设计前提是**用户亲自提交、人性化操作**。
-- 对 LinkedIn / Boss直聘 等平台的登录态自动化存在账号风险,Relay 默认**不实现**此类功能;若实现,必须明确告知风险并由用户显式 opt-in。
-- 本仓库不提供法律建议。平台条款与 AI 招聘相关法规(如 GDPR、PIPL、CA AB 853)仍在演进,请自行评估合规性。
+```bash
+# Terminal 3: Web, http://localhost:3000
+cd web
+bun install
+bun run dev
+```
 
----
+浏览器扩展可以单独构建：
+
+```bash
+cd apps/extension
+bun install
+bun run build
+```
+
+## 验证
+
+```bash
+cd web && bun run lint && bun run typecheck
+cd ../api && bun run typecheck && bun test
+cd ../agents && uv run ruff check . && uv run pytest -m "not e2e"
+```
+
+CI 会按改动路径分流 Web、API、Agents、Extension、Infra 与 Eval 检查。迁移、权限 guard、扩展 manifest 和 GitHub workflow 还会进入额外保护流程。
+
+## 仓库结构
+
+```text
+.
+├── web/                 Next.js 产品与公开站点
+├── api/                 Hono / Bun API
+├── agents/              FastAPI / LangGraph 智能体与 MCP
+├── apps/extension/      浏览器端交付扩展
+├── infra/               PostgreSQL、Redis、MinIO 与迁移
+├── eval/                Agent 回归评测与 scorecard
+├── docs/                产品、架构、数据与安全文档
+└── scripts/             健康检查、smoke test 与维护脚本
+```
+
+## 推荐阅读
+
+- [产品愿景与原则](docs/vision.md)
+- [产品规格](docs/product-spec.md)
+- [系统总架构](docs/architecture/system-overview.md)
+- [Agent Harness](docs/architecture/agent-harness.md)
+- [Career Graph 架构](docs/architecture/codex-career-graph.md)
+- [客户端交付方案](docs/architecture/client-side-delivery.md)
+- [数据模型](docs/data-model.md)
+- [隐私与安全](docs/privacy-security.md)
+
+## 贡献
+
+欢迎改进产品、智能体质量、ATS 适配、评测、可访问性和文档。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+
+提交使用 Conventional Commits，例如 `feat:`、`fix:`、`docs:`、`refactor:`、`test:` 和 `chore:`。
 
 ## License
 

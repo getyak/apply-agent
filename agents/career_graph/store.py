@@ -446,6 +446,35 @@ async def list_tracked_applications(
     ]
 
 
+async def get_application_projection(user_id: UUID, application_id: UUID) -> dict[str, Any] | None:
+    """Read the owner-scoped fields used to reconcile lifecycle writes."""
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT id, status, outcome, submitted_at, submitted_via,
+                       interview_date, updated_at
+                  FROM application_drafts
+                 WHERE id = %s AND user_id = %s
+                 LIMIT 1
+                """,
+                (str(application_id), str(user_id)),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return {
+        "application_id": str(row[0]),
+        "status": row[1],
+        "outcome": row[2],
+        "submitted_at": row[3].isoformat() if row[3] else None,
+        "submitted_via": row[4],
+        "interview_date": row[5].isoformat() if row[5] else None,
+        "updated_at": row[6].isoformat(),
+    }
+
+
 def _unwrap_resume_content(content: Any) -> dict[str, Any]:
     value = _coerce_json(content)
     if not isinstance(value, dict):
@@ -1228,6 +1257,7 @@ async def issue_application_submission_authorization(
     job_url: str,
     observed_url: str,
     confirmation: str,
+    operation_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Record one short-lived exact confirmation without submitting anything."""
 
@@ -1316,12 +1346,13 @@ async def issue_application_submission_authorization(
                     user_id,
                     application_id,
                     compilation_id,
+                    operation_id,
                     expected_job_url_fingerprint,
                     observed_url_fingerprint,
                     confirmation_digest,
                     expires_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s,
                     transaction_timestamp() + (%s * interval '1 minute')
                 )
                 RETURNING id, authorized_at, expires_at
@@ -1330,6 +1361,7 @@ async def issue_application_submission_authorization(
                     str(user_id),
                     str(application_id),
                     str(compilation_id),
+                    str(operation_id) if operation_id else None,
                     fingerprints["expected_job_url"],
                     fingerprints["observed_url"],
                     fingerprints["confirmation"],
@@ -1351,6 +1383,50 @@ async def issue_application_submission_authorization(
         "authorization_active": True,
         "authorization_scope": "one_application_one_final_click",
         "one_final_click_authorized": True,
+        "server_side_submission": False,
+        "post_click_requirement": (
+            "Record submitted only after a visible post-submit confirmation."
+        ),
+    }
+
+
+async def get_application_submission_authorization_for_operation(
+    user_id: UUID,
+    operation_id: UUID,
+) -> dict[str, Any] | None:
+    """Read the exact browser authorization minted by one durable operation."""
+
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT id, application_id, compilation_id, authorized_at,
+                       expires_at, consumed_at, invalidated_at,
+                       consumed_at IS NULL
+                           AND invalidated_at IS NULL
+                           AND expires_at > clock_timestamp() AS authorization_active
+                  FROM application_submission_authorizations
+                 WHERE user_id = %s
+                   AND operation_id = %s
+                """,
+                (str(user_id), str(operation_id)),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return None
+    active = bool(row[7])
+    return {
+        "ok": True,
+        "submission_authorization_id": str(row[0]),
+        "application_id": str(row[1]),
+        "compilation_id": str(row[2]),
+        "authorized_at": row[3].isoformat(),
+        "expires_at": row[4].isoformat(),
+        "consumed_at": row[5].isoformat() if row[5] else None,
+        "invalidated_at": row[6].isoformat() if row[6] else None,
+        "authorization_active": active,
+        "authorization_scope": "one_application_one_final_click",
+        "one_final_click_authorized": active,
         "server_side_submission": False,
         "post_click_requirement": (
             "Record submitted only after a visible post-submit confirmation."
@@ -2221,9 +2297,7 @@ async def application_handoff(
             "external_id": application_row[5],
         },
         "questionnaire": (
-            _questionnaire_payload(tuple(application_row[6:15]))
-            if application_row[6]
-            else {}
+            _questionnaire_payload(tuple(application_row[6:15])) if application_row[6] else {}
         ),
         "resume_id": compilation["resume_id"],
         "resume": compilation["resume"],
@@ -2385,9 +2459,7 @@ async def get_application_questionnaire(
             )
             row = await cur.fetchone()
     if not row:
-        raise CareerGraphNotFoundError(
-            "application and compilation questionnaire scope not found"
-        )
+        raise CareerGraphNotFoundError("application and compilation questionnaire scope not found")
     if not row[0]:
         return None
     return {

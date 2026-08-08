@@ -148,7 +148,9 @@ def test_resume_expired_emits_stream_expired(client_with_pg):
     async def clean():
         async with await psycopg.AsyncConnection.connect(os.environ["RELAY_PG_DSN"]) as conn:
             async with conn.cursor() as cur:
-                await cur.execute("DELETE FROM ask_stream_events WHERE thread_id = %s", (thread_id,))
+                await cur.execute(
+                    "DELETE FROM ask_stream_events WHERE thread_id = %s", (thread_id,)
+                )
             await conn.commit()
 
     asyncio.run(clean())

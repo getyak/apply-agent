@@ -75,7 +75,7 @@ export interface ConsumerCallbacks {
 }
 
 export interface ConsumeArgs {
-  /** Request body — `{prompt, thread_id, ...}` or `{thread_id, command}`. */
+  /** Request body — `{message, thread_id, ...}` or `{thread_id, command}`. */
   body: Record<string, unknown>;
   callbacks: ConsumerCallbacks;
   abortController: AbortController;
@@ -83,6 +83,44 @@ export interface ConsumeArgs {
 
 function endpoint(): string {
   return `${API_BASE}/api/ask/stream`;
+}
+
+/**
+ * Split routing metadata from the JSON payload. FastAPI deliberately reads
+ * thread/surface from headers so its ownership guard runs before a graph is
+ * opened; keeping this conversion here prevents every caller from having to
+ * know the gateway contract.
+ */
+export function buildStreamRequestParts(
+  body: Record<string, unknown>,
+  token: string | null,
+  locale: string,
+  lastSeq: number,
+  isResume: boolean,
+): {
+  payload: Record<string, unknown>;
+  headers: Record<string, string>;
+} {
+  const { thread_id: threadId, surface, ...agentPayload } = body;
+  const payload: Record<string, unknown> = { ...agentPayload, locale };
+  if (isResume && lastSeq > 0) payload.last_event_id = lastSeq;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    "X-Relay-Locale": locale,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(typeof threadId === "string" && threadId
+      ? { "X-Relay-Thread-Id": threadId }
+      : {}),
+    ...(typeof surface === "string" && surface
+      ? { "X-Relay-Surface": surface }
+      : {}),
+  };
+  if (isResume && lastSeq > 0) {
+    headers["Last-Event-ID"] = String(lastSeq);
+  }
+  return { payload, headers };
 }
 
 /**
@@ -147,24 +185,13 @@ export function consumeAgentStream({
   let expired = false;
 
   const buildFetch = (isResume: boolean) => {
-    const payload: Record<string, unknown> = { ...body, locale };
-    if (isResume && lastSeq > 0) {
-      // Body carries the cursor for POST bodies (fetch can't rely on
-      // the HTTP EventSource-native ``Last-Event-ID`` header being
-      // preserved across all intermediaries).
-      payload.last_event_id = lastSeq;
-    }
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "X-Relay-Locale": locale,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-    if (isResume && lastSeq > 0) {
-      // ALSO set the header — future EventSource-based transports use
-      // it natively. Belt and braces cost nothing.
-      headers["Last-Event-ID"] = String(lastSeq);
-    }
+    const { payload, headers } = buildStreamRequestParts(
+      body,
+      token,
+      locale,
+      lastSeq,
+      isResume,
+    );
     return () =>
       fetch(endpoint(), {
         method: "POST",

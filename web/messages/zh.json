@@ -159,6 +159,37 @@
     "forLine": "面向",
     "recruiterScreen": "招聘官初筛",
     "soon": "即将到来",
+    "practiceCompany": "你的目标公司",
+    "practiceRole": "你的目标职位",
+    "questions": {
+      "project": {
+        "q": "请讲一个最能证明你适合 {role} 岗位的项目。",
+        "feedback": "先用一句话交代背景，明确你本人做出的关键决策，再用有证据的结果收尾。"
+      },
+      "challenge": {
+        "q": "说说你作为 {role} 处理过的一次艰难取舍。",
+        "feedback": "把相互冲突的约束说清楚。这里更看重你的判断过程，而不是一个过度包装的成功故事。"
+      },
+      "motivation": {
+        "q": "为什么是 {company}，又为什么现在选择这个 {role} 岗位？",
+        "feedback": "把一个可验证的公司或岗位信号与你的真实经历连起来，避免对 {company} 做泛泛的品牌吹捧。"
+      },
+      "failure": {
+        "q": "讲讲一个没有奏效的决策。之后你改变了什么？",
+        "feedback": "坦然承认失误，分清你个人与团队的行动，并说明哪些证据改变了你后续的决策。"
+      },
+      "growth": {
+        "q": "为了成为更有效的 {role}，你最需要加强哪项能力？",
+        "feedback": "选择一个真实短板，并展示你已经在做什么。可信的学习闭环比圆滑的标准答案更有力量。"
+      }
+    },
+    "topics": {
+      "project": "相关项目",
+      "challenge": "艰难取舍",
+      "motivation": "为什么选 {company}",
+      "failure": "失败决策",
+      "growth": "成长方向"
+    },
     "modes": {
       "scene_recreation": {
         "name": "实景重现",
@@ -219,7 +250,7 @@
       "trap": "陷阱题",
       "imReady": "准备好了——开始",
       "duration": "30 分钟",
-      "style": "偏对话式。Stripe 很看重手艺与书面表达——预期会有一个跟进的带回家任务，而非现场实操。",
+      "style": "围绕当前的 {company} · {role} 目标进行对话式练习；只有存在证据时才会使用公司特定判断。",
       "q1": "讲讲一个你引以为傲的项目。",
       "q2": "为什么偏偏选 Stripe？",
       "q3": "你怎么处理和工程团队的意见分歧？",
@@ -233,6 +264,9 @@
       "labelOpening": "开场",
       "labelFollowUp": "追问",
       "sampleHeard": "听起来很自信，但他们想听的是你做了哪个决策——而不只是结果。",
+      "heardStrong": "证据很扎实：他们听到了问题、你的行动和量化结果。下一步再点明为什么选择这条路径，以及你放弃了什么。",
+      "heardEvidenceOnly": "结果有量化证据，但他们还需要听清你本人做了哪个关键决策，以及为什么。",
+      "heardDecisionOnly": "你的决策听得很清楚；再补一个可核实的结果或变化，故事会更完整。",
       "sampleStuck": "卡在了影响力上——下次开口第一句就把关键数字亮出来。"
     },
     "feedback": {
@@ -286,15 +320,18 @@
   "apply": {
     "review": {
       "back": "返回",
-      "reviewApplication": "审核投递",
+      "reviewApplication": "审核申请准备包",
       "strongFit": "高度契合",
       "goodFit": "比较契合",
       "fairFit": "一般契合",
+      "notScored": "尚未评分",
+      "scorePending": "添加或刷新简历后，系统才能基于证据计算契合度。",
       "skillsMatched": "{count} 项技能匹配",
       "matchedSkills": "匹配的技能",
       "skillGaps": "技能缺口",
-      "yourApplication": "你的投递",
-      "reviewDetails": "提交前再过一遍细节。",
+      "yourApplication": "你的申请准备包",
+      "reviewDetails": "先创建准备草稿；Relay 不会直接向招聘方提交。",
+      "safetyNote": "此操作只会创建并准备草稿。招聘网站上的最终“提交”仍由你本人控制。",
       "jobDetails": "职位详情",
       "fromDatabase": "来自数据库",
       "roleLabel": "职位",
@@ -304,8 +341,8 @@
       "requiredSkillsLabel": "要求技能",
       "matchPct": "匹配度：{pct}%",
       "skillsAligned": "{count} 项技能契合",
-      "saveForLater": "稍后再投",
-      "submitApplication": "提交投递",
+      "saveForLater": "返回职位",
+      "submitApplication": "准备申请包",
       "externalRole": "该职位在外部站点。等你在那里打开时，我们会在扩展里帮你备好投递包。",
       "backToToday": "返回今日",
       "reasonsLineUp": "有 {count} 处契合",
@@ -321,7 +358,7 @@
       "draftedTag": "已起草",
       "blocksReady": "{count} 个区块已就绪",
       "writtenByAi": "由 AI 撰写——发送前扫一眼",
-      "looksRightSubmit": "没问题——提交"
+      "looksRightSubmit": "保存为准备草稿"
     },
     "prep": {
       "tag": "备战 · 随时可以开始",
@@ -345,7 +382,7 @@
       "text": "请先登录以进入你的工作台。"
     },
     "hero": {
-      "badge": "客户端智能体 · 零封号风险",
+      "badge": "客户端智能体 · 由你亲手提交",
       "headline": {
         "line1": "你的求职，",
         "line2Pre": "交给",
@@ -379,7 +416,7 @@
         },
         {
           "title": "由你亲手提交",
-          "body": "表单在你自己的浏览器里填好。提交由你点下——零账号风险。"
+          "body": "表单在你自己的浏览器里填好。提交由你点下，降低代投与凭据外泄风险。"
         },
         {
           "title": "备战与追踪",
@@ -449,8 +486,8 @@
           "body": "投 11–20 个岗位的转化率，是狂投 100+ 的 3 倍。我们帮你投得少而精——而非盲目海投。"
         },
         {
-          "title": "客户端执行 = 零封号",
-          "body": "填写与提交都发生在你的浏览器、你的登录态、你的 IP 下。平台无从分辨人工与辅助。你的账号始终安全。"
+          "title": "客户端执行，更少账号风险",
+          "body": "填写发生在你的浏览器、你的登录态和你的 IP 下；最终提交仍由你确认。任何辅助工具都不能承诺平台永不触发风控。"
         },
         {
           "title": "你的上下文才是护城河",
@@ -552,7 +589,7 @@
       }
     },
     "footer": {
-      "tagline": "质量胜过数量。你的账号，永不冒险。",
+      "tagline": "质量胜过数量。凭据不交给服务器。",
       "privacy": "隐私",
       "security": "安全",
       "docs": "文档"
@@ -563,7 +600,7 @@
       "items": [
         {
           "q": "用 Vantage 投递，会不会让我的 LinkedIn 或求职平台账号被封？",
-          "a": "不会。每一次提交都发生在你自己的浏览器里，以你本人的登录态、你的 IP 发出 —— 跟你手动投是一模一样的信号。我们从不存平台密码，也绝不在服务器上代你操作账号。"
+          "a": "Vantage 通过客户端填表、由你确认最终提交，并且不存储平台密码，以降低代投与凭据外泄风险。但任何辅助工具都无法保证求职平台永不触发风控。"
         },
         {
           "q": "Vantage 会不会编造经历，让简历更好看？",
@@ -857,7 +894,7 @@
   "careerGraph": {
     "loading": "正在加载经历图谱",
     "eyebrow": "结构化职业资产",
-    "codexNative": "Codex 原生支持",
+    "codexNative": "可审阅事实流",
     "title": "经历图谱",
     "subtitle": "简历只是输出，这里才是它下面有证据支撑的事实源：稳定事实、明确关系、不可变版本，以及任何内容成为事实之前的人工审阅闸门。",
     "lineage": {
@@ -891,6 +928,11 @@
       "title": "暂存简历证据",
       "sourceLabel": "来源简历",
       "unnamed": "未命名简历",
+      "track": {
+        "original": "原稿",
+        "optimized": "优化版",
+        "tailored": "定制版"
+      },
       "staging": "正在暂存证据…",
       "stage": "暂存并审阅",
       "guard": "这里只会创建待审阅提案，不会改变已批准图谱。",
@@ -906,6 +948,10 @@
       "destructive": "包含移除操作",
       "before": "变更前",
       "after": "提案内容",
+      "resumeSource": "来源简历 · v{version}",
+      "recordedSource": "已记录证据来源",
+      "factReference": "相关事实",
+      "importSummary": "导入简历",
       "noDiff": "没有实质差异",
       "noDiffBody": "这份提案没有改变任何事实或关系。",
       "approve": "批准",
@@ -1271,11 +1317,17 @@
     "percentMatch": "匹配度 {pct}%",
     "addResumeToScore": "添加或更新你的简历，Vantage 才能为这个职位打分。",
     "skillGaps": "+{count} 项缺口",
-    "reviewAndApply": "审核并投递",
+    "reviewAndApply": "审核并准备",
+    "greeting": {
+      "morning": "早上好，{name}。",
+      "afternoon": "下午好，{name}。",
+      "evening": "晚上好，{name}。",
+      "fallbackName": "你好"
+    },
     "rolesInDatabase": "{count} 个职位入库",
     "noFitsScored": "暂未评分匹配",
     "noStrongFits": "暂无强匹配 — 试试放宽筛选条件",
-    "strongFitsReady": "{count} 个强匹配，可直接投递",
+    "strongFitsReady": "{count} 个强匹配，值得优先审核",
     "trendingSkillsTracked": "{count} 项热门技能追踪中",
     "queueHeading": "今天有 {count} 件事推动你前进",
     "tapToStart": "点击开始",
@@ -1289,9 +1341,11 @@
     "fromDbPending": "来自数据库 · 评分进行中",
     "whileWeLook": "为你寻找匹配中",
     "sampleSurface": "这是我们将为你呈现的示例",
-    "oneClickApply": "一键投递",
+    "oneClickApply": "准备申请包",
     "applyOnSite": "前往官网投递",
     "buttonsHint": "实心按钮表示一切已准备就绪；描边按钮会打开公司自己的招聘页面。",
+    "noMatchesTitle": "暂时没有可推荐的真实职位",
+    "noMatchesBody": "职位源更新后会自动出现在这里。你也可以在 Vantage 对话中补充目标岗位、地点或技能偏好。",
     "fit": {
       "excellent": "极佳",
       "strong": "很强",
@@ -1317,27 +1371,29 @@
     "pipeline": "投递流程",
     "title": "投递管理",
     "syncing": "正在与数据库同步…",
-    "nothingSubmitted": "尚未投递 — 下方是你的示例流程。",
-    "tracked": "已追踪 {count} 份投递",
+    "nothingSubmitted": "尚未追踪任何申请。",
+    "tracked": "已追踪 {count} 份申请 — 草稿不等于已投递",
     "unknownCompany": "未知公司",
     "role": "职位",
-    "justSent": "刚刚投递",
+    "justSent": "刚刚创建",
     "openCard": "打开 {company} 的 {role}",
     "openPrep": "开始准备",
     "browseMatches": "浏览匹配职位",
     "firstEmptyTitle": "这里还是空的 — 从今日匹配中挑一个职位开始吧。",
-    "firstEmptyBody": "当你定制并投递第一份申请后，这个看板就会被真实进展填满。下方卡片仅为预览。",
+    "firstEmptyBody": "从匹配职位创建草稿，Vantage 会在这里准备申请包；最后的投递只能由你的浏览器完成。",
     "interviewingBanner": "你有 {count} 场进行中的面试。点击 <strong>准备这场面试</strong> 启动模拟练习。",
     "dropError": "无法更新这张卡片，请重试。",
     "dropErrorWithReason": "无法更新这张卡片：{reason}",
     "dismiss": "关闭",
     "dismissDropError": "关闭错误提示",
     "columns": {
+      "preparing": "准备中",
       "applied": "已投递",
       "interviewing": "面试中",
       "outcome": "结果"
     },
     "empty": {
+      "preparing": "创建草稿后，Vantage 会在这里准备定制简历、求职信和表单答案。",
       "applied": "投递一份申请，它就会出现在这里。",
       "interviewing": "当招聘方回复后，对话会移动到这一栏。",
       "outcome": "录用和已结束的流程会归档到这里。"
@@ -1367,7 +1423,7 @@
     },
     "delivery": {
       "title": "你来提交 · 我们来准备",
-      "body": "Vantage 会为你定制简历、撰写求职信并预填表单 — 但最后的 <strong>提交</strong> 动作发生在你自己的浏览器、登录态和 IP 下。零封号风险，绝不存储 ATS 密码。",
+      "body": "Vantage 会为你定制简历、撰写求职信并预填表单 — 但最后的 <strong>提交</strong> 动作发生在你自己的浏览器、登录态和 IP 下。这样可降低代投风险，且绝不存储 ATS 密码。",
       "dismissTitle": "知道了 — 不再显示",
       "dismissLabel": "关闭说明"
     },
@@ -1382,7 +1438,16 @@
       "outcomePlaceholder": "例如：已签录用、止步于招聘官初筛…",
       "outcomeHelp": "记录实际发生的过程。失去焦点时自动保存。",
       "coverLabel": "求职信草稿",
-      "coverPlaceholder": "粘贴或撰写你发送的求职信…"
+      "coverPlaceholder": "检查或编辑求职信草稿…",
+      "packageLabel": "申请包",
+      "resumeArtifact": "定制简历",
+      "coverArtifact": "求职信",
+      "formArtifact": "表单答案",
+      "ready": "已就绪",
+      "pending": "待准备",
+      "answerCount": "{count} 个答案",
+      "notSubmitted": "这仍是准备草稿。Relay 尚未向招聘方提交任何内容。",
+      "openJobSite": "打开招聘网站，检查并提交"
     }
   },
   "chat": {

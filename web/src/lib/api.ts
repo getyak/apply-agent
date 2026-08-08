@@ -1044,24 +1044,71 @@ export const jobs = {
       `/api/jobs/${jobId}/match`,
       { method: "POST" },
     ),
+
+  matches: (jobIds: string[]) =>
+    api<{
+      matches: Record<
+        string,
+        {
+          score: number;
+          matchedSkills: string[];
+          missingSkills: string[];
+          aiGenerated: boolean;
+        }
+      >;
+      unavailableJobIds: string[];
+      unavailableReason: "no_base_resume" | null;
+    }>("/api/jobs/matches", {
+      method: "POST",
+      body: JSON.stringify({ jobIds }),
+    }),
 };
 
 export const applications = {
-  prepare: (jobId: string, resumeId: string, coverLetter?: string) =>
+  prepare: (jobId: string, resumeId?: string, coverLetter?: string) =>
     api<{ application: { id: string; status: string } }>(
       "/api/applications/prepare",
       { method: "POST", body: JSON.stringify({ jobId, resumeId, coverLetter }) },
     ),
+
+  /** Run the full parse → tailor → cover-letter → form-answer saga for an
+   * existing draft. This prepares browser-extension artifacts; it never
+   * submits to an employer. */
+  prepareFromJD: (jdUrl: string, applicationId: string, formFields: Array<Record<string, unknown>> = []) =>
+    api<{
+      application_id: string;
+      status: "draft" | "review";
+      stage_status: Record<string, string>;
+      cover_letter?: { body?: string; [key: string]: unknown } | null;
+      form_answers?: Array<Record<string, unknown>>;
+      tailored_resume_id?: string | null;
+      company?: string | null;
+      role_title?: string | null;
+      last_error?: string | null;
+    }>("/api/applications/prepare-from-jd", {
+      method: "POST",
+      body: JSON.stringify({ jdUrl, applicationId, formFields }),
+      // This endpoint deliberately runs two guarded OpenRouter generations
+      // (résumé + cover letter). The global 15 s ceiling is right for normal
+      // CRUD, but would abort this saga while the server was still preparing
+      // the user's draft. Both generation stages have server-side timeouts, so
+      // this remains bounded and never submits anything to an employer.
+      signal: AbortSignal.timeout(70_000),
+    }),
 
   list: (status?: string) => {
     const qs = status ? `?status=${status}` : "";
     return api<
       PaginatedEnvelope<{
         id: string;
+        job_id?: string;
         status: string;
         company: string;
         role_title: string;
+        url?: string;
+        resume_version_id?: string | null;
         cover_letter?: string;
+        form_answers?: Array<Record<string, unknown>> | Record<string, unknown> | null;
         submitted_at?: string;
         created_at: string;
       }>

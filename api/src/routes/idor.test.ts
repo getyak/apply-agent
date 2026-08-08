@@ -28,9 +28,10 @@ import { config } from "../config";
 const USER_A = "user-a-uuid";
 const USER_B = "user-b-uuid";
 
-const RESUME_ID = "resume-001";
-const APP_ID = "app-001";
-const FILE_ID = "file-001";
+const RESUME_ID = "00000000-0000-4000-8000-000000000101";
+const APP_ID = "00000000-0000-4000-8000-000000000201";
+const FILE_ID = "00000000-0000-4000-8000-000000000301";
+const JOB_ID = "00000000-0000-4000-8000-000000000401";
 
 // Minimal rows for ownership checks — fields match what routes SELECT.
 const RESUME_ROW = { id: RESUME_ID, user_id: USER_A, content: {}, version: 1, is_base: true, created_at: new Date().toISOString() };
@@ -175,7 +176,16 @@ describe("SEC-009 IDOR — unauthenticated → 401", () => {
   it("PATCH /api/applications/:id", async () => {
     expect(
       (await req("PATCH", `/api/applications/${APP_ID}`, { body: { status: "submitted" } }))
-        .status,
+      .status,
+    ).toBe(401);
+  });
+  it("POST /api/applications/prepare", async () => {
+    expect(
+      (
+        await req("POST", "/api/applications/prepare", {
+          body: { jobId: JOB_ID, resumeId: RESUME_ID },
+        })
+      ).status,
     ).toBe(401);
   });
   it("GET /api/files/:id/download", async () => {
@@ -228,6 +238,14 @@ describe("SEC-009 IDOR — cross-user (User B on User A resources) → 404 only"
 
   it("GET /api/files/:id/download → 404", async () => {
     const res = await req("GET", `/api/files/${FILE_ID}/download`, { userId: USER_B });
+    expect(res.status).toBe(404);
+  });
+  it("POST /api/applications/prepare rejects a foreign résumé → 404", async () => {
+    activeOwnerId = USER_A;
+    const res = await req("POST", "/api/applications/prepare", {
+      userId: USER_B,
+      body: { jobId: JOB_ID, resumeId: RESUME_ID },
+    });
     expect(res.status).toBe(404);
   });
 });

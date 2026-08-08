@@ -159,6 +159,37 @@
     "forLine": "For",
     "recruiterScreen": "Recruiter screen",
     "soon": "soon",
+    "practiceCompany": "Your target company",
+    "practiceRole": "Your target role",
+    "questions": {
+      "project": {
+        "q": "Walk me through a project that best demonstrates your fit for this {role} role.",
+        "feedback": "Give one sentence of context, name the decision you personally made, then close with an evidence-backed result."
+      },
+      "challenge": {
+        "q": "Tell me about a difficult trade-off you handled in your work as a {role}.",
+        "feedback": "Make the competing constraints explicit. Your judgment matters more here than a polished success story."
+      },
+      "motivation": {
+        "q": "Why {company}, and why this {role} role now?",
+        "feedback": "Connect one verifiable company or role signal to your own experience; avoid generic brand praise about {company}."
+      },
+      "failure": {
+        "q": "Tell me about a decision that did not work. What did you change afterward?",
+        "feedback": "Own the miss plainly, separate your action from the team's, and show what evidence changed your next decision."
+      },
+      "growth": {
+        "q": "What capability do you need to strengthen to become more effective as a {role}?",
+        "feedback": "Choose a real edge and show current momentum. A credible learning loop is stronger than a polished non-answer."
+      }
+    },
+    "topics": {
+      "project": "Relevant project",
+      "challenge": "A hard trade-off",
+      "motivation": "Why {company}",
+      "failure": "A failed decision",
+      "growth": "Growth edge"
+    },
     "modes": {
       "scene_recreation": {
         "name": "Scene recreation",
@@ -219,7 +250,7 @@
       "trap": "THE TRAP",
       "imReady": "I'm ready — start",
       "duration": "30 MIN",
-      "style": "Conversational. Stripe weighs craft and written communication heavily — expect a follow-up take-home, not a live exercise.",
+      "style": "Conversational practice grounded in the current {company} · {role} target. Company-specific claims are only used when evidence is available.",
       "q1": "Walk me through a project you're proud of.",
       "q2": "Why Stripe, specifically?",
       "q3": "How do you handle disagreement with engineering?",
@@ -233,6 +264,9 @@
       "labelOpening": "OPENING",
       "labelFollowUp": "FOLLOW-UP",
       "sampleHeard": "Confident, but they're listening for the decision you made — not just the outcome.",
+      "heardStrong": "The evidence lands: they heard the problem, your action, and a measured result. Next, make the trade-off and why you chose this path explicit.",
+      "heardEvidenceOnly": "The result is measurable, but they still need to hear the key decision you personally made and why.",
+      "heardDecisionOnly": "Your decision is clear. Add one verifiable outcome or change to complete the story.",
       "sampleStuck": "Stuck on impact — next time, lead with the metric in one sentence."
     },
     "feedback": {
@@ -286,15 +320,18 @@
   "apply": {
     "review": {
       "back": "Back",
-      "reviewApplication": "Review application",
+      "reviewApplication": "Review preparation package",
       "strongFit": "Strong fit",
       "goodFit": "Good fit",
       "fairFit": "Fair fit",
+      "notScored": "Not scored yet",
+      "scorePending": "Add or refresh your résumé to calculate evidence-backed fit.",
       "skillsMatched": "{count, plural, one {# skill} other {# skills}} matched",
       "matchedSkills": "Matched skills",
       "skillGaps": "Skill gaps",
-      "yourApplication": "Your application",
-      "reviewDetails": "Review the details before submitting.",
+      "yourApplication": "Your preparation package",
+      "reviewDetails": "Create a preparation draft first. Relay will not submit to the employer.",
+      "safetyNote": "This action creates and prepares a draft only. You keep control of the final Submit click on the employer's site.",
       "jobDetails": "Job details",
       "fromDatabase": "from database",
       "roleLabel": "Role",
@@ -304,8 +341,8 @@
       "requiredSkillsLabel": "Required skills",
       "matchPct": "Match: {pct}%",
       "skillsAligned": "{count, plural, one {# skill} other {# skills}} aligned",
-      "saveForLater": "Save for later",
-      "submitApplication": "Submit application",
+      "saveForLater": "Back to matches",
+      "submitApplication": "Prepare application package",
       "externalRole": "This role lives on an external site. We'll prep your package in the extension when you open it there.",
       "backToToday": "Back to today",
       "reasonsLineUp": "{count, plural, one {# reason} other {# reasons}} it lines up",
@@ -321,7 +358,7 @@
       "draftedTag": "drafted",
       "blocksReady": "{count, plural, one {# block ready} other {# blocks ready}}",
       "writtenByAi": "written by AI — glance before you send",
-      "looksRightSubmit": "Looks right — submit"
+      "looksRightSubmit": "Save as preparation draft"
     },
     "prep": {
       "tag": "Prep · ready when you are",
@@ -345,7 +382,7 @@
       "text": "Please sign in to open your workspace."
     },
     "hero": {
-      "badge": "Client-side agents · zero account risk",
+      "badge": "Client-side agents · you submit",
       "headline": {
         "line1": "Your job hunt,",
         "line2Pre": "run by",
@@ -379,7 +416,7 @@
         },
         {
           "title": "Submit it yourself",
-          "body": "The form fills in your own browser. You press submit — zero account risk."
+          "body": "The form fills in your own browser and you press Submit, reducing credential and remote-submission risk."
         },
         {
           "title": "Prep & track",
@@ -449,8 +486,8 @@
           "body": "Applying to 11–20 roles converts 3× better than blasting 100+. We help you go narrow and excellent — not spray and pray."
         },
         {
-          "title": "Client-side = zero ban",
-          "body": "Filling and submitting happen in your browser, your login, your IP. Platforms can't tell human from assisted. Your account stays safe."
+          "title": "Client-side, lower account risk",
+          "body": "Filling happens in your browser, under your login and IP, and you confirm the final Submit. No assistive tool can guarantee a platform will never flag activity."
         },
         {
           "title": "Your context is the moat",
@@ -552,7 +589,7 @@
       }
     },
     "footer": {
-      "tagline": "Quality over quantity. Your account, never at risk.",
+      "tagline": "Quality over quantity. No platform passwords on our servers.",
       "privacy": "Privacy",
       "security": "Security",
       "docs": "Docs"
@@ -563,7 +600,7 @@
       "items": [
         {
           "q": "Will Vantage get my LinkedIn or job-board account banned?",
-          "a": "No. Every submission happens inside your own browser, signed in as you, from your IP — the same way you'd apply by hand. We never store platform passwords and never operate your accounts from a server."
+          "a": "Vantage fills forms client-side, leaves the final Submit to you, and never stores platform passwords. That reduces credential and remote-submission risk, but no assistive tool can guarantee a platform will never flag activity."
         },
         {
           "q": "Does Vantage fabricate experience to make my résumé look better?",
@@ -857,7 +894,7 @@
   "careerGraph": {
     "loading": "Loading Career Graph",
     "eyebrow": "Structured career asset",
-    "codexNative": "Codex native",
+    "codexNative": "Review-gated facts",
     "title": "Career Graph",
     "subtitle": "Your résumé is an output. This is the evidence-backed source underneath it: stable facts, explicit relationships, immutable revisions, and a review gate before anything becomes true.",
     "lineage": {
@@ -891,6 +928,11 @@
       "title": "Stage résumé evidence",
       "sourceLabel": "Source résumé",
       "unnamed": "Untitled résumé",
+      "track": {
+        "original": "Original",
+        "optimized": "Optimized",
+        "tailored": "Tailored"
+      },
       "staging": "Staging evidence…",
       "stage": "Stage for review",
       "guard": "This creates a pending proposal only. Your approved graph does not change.",
@@ -906,6 +948,10 @@
       "destructive": "Contains removals",
       "before": "Before",
       "after": "Proposed",
+      "resumeSource": "Source résumé · v{version}",
+      "recordedSource": "Recorded evidence source",
+      "factReference": "Related fact",
+      "importSummary": "Import résumé",
       "noDiff": "No material diff",
       "noDiffBody": "This proposal does not change any fact or relationship.",
       "approve": "Approve",
@@ -1271,11 +1317,17 @@
     "percentMatch": "{pct}% match",
     "addResumeToScore": "Add or refresh your résumé so Vantage can score this match.",
     "skillGaps": "+{count} gaps",
-    "reviewAndApply": "Review & apply",
+    "reviewAndApply": "Review & prepare",
+    "greeting": {
+      "morning": "Good morning, {name}.",
+      "afternoon": "Good afternoon, {name}.",
+      "evening": "Good evening, {name}.",
+      "fallbackName": "there"
+    },
     "rolesInDatabase": "{count, plural, one {role in database} other {roles in database}}",
     "noFitsScored": "no fits scored yet",
     "noStrongFits": "no strong fits — try broader filters",
-    "strongFitsReady": "{count, plural, one {strong fit, ready to send} other {strong fits, ready to send}}",
+    "strongFitsReady": "{count, plural, one {strong fit to review first} other {strong fits to review first}}",
     "trendingSkillsTracked": "{count, plural, one {trending skill tracked} other {trending skills tracked}}",
     "queueHeading": "Today, {count, plural, one {# thing moves} other {# things move}} you forward",
     "tapToStart": "Tap to start",
@@ -1289,9 +1341,11 @@
     "fromDbPending": "From database · scoring pending",
     "whileWeLook": "While we look for matches",
     "sampleSurface": "Sample of what we'll surface",
-    "oneClickApply": "One-click apply",
+    "oneClickApply": "Prepare package",
     "applyOnSite": "Apply on site",
     "buttonsHint": "Filled buttons mean everything's prepared. Outlined ones open the company's own site.",
+    "noMatchesTitle": "No verified matches yet",
+    "noMatchesBody": "New roles will appear here as sources refresh. You can also tell Vantage your target role, location, or skill preferences.",
     "fit": {
       "excellent": "Excellent",
       "strong": "Strong",
@@ -1317,27 +1371,29 @@
     "pipeline": "Pipeline",
     "title": "Applications",
     "syncing": "Syncing with database…",
-    "nothingSubmitted": "Nothing submitted yet — your seed flow is below.",
-    "tracked": "{count, plural, one {# application tracked} other {# applications tracked}}",
+    "nothingSubmitted": "No applications tracked yet.",
+    "tracked": "{count, plural, one {# application tracked} other {# applications tracked}} — drafts are not submissions",
     "unknownCompany": "Unknown company",
     "role": "Role",
-    "justSent": "Just sent",
+    "justSent": "Just created",
     "openCard": "Open {role} at {company}",
     "openPrep": "Open prep",
     "browseMatches": "Browse matches",
     "firstEmptyTitle": "Nothing here yet — pick a role from today's matches to begin.",
-    "firstEmptyBody": "Once you tailor and submit your first application, this board fills with real activity. The cards below are a preview only.",
+    "firstEmptyBody": "Create a draft from a matched role. Vantage will prepare the package here; only your browser can make the final submission.",
     "interviewingBanner": "You have {count, plural, one {# active interview} other {# active interviews}}. Click <strong>Prep this interview</strong> to launch a mock.",
     "dropError": "Couldn't update that card. Try again.",
     "dropErrorWithReason": "Couldn't update that card: {reason}",
     "dismiss": "Dismiss",
     "dismissDropError": "Dismiss drop error",
     "columns": {
+      "preparing": "Preparing",
       "applied": "Applied",
       "interviewing": "Interviewing",
       "outcome": "Outcome"
     },
     "empty": {
+      "preparing": "Create a draft and Vantage will prepare its résumé, cover letter, and answers here.",
       "applied": "Submit an application and it lands here.",
       "interviewing": "When a recruiter replies, the conversation moves to this column.",
       "outcome": "Offers and closed loops settle here."
@@ -1367,7 +1423,7 @@
     },
     "delivery": {
       "title": "You submit · we prepare",
-      "body": "Vantage tailors your résumé, drafts the cover letter, and pre-fills the form — but the final <strong>Submit</strong> click happens in your browser, under your login, on your IP. Zero risk of bot-detection, no stored ATS passwords.",
+      "body": "Vantage tailors your résumé, drafts the cover letter, and pre-fills the form — but the final <strong>Submit</strong> click happens in your browser, under your login, on your IP. This lowers remote-submission risk, and ATS passwords are never stored.",
       "dismissTitle": "Got it — don't show again",
       "dismissLabel": "Dismiss explanation"
     },
@@ -1382,7 +1438,16 @@
       "outcomePlaceholder": "e.g. signed offer, closed at recruiter screen…",
       "outcomeHelp": "Narrative for what actually happened. Saved on blur.",
       "coverLabel": "Cover letter draft",
-      "coverPlaceholder": "Paste or write the cover letter you sent…"
+      "coverPlaceholder": "Review or edit the cover letter draft…",
+      "packageLabel": "Application package",
+      "resumeArtifact": "Tailored résumé",
+      "coverArtifact": "Cover letter",
+      "formArtifact": "Form answers",
+      "ready": "Ready",
+      "pending": "Pending",
+      "answerCount": "{count, plural, one {# answer} other {# answers}}",
+      "notSubmitted": "This is still a preparation draft. Relay has not submitted anything to the employer.",
+      "openJobSite": "Open job site to review & submit"
     }
   },
   "chat": {

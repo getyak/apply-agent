@@ -136,6 +136,7 @@ async def test_prepare_application_happy_path(monkeypatch, ttar_sink):
         base_resume_id=uuid4(),
         base_resume_content=BASE_RESUME,
         base_resume_version=1,
+        application_id=uuid4(),
         form_fields=[{"id": "first_name", "label": "First Name", "type": "text"}],
     )
 
@@ -158,6 +159,107 @@ async def test_prepare_application_happy_path(monkeypatch, ttar_sink):
     assert rec["fabrication_attempts"] == 0
 
 
+async def test_prepare_application_fails_when_artifacts_cannot_persist(monkeypatch, ttar_sink):
+    async def fake_parse_jd(url, user_id, persist=True, http_client=None):
+        return _stub_parsed_jd()
+
+    async def fake_customize(**kwargs):
+        return {
+            "ok": True,
+            "tailored": kwargs["base_resume"],
+            "version": 2,
+            "resume_id": str(uuid4()),
+            "diff": {},
+        }
+
+    async def fake_cover(**kwargs):
+        return appprep.CoverLetter(
+            subject="Application",
+            body="Dear Hiring Team,\n\nGrounded letter.\n\nBest,\nAlice",
+            tone="direct",
+            fallback=False,
+            fabricated_entities=[],
+        )
+
+    async def cannot_persist(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(jm, "parse_jd_from_url", fake_parse_jd)
+    monkeypatch.setattr(ra, "customize", fake_customize)
+    monkeypatch.setattr(appprep, "generate_cover_letter", fake_cover)
+    monkeypatch.setattr(workflows, "_patch_application_draft", cannot_persist)
+
+    with pytest.raises(workflows.ApplicationPersistenceError, match="could not be saved"):
+        await workflows.run_prepare_application(
+            user_id=uuid4(),
+            jd_url="https://boards.greenhouse.io/synthetic/jobs/4071234",
+            base_resume_id=uuid4(),
+            base_resume_content=BASE_RESUME,
+            base_resume_version=1,
+            application_id=uuid4(),
+        )
+
+    assert len(ttar_sink) == 1
+    assert ttar_sink[0]["success"] is False
+    assert "ApplicationPersistenceError" in ttar_sink[0]["error"]
+
+
+async def test_prepare_application_reuses_stored_jd_without_network(monkeypatch, ttar_sink):
+    raw_jd = "Build reliable backend services with TypeScript and PostgreSQL."
+    parsed_jd = {
+        "skills": ["TypeScript", "PostgreSQL"],
+        "must_haves": ["Backend systems"],
+        "responsibilities": ["Own backend services"],
+    }
+    customize_inputs: list[str] = []
+
+    async def network_must_not_run(*args, **kwargs):
+        raise AssertionError("stored JD path must not refetch the external URL")
+
+    async def fake_customize(**kwargs):
+        customize_inputs.append(kwargs["jd_text"])
+        return {
+            "ok": True,
+            "tailored": kwargs["base_resume"],
+            "version": 2,
+            "resume_id": str(uuid4()),
+            "diff": {},
+        }
+
+    async def fake_cover(**kwargs):
+        return appprep.CoverLetter(
+            subject="Application",
+            body="Dear Hiring Team,\n\nGrounded letter.\n\nBest,\nAlice",
+            tone="direct",
+            fallback=False,
+            fabricated_entities=[],
+        )
+
+    monkeypatch.setattr(jm, "parse_jd_from_url", network_must_not_run)
+    monkeypatch.setattr(ra, "customize", fake_customize)
+    monkeypatch.setattr(appprep, "generate_cover_letter", fake_cover)
+
+    result = await workflows.run_prepare_application(
+        user_id=uuid4(),
+        jd_url="https://jobs.example.test/roles/backend",
+        job_id=uuid4(),
+        jd_text=raw_jd,
+        parsed_jd=parsed_jd,
+        company="Relay Labs",
+        role_title="Backend Engineer",
+        base_resume_id=uuid4(),
+        base_resume_content=BASE_RESUME,
+        base_resume_version=1,
+        application_id=uuid4(),
+    )
+
+    assert result["status"] == "review"
+    assert result["company"] == "Relay Labs"
+    assert result["role_title"] == "Backend Engineer"
+    assert customize_inputs == [raw_jd]
+    assert ttar_sink[0]["success"] is True
+
+
 # ─── parse_jd failure short-circuits the chain ─────────────────────────
 
 
@@ -173,6 +275,7 @@ async def test_prepare_application_parse_jd_failure(monkeypatch, ttar_sink):
         base_resume_id=uuid4(),
         base_resume_content=BASE_RESUME,
         base_resume_version=1,
+        application_id=uuid4(),
     )
 
     assert result["status"] == "draft"
@@ -217,6 +320,7 @@ async def test_prepare_application_customize_fabrication_falls_back(monkeypatch,
         base_resume_id=base_id,
         base_resume_content=BASE_RESUME,
         base_resume_version=1,
+        application_id=uuid4(),
     )
 
     # Stage 2 marked fallback, but the chain continued.
@@ -278,6 +382,7 @@ async def test_prepare_application_cover_fallback_keeps_form_running(monkeypatch
         base_resume_id=uuid4(),
         base_resume_content=BASE_RESUME,
         base_resume_version=1,
+        application_id=uuid4(),
         form_fields=[{"id": "why_us", "label": "Why us?", "type": "textarea"}],
     )
 
@@ -293,7 +398,7 @@ async def test_prepare_application_cover_fallback_keeps_form_running(monkeypatch
 
 
 async def test_prepare_application_sensitive_field_is_skipped(monkeypatch, ttar_sink):
-    """No LLM, no PG — runs the real appprep.generate_form_answers locally."""
+    """No LLM/PG: sensitive fields stop while résumé facts still fill."""
 
     async def fake_parse_jd(url, user_id, persist=True, http_client=None):
         return _stub_parsed_jd()
@@ -301,7 +406,7 @@ async def test_prepare_application_sensitive_field_is_skipped(monkeypatch, ttar_
     async def fake_customize(**kwargs):
         return {
             "ok": True,
-            "tailored": BASE_RESUME,
+            "tailored": kwargs["base_resume"],
             "version": 2,
             "resume_id": str(uuid4()),
             "diff": {},
@@ -319,28 +424,62 @@ async def test_prepare_application_sensitive_field_is_skipped(monkeypatch, ttar_
     monkeypatch.setattr(jm, "parse_jd_from_url", fake_parse_jd)
     monkeypatch.setattr(ra, "customize", fake_customize)
     monkeypatch.setattr(appprep, "generate_cover_letter", fake_cover)
-    # form_answers is NOT stubbed — we hit the real function. With no LLM key,
-    # ask_llm branch returns no_llm_key skip, so only the sensitive-field
-    # local skip is interesting here.
+    # form_answers is NOT stubbed — we hit the real deterministic profile
+    # mapper and sensitive-field guard with no LLM key.
 
+    grounded_resume = {
+        **BASE_RESUME,
+        "basics": {
+            **BASE_RESUME["basics"],
+            "location": {"city": "San Francisco", "region": "CA", "countryCode": "US"},
+            "profiles": [{"network": "LinkedIn", "url": "https://linkedin.com/in/alice-engineer"}],
+        },
+    }
     fields = [
         {"id": "race-question", "label": "Race / Ethnicity (US EEO)", "type": "select"},
         {"id": "first_name", "label": "First Name", "type": "text"},
+        {"id": "generated-1", "label": "LinkedIn Profile", "type": "text"},
+        {"id": "generated-2", "label": "Current location", "type": "text"},
+        {"id": "generated-3", "label": "Pronouns", "type": "text"},
+        {
+            "id": "generated-4",
+            "name": "citizenship_status",
+            "label": "Additional information",
+            "type": "text",
+        },
+        {"id": "generated-5", "label": "Preferred name", "type": "text"},
     ]
 
     result = await workflows.run_prepare_application(
         user_id=uuid4(),
         jd_url="https://boards.greenhouse.io/synthetic/jobs/4071234",
         base_resume_id=uuid4(),
-        base_resume_content=BASE_RESUME,
+        base_resume_content=grounded_resume,
         base_resume_version=1,
+        application_id=uuid4(),
         form_fields=fields,
     )
 
     answers = {a["id"]: a for a in result["form_answers"]}
     assert answers["race-question"]["skip"] is True
     assert answers["race-question"]["reason"] == "sensitive_field_user_decides"
-    # first_name is not sensitive, but no LLM key → also skipped with no_llm_key.
-    assert answers["first_name"]["skip"] is True
-    # In a 2-field form with both skipped, form_answers is "fallback".
+    assert answers["generated-3"]["skip"] is True
+    assert answers["generated-3"]["reason"] == "sensitive_field_user_decides"
+    assert answers["generated-4"]["skip"] is True
+    assert answers["generated-4"]["reason"] == "sensitive_field_user_decides"
+    assert answers["generated-5"]["skip"] is True
+    assert answers["generated-5"]["reason"] == "user_identity_input_required"
+
+    assert answers["first_name"]["answer"] == "Alice"
+    assert answers["generated-1"]["answer"] == "https://linkedin.com/in/alice-engineer"
+    assert answers["generated-2"]["answer"] == "San Francisco, CA, US"
+    for field_id in ("first_name", "generated-1", "generated-2"):
+        assert answers[field_id]["skip"] is False
+    assert answers["first_name"]["reason"] == "derived_resume_name"
+    assert answers["first_name"]["confidence"] == 0.7
+    for field_id in ("generated-1", "generated-2"):
+        assert answers[field_id]["reason"] == "grounded_resume_field"
+        assert answers[field_id]["confidence"] == 1.0
+    # More than half the fields deliberately require user input, so the saga
+    # truthfully reports a fallback/review state rather than "all answered".
     assert result["stage_status"]["form_answers"] == "fallback"

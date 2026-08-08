@@ -119,7 +119,12 @@ async def proofread(parsed: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _run_proofread(parsed: dict[str, Any]) -> dict[str, Any]:
-    model = pick_model("fast", temperature=0.0, max_tokens=2048)
+    model = pick_model(
+        "fast",
+        temperature=0.0,
+        max_tokens=2048,
+        reasoning_effort=None,
+    )
     prompt = _load_prompt("proofread.v1.md")
     payload = {"resume": parsed}
     resp = await model.ainvoke(
@@ -260,7 +265,12 @@ def _normalize_date_range(text: str) -> str | None:
 
 
 async def _run_normalize(parsed: dict[str, Any]) -> dict[str, Any]:
-    model = pick_model("fast", temperature=0.0, max_tokens=2048)
+    model = pick_model(
+        "fast",
+        temperature=0.0,
+        max_tokens=2048,
+        reasoning_effort=None,
+    )
     prompt = _load_prompt("normalize.v1.md")
     payload = {"resume": parsed}
     resp = await model.ainvoke(

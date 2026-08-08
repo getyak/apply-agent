@@ -40,6 +40,12 @@ class InMemoryCareerGraphStore:
         self.reset()
 
     def reset(self) -> None:
+        # The fake Career Graph and fake operation ledger represent one local
+        # database. Reset them together so semantic idempotency keys cannot
+        # replay results from a previous protocol test/demo world.
+        from agents.harness.recovery import set_operation_store_for_tests
+
+        set_operation_store_for_tests(None)
         self.graphs: dict[str, dict[str, Any]] = {}
         self.change_sets: dict[str, dict[str, Any]] = {}
         self.compilations: dict[str, dict[str, Any]] = {}
@@ -241,6 +247,22 @@ class InMemoryCareerGraphStore:
                 }
             )
         return rows[offset : offset + limit]
+
+    async def get_application_projection(
+        self, user_id: UUID, application_id: UUID
+    ) -> dict[str, Any] | None:
+        application = self.application_drafts.get(str(application_id))
+        if not application or application["user_id"] != str(user_id):
+            return None
+        return {
+            "application_id": application["id"],
+            "status": application["status"],
+            "outcome": application["outcome"],
+            "submitted_at": application["submitted_at"],
+            "submitted_via": application["submitted_via"],
+            "interview_date": application["interview_date"],
+            "updated_at": application["updated_at"],
+        }
 
     async def propose_changes(
         self,
@@ -810,9 +832,7 @@ class InMemoryCareerGraphStore:
             "external_id": f"career-graph:{compilation_id}",
         }
         if compilation["job_identity"] and compilation["job_identity"] != expected:
-            raise CareerGraphStateError(
-                "compilation is already bound to a different job identity"
-            )
+            raise CareerGraphStateError("compilation is already bound to a different job identity")
         if not compilation["job_id"]:
             compilation["job_id"] = str(uuid4())
         compilation["job_identity"] = expected
@@ -844,9 +864,7 @@ class InMemoryCareerGraphStore:
             or bound["role_title"] != role_title
             or bound["job_url"] != job_url
         ):
-            raise CareerGraphStateError(
-                "compilation is already bound to a different job identity"
-            )
+            raise CareerGraphStateError("compilation is already bound to a different job identity")
         existing = next(
             (
                 item
@@ -929,7 +947,7 @@ class InMemoryCareerGraphStore:
         if application["status"] != "review":
             raise CareerGraphStateError(
                 "questionnaires can only change while the application awaits review"
-        )
+            )
         questionnaires = application.setdefault("questionnaires", [])
         previous = questionnaires[-1] if questionnaires else {}
         if previous.get("status") == "draft":
@@ -1202,6 +1220,7 @@ class InMemoryCareerGraphStore:
         job_url: str,
         observed_url: str,
         confirmation: str,
+        operation_id: UUID | None = None,
     ) -> dict[str, Any]:
         application = self.application_drafts.get(str(application_id))
         compilation = self.compilations.get(str(compilation_id))
@@ -1243,6 +1262,7 @@ class InMemoryCareerGraphStore:
             "user_id": str(user_id),
             "application_id": str(application_id),
             "compilation_id": str(compilation_id),
+            "operation_id": str(operation_id) if operation_id else None,
             "expected_job_url_fingerprint": hashlib.sha256(job_url.encode("utf-8")).hexdigest(),
             "observed_url_fingerprint": hashlib.sha256(observed_url.encode("utf-8")).hexdigest(),
             "confirmation_digest": hashlib.sha256(confirmation.encode("utf-8")).hexdigest(),
@@ -1264,6 +1284,44 @@ class InMemoryCareerGraphStore:
             "authorization_active": True,
             "authorization_scope": "one_application_one_final_click",
             "one_final_click_authorized": True,
+            "server_side_submission": False,
+            "post_click_requirement": (
+                "Record submitted only after a visible post-submit confirmation."
+            ),
+        }
+
+    async def get_application_submission_authorization_for_operation(
+        self,
+        user_id: UUID,
+        operation_id: UUID,
+    ) -> dict[str, Any] | None:
+        authorization = next(
+            (
+                item
+                for item in self.submission_authorizations.values()
+                if item["user_id"] == str(user_id) and item.get("operation_id") == str(operation_id)
+            ),
+            None,
+        )
+        if authorization is None:
+            return None
+        active = (
+            authorization["consumed_at"] is None
+            and authorization["invalidated_at"] is None
+            and datetime.fromisoformat(authorization["expires_at"]) > datetime.now(UTC)
+        )
+        return {
+            "ok": True,
+            "submission_authorization_id": authorization["id"],
+            "application_id": authorization["application_id"],
+            "compilation_id": authorization["compilation_id"],
+            "authorized_at": authorization["authorized_at"],
+            "expires_at": authorization["expires_at"],
+            "consumed_at": authorization["consumed_at"],
+            "invalidated_at": authorization["invalidated_at"],
+            "authorization_active": active,
+            "authorization_scope": "one_application_one_final_click",
+            "one_final_click_authorized": active,
             "server_side_submission": False,
             "post_click_requirement": (
                 "Record submitted only after a visible post-submit confirmation."

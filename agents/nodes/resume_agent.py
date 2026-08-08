@@ -28,7 +28,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.events.bus import publish
 from agents.harness.audit import audit
-from agents.harness.llm import pick_model
+from agents.harness.llm import Tier, pick_model
 from agents.nodes import resume_store
 from agents.tools.auto import redis_get, redis_setex
 from agents.tools.notify import save_resume_version
@@ -62,7 +62,12 @@ def intake(base_resume_id: UUID, user_id: UUID):  # type: ignore[no-untyped-def]
 
 async def parse(raw_text: str, user_id: UUID) -> dict[str, Any]:
     async with audit(user_id, "resume_agent", "parse"):
-        model = pick_model("fast", temperature=0.0, max_tokens=4096)
+        model = pick_model(
+            "fast",
+            temperature=0.0,
+            max_tokens=4096,
+            reasoning_effort=None,
+        )
         prompt = _load_prompt("parse.v1.md")
         resp = await model.ainvoke(
             [SystemMessage(content=prompt), HumanMessage(content=raw_text[:30_000])]
@@ -97,12 +102,32 @@ async def customize(
         # version bump.
         cache_key = f"resume:tailored:{user_id}:{job_id}:{base_version}"
         cached = await redis_get(cache_key)
+        envelope: dict[str, Any] | None = None
+        cache_needs_write = False
         if cached:
-            record.cache_hit = True
-            envelope = _normalise_customize_envelope(json.loads(cached))
-        else:
-            envelope = await _generate_tailored(base_resume, jd_text)
-            await redis_setex(cache_key, 7 * 24 * 3600, json.dumps(envelope))
+            try:
+                candidate = _normalise_customize_envelope(json.loads(cached))
+            except (json.JSONDecodeError, TypeError):
+                candidate = {"tailored": {}, "change_log": []}
+            candidate_tailored = candidate.get("tailored")
+            if not isinstance(candidate_tailored, dict):
+                candidate_tailored = {}
+            cached_fabrications = fabrication_guard(base_resume, candidate_tailored)
+            if _is_usable_tailored(base_resume, candidate) and not cached_fabrications:
+                record.cache_hit = True
+                envelope = candidate
+            else:
+                log.warning("resume.invalid_cached_tailored", cache_key=cache_key)
+        if envelope is None:
+            try:
+                envelope = await _generate_tailored_with_retries(base_resume, jd_text)
+            except ResumeGenerationError:
+                return {
+                    "ok": False,
+                    "reason": "invalid_model_output",
+                    "fabricated": [],
+                }
+            cache_needs_write = True
         tailored = envelope["tailored"]
         change_log = envelope["change_log"]
 
@@ -119,9 +144,27 @@ async def customize(
                     "reason": "fabrication_guard_failed",
                     "fabricated": fab,
                 }
-            envelope = await _generate_tailored(base_resume, jd_text, fabrication_warning=fab)
+            try:
+                envelope = await _generate_tailored_with_retries(
+                    base_resume,
+                    jd_text,
+                    fabrication_warning=fab,
+                )
+            except ResumeGenerationError:
+                return {
+                    "ok": False,
+                    "reason": "invalid_model_output",
+                    "fabricated": [],
+                }
             tailored = envelope["tailored"]
             change_log = envelope["change_log"]
+            cache_needs_write = True
+
+        # Cache only the final guard-clean envelope. The first model draft may
+        # contain a fabricated entity and must never be persisted, even in a
+        # disposable cache.
+        if cache_needs_write:
+            await redis_setex(cache_key, 7 * 24 * 3600, json.dumps(envelope))
 
         # Annotate every change_log entry with a risk level (safe / needs
         # review / unsupported). The UI uses these to drive bullet-level
@@ -175,7 +218,11 @@ async def customize(
 
 
 async def _generate_tailored(
-    base_resume: dict[str, Any], jd_text: str, fabrication_warning: list[str] | None = None
+    base_resume: dict[str, Any],
+    jd_text: str,
+    fabrication_warning: list[str] | None = None,
+    *,
+    tier: Tier = "general",
 ) -> dict[str, Any]:
     """Run the customize prompt and return a normalised
     `{tailored, change_log}` envelope.
@@ -185,8 +232,19 @@ async def _generate_tailored(
     that ignores the schema), we coerce it into the envelope shape with
     an empty `change_log` so callers never need a branching parse.
     """
-    model = pick_model("general", temperature=0.4, max_tokens=4096)
+    model = pick_model(
+        tier,
+        temperature=0.4,
+        max_tokens=8192,
+        reasoning_effort=None,
+        json_mode=True,
+    )
     sys_prompt = _load_prompt("customize.v2.md")
+    sys_prompt += (
+        "\n\nOUTPUT BUDGET: Return one raw JSON object with no markdown fences. "
+        "Keep the same number of résumé bullets, keep every bullet concise, "
+        "and keep the complete response below 6,000 tokens."
+    )
     if fabrication_warning:
         sys_prompt += (
             "\n\nPREVIOUS ATTEMPT INTRODUCED THESE FABRICATIONS — DO NOT REPEAT:\n"
@@ -201,6 +259,65 @@ async def _generate_tailored(
     )
     parsed = _safe_json(resp.content)
     return _normalise_customize_envelope(parsed)
+
+
+class ResumeGenerationError(RuntimeError):
+    """Raised when repeated model output cannot form a usable résumé."""
+
+
+async def _generate_tailored_with_retries(
+    base_resume: dict[str, Any],
+    jd_text: str,
+    fabrication_warning: list[str] | None = None,
+    *,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    """Retry invalid output across model tiers without ever saving it."""
+    fallback_tiers: tuple[Tier, ...] = ("general", "heavy", "fast")
+    for attempt in range(1, max_attempts + 1):
+        tier = fallback_tiers[(attempt - 1) % len(fallback_tiers)]
+        try:
+            envelope = await _generate_tailored(
+                base_resume,
+                jd_text,
+                fabrication_warning=fabrication_warning,
+                tier=tier,
+            )
+        except Exception as exc:  # noqa: BLE001 — model boundary; try the next tier
+            log.warning(
+                "resume.tailored_model_failed",
+                attempt=attempt,
+                max_attempts=max_attempts,
+                tier=tier,
+                error_type=type(exc).__name__,
+            )
+            continue
+        if _is_usable_tailored(base_resume, envelope):
+            return envelope
+        log.warning(
+            "resume.invalid_tailored_retry",
+            attempt=attempt,
+            max_attempts=max_attempts,
+            tier=tier,
+        )
+    raise ResumeGenerationError("model returned empty or structurally incomplete résumé")
+
+
+def _is_usable_tailored(base_resume: dict[str, Any], envelope: dict[str, Any]) -> bool:
+    tailored = envelope.get("tailored")
+    if not isinstance(tailored, dict) or not tailored:
+        return False
+    for section in ("basics", "work"):
+        if base_resume.get(section) and not tailored.get(section):
+            return False
+    base_basics = base_resume.get("basics")
+    tailored_basics = tailored.get("basics")
+    if isinstance(base_basics, dict) and isinstance(tailored_basics, dict):
+        base_name = str(base_basics.get("name") or "").strip()
+        tailored_name = str(tailored_basics.get("name") or "").strip()
+        if base_name and tailored_name != base_name:
+            return False
+    return isinstance(envelope.get("change_log"), list)
 
 
 def _normalise_customize_envelope(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -352,9 +469,9 @@ def change_log_guard(
     base_text = _flatten_text(base).lower()
     annotated: list[dict[str, Any]] = []
     for entry in change_log:
-        change_type = (entry.get("change_type") or "").strip()
-        after = (entry.get("after") or "").strip()
-        source_evidence = (entry.get("source_evidence") or "").strip()
+        change_type = _change_log_text(entry.get("change_type"))
+        after = _change_log_text(entry.get("after"))
+        source_evidence = _change_log_text(entry.get("source_evidence"))
 
         if not change_type or not after:
             risk = "unsupported"
@@ -375,6 +492,11 @@ def change_log_guard(
 
         annotated.append({**entry, "risk": risk})
     return annotated
+
+
+def _change_log_text(value: Any) -> str:
+    """Return a safe string for model-authored change-log scalar fields."""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _has_new_quantitative_token(after: str, base_text: str) -> bool:
@@ -433,7 +555,12 @@ async def build_from_scratch(
     target_role: str, recent_role: str, top_3_wins: list[str], user_id: UUID
 ) -> dict[str, Any]:
     async with audit(user_id, "resume_agent", "build_from_scratch"):
-        model = pick_model("general", temperature=0.5, max_tokens=2048)
+        model = pick_model(
+            "general",
+            temperature=0.5,
+            max_tokens=2048,
+            reasoning_effort=None,
+        )
         prompt = _load_prompt("build_from_scratch_draft.v1.md")
         payload = {
             "target_role": target_role,
@@ -653,7 +780,12 @@ async def optimize_general(base_resume_id: UUID, user_id: UUID) -> dict[str, Any
 async def _run_optimize_general(
     parsed: dict[str, Any], bullet_index: dict[str, Any]
 ) -> dict[str, Any]:
-    model = pick_model("general", temperature=0.3, max_tokens=4096)
+    model = pick_model(
+        "general",
+        temperature=0.3,
+        max_tokens=4096,
+        reasoning_effort=None,
+    )
     prompt = _load_prompt("optimize_general.v1.md")
     payload = {"resume": parsed, "bullet_index": bullet_index}
     resp = await model.ainvoke(
@@ -821,7 +953,12 @@ async def propose_bullet_edit(
         if bullet_text is None:
             return {"ok": False, "reason": "bullet_not_found"}
 
-        model = pick_model("fast", temperature=0.3, max_tokens=1024)
+        model = pick_model(
+            "fast",
+            temperature=0.3,
+            max_tokens=1024,
+            reasoning_effort=None,
+        )
         prompt = _load_prompt("propose_bullet_edit.v1.md")
         payload = {
             "bullet_text": bullet_text,

@@ -21,6 +21,7 @@
 
 import { Hono } from "hono";
 import { query } from "../db";
+import { resolveLocale } from "../locale";
 import { authMiddleware } from "../middleware/auth";
 import type { AppEnv } from "../types";
 
@@ -48,6 +49,7 @@ interface TodayAction {
 
 app.get("/queue", async (c) => {
   const userId = c.get("userId");
+  const zh = resolveLocale(c) === "zh";
 
   const actions: TodayAction[] = [];
 
@@ -64,6 +66,8 @@ app.get("/queue", async (c) => {
          JOIN jobs j ON j.id = a.job_id
         WHERE a.user_id = $1
           AND a.status IN ('draft', 'review')
+          AND j.company NOT IN ('Example', 'Synthetic', 'Synthetic Labs', 'Synthetic Robotics', 'Synthetic Studio')
+          AND j.company NOT ILIKE '%pasted JD%'
         ORDER BY a.updated_at ASC
         LIMIT 3`,
       [userId],
@@ -75,15 +79,21 @@ app.get("/queue", async (c) => {
       actions.push({
         id: `app-${r.id}`,
         kind: "prepare",
-        title: `Prep your ${r.company} application`,
+        title: zh ? `准备 ${r.company} 的申请` : `Prep your ${r.company} application`,
         sub:
           age_days <= 0
-            ? `${r.role_title} — still in draft`
-            : `${r.role_title} — sitting for ${age_days}d`,
+            ? zh
+              ? `${r.role_title} — 仍是草稿`
+              : `${r.role_title} — still in draft`
+            : zh
+              ? `${r.role_title} — 已搁置 ${age_days} 天`
+              : `${r.role_title} — sitting for ${age_days}d`,
         // No hard due_at; we score by age instead.
         priority: 70 + Math.min(20, age_days * 2),
         route: `/app/applications#app-${r.id}`,
-        ask_prompt: `Help me finish the ${r.company} application prep package.`,
+        ask_prompt: zh
+          ? `帮我完成 ${r.company} 的申请准备包。`
+          : `Help me finish the ${r.company} application prep package.`,
       });
     }
   } catch (err) {
@@ -104,6 +114,8 @@ app.get("/queue", async (c) => {
           AND a.interview_date IS NOT NULL
           AND a.interview_date BETWEEN CURRENT_DATE
                                    AND CURRENT_DATE + INTERVAL '7 days'
+          AND j.company NOT IN ('Example', 'Synthetic', 'Synthetic Labs', 'Synthetic Robotics', 'Synthetic Studio')
+          AND j.company NOT ILIKE '%pasted JD%'
         ORDER BY a.interview_date ASC
         LIMIT 2`,
       [userId],
@@ -116,19 +128,27 @@ app.get("/queue", async (c) => {
       actions.push({
         id: `int-${r.id}`,
         kind: "interview",
-        title: `Practise the ${r.company} interview`,
+        title: zh ? `练习 ${r.company} 面试` : `Practise the ${r.company} interview`,
         sub:
           days <= 0
-            ? `${r.role_title} — today`
+            ? zh
+              ? `${r.role_title} — 今天`
+              : `${r.role_title} — today`
             : days === 1
-              ? `${r.role_title} — tomorrow`
-              : `${r.role_title} — in ${days} days`,
+              ? zh
+                ? `${r.role_title} — 明天`
+                : `${r.role_title} — tomorrow`
+              : zh
+                ? `${r.role_title} — ${days} 天后`
+                : `${r.role_title} — in ${days} days`,
         due_at: new Date(r.interview_date).toISOString(),
         // Floor at 80 so an interview-in-7-days still beats a
         // medium-age draft application; ceiling at 100 for today.
         priority: Math.max(80, 100 - days * 3),
         route: `/app/studio/mock`,
-        ask_prompt: `Run a mock interview for ${r.company} ${r.role_title}.`,
+        ask_prompt: zh
+          ? `为 ${r.company} 的 ${r.role_title} 岗位进行模拟面试。`
+          : `Run a mock interview for ${r.company} ${r.role_title}.`,
       });
     }
   } catch (err) {
@@ -175,13 +195,17 @@ app.get("/queue", async (c) => {
         actions.push({
           id: `learn-${(missing.skill as string).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
           kind: "learn",
-          title: `Learn ${missing.skill}`,
-          sub: `Trending — ${missing.demand} open roles ask for it`,
+          title: zh ? `学习 ${missing.skill}` : `Learn ${missing.skill}`,
+          sub: zh
+            ? `市场热门 — ${missing.demand} 个开放职位要求它`
+            : `Trending — ${missing.demand} open roles ask for it`,
           // Always below interview/prep urgency — learning is rarely
           // today-critical.
           priority: 40,
           route: `/app/today`,
-          ask_prompt: `Why is ${missing.skill} trending and where can I start?`,
+          ask_prompt: zh
+            ? `为什么 ${missing.skill} 正在变热门，我应该从哪里开始？`
+            : `Why is ${missing.skill} trending and where can I start?`,
         });
       }
     }

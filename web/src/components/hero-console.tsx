@@ -1,367 +1,61 @@
-"use client";
-
-import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
-import {
-  Upload,
-  MessageSquare,
-  ClipboardPaste,
-  Link2,
-  FileUp,
-  Sparkles,
-  Search,
-  FileText,
-  Pencil,
-  ArrowRight,
-  Check,
-} from "lucide-react";
-
-type Method = "upload" | "chat" | "paste" | "link";
-type Phase = "entry" | "running" | "ready";
-
-// Icons stay in code; labels are resolved from the "landing.heroConsole"
-// namespace inside the component (keyed by method).
-const METHOD_ICONS: Record<Method, React.ReactNode> = {
-  upload: <Upload size={15} />,
-  chat: <MessageSquare size={15} />,
-  paste: <ClipboardPaste size={15} />,
-  link: <Link2 size={15} />,
-};
-const METHOD_KEYS: Method[] = ["upload", "chat", "paste", "link"];
 
 /**
- * CountUp — a small figure that animates from 0 to its target once on mount,
- * so a freshly-computed stat reads as just-landed rather than painted in. Eases
- * on the system's calm decel curve, formats with locale grouping, and honours
- * reduced motion (it shows the final value immediately). Self-contained: no
- * external deps, parks itself the moment it reaches the target.
+ * The hero shows the product itself, not a hand-built facsimile.
+ *
+ * The animated WebP is assembled from three real Relay sessions: the Vantage
+ * workspace, ranked live matches, and the application review surface. People
+ * who prefer reduced motion receive the static workspace frame through the
+ * <picture> media query.
  */
-function CountUp({
-  to,
-  duration = 1200,
-  delay = 0,
-}: {
-  to: number;
-  duration?: number;
-  delay?: number;
-}) {
-  const [value, setValue] = useState(0);
-  const raf = useRef(0);
-
-  useEffect(() => {
-    const reduce = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    if (reduce) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs counter with external prefers-reduced-motion media query (skips raf animation entirely).
-      setValue(to);
-      return;
-    }
-    let start = 0;
-    let timer = 0;
-    const ease = (t: number) => 1 - Math.pow(1 - t, 3); // cubic-out
-    const step = (now: number) => {
-      if (!start) start = now;
-      const p = Math.min((now - start) / duration, 1);
-      setValue(Math.round(ease(p) * to));
-      if (p < 1) raf.current = requestAnimationFrame(step);
-    };
-    timer = window.setTimeout(() => {
-      raf.current = requestAnimationFrame(step);
-    }, delay);
-    return () => {
-      window.clearTimeout(timer);
-      if (raf.current) cancelAnimationFrame(raf.current);
-    };
-  }, [to, duration, delay]);
-
-  return <>{value.toLocaleString()}</>;
-}
-
 export default function HeroConsole() {
   const t = useTranslations("landing.heroConsole");
-  const [method, setMethod] = useState<Method>("upload");
-  const [phase, setPhase] = useState<Phase>("entry");
-  const rootRef = useRef<HTMLDivElement>(null);
-  const interacted = useRef(false);
-  const autoTimer = useRef(0);
-
-  // The reader has taken the wheel — record it and kill any pending auto-demo
-  // so the console never yanks itself out from under a hand that's mid-reach.
-  const markInteracted = useCallback(() => {
-    interacted.current = true;
-    if (autoTimer.current) {
-      window.clearTimeout(autoTimer.current);
-      autoTimer.current = 0;
-    }
-  }, []);
-
-  const startEntry = useCallback(() => {
-    markInteracted();
-    setPhase("running");
-    setTimeout(() => setPhase("ready"), 2600);
-  }, [markInteracted]);
-
-  const chooseMethod = useCallback(
-    (key: Method) => {
-      markInteracted();
-      setMethod(key);
-    },
-    [markInteracted],
-  );
-
-  // Self-running demo. The console is the one product the page actually shows
-  // off, yet it sits frozen at the static "entry" state until someone clicks —
-  // so most visitors never see the agent run that *is* the pitch (scout finds
-  // 1,240 roles → résumé tailored → answers drafted → 8 ready to send). Once it
-  // scrolls into view we play that run for them exactly once, so the magic
-  // moment lands without a click. It's cancelled the instant the reader takes
-  // over (any tab/upload press marks intent), skipped wholesale under reduced
-  // motion, and one-shot — never a loop — so it informs and then rests on the
-  // CTA rather than nagging. The short lead-in gives a beat to interact first.
-  useEffect(() => {
-    const node = rootRef.current;
-    if (!node) return;
-    const reduce = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    if (reduce) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (!e.isIntersecting) continue;
-          io.disconnect();
-          if (interacted.current) return;
-          autoTimer.current = window.setTimeout(() => {
-            if (!interacted.current) startEntry();
-          }, 1100);
-        }
-      },
-      { threshold: 0.55 },
-    );
-    io.observe(node);
-    return () => {
-      io.disconnect();
-      if (autoTimer.current) window.clearTimeout(autoTimer.current);
-    };
-  }, [startEntry]);
+  const stages = [
+    t("run.scout.name"),
+    t("run.resume.name"),
+    t("run.answer.name"),
+  ];
 
   return (
-    <div
-      ref={rootRef}
-      className="tilt-shine bg-dark rounded-[18px] border border-dark-border/40 shadow-[0_24px_70px_rgba(40,25,5,0.22)] overflow-hidden"
-    >
-      {/* Title bar */}
-      <div className="group h-[46px] border-b border-dark-border/40 flex items-center px-4 gap-2">
-        <div className="dots flex gap-1.5">
-          <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
-          <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
-          <span className="w-[11px] h-[11px] rounded-full bg-[#4a4238]" />
-        </div>
-        <span className="ml-2.5 font-mono text-[11px] tracking-[0.6px] uppercase text-dark-muted">
+    <figure className="relative m-0 overflow-hidden rounded-[18px] border border-[#d8cdbd] bg-[#f7f2eb] shadow-[0_26px_70px_-30px_rgba(61,42,20,0.52),0_8px_24px_-16px_rgba(61,42,20,0.28)]">
+      <div className="flex h-10 items-center border-b border-[#ded5c8] bg-[#f4eee6] px-3.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.62px] text-brown">
           {t("titleBar")}
         </span>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] tracking-[0.5px] uppercase text-dark-gold">
-          <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse-dot" />
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.62px] text-green">
           {t("live")}
         </span>
       </div>
 
-      <div className="p-5 pb-[22px]">
-        {phase === "entry" && (
-          <div className="animate-fade-in">
-            <div className="seg flex gap-[5px] bg-[#1b1812] border border-dark-border/40 rounded-xl p-1 mb-4">
-              {METHOD_KEYS.map((key) => (
-                <button
-                  key={key}
-                  onClick={() => chooseMethod(key)}
-                  data-active={method === key}
-                  className={`seg-item cursor-pointer flex-1 flex items-center justify-center gap-1.5 py-[9px] px-1.5 rounded-[9px] font-body font-semibold text-[12.5px] border ${
-                    method === key
-                      ? "bg-[#3a3022] text-[#FAF8F6] border-dark-border"
-                      : "bg-transparent text-dark-muted border-transparent hover:text-[#d8d0c4]"
-                  }`}
-                >
-                  {METHOD_ICONS[key]}
-                  {t(`methods.${key}`)}
-                </button>
-              ))}
-            </div>
+      <picture className="block aspect-[8/5] overflow-hidden bg-[#fbfaf8]">
+        <source
+          media="(prefers-reduced-motion: reduce)"
+          srcSet="/demo/workspace.png"
+        />
+        <img
+          src="/demo/relay-product-tour.webp"
+          alt={`${stages.join(", ")}. ${t("ready.title", { count: 8 })}`}
+          width={900}
+          height={563}
+          loading="eager"
+          decoding="async"
+          fetchPriority="high"
+          className="block h-full w-full object-cover"
+        />
+      </picture>
 
-            {method === "upload" && (
-              <button
-                onClick={startEntry}
-                className="cursor-pointer w-full border-[1.5px] border-dashed border-dark-border rounded-[13px] p-[30px_20px] min-h-[190px] flex flex-col items-center justify-center gap-[13px] transition-all hover:border-dark-gold hover:bg-[#221d16] bg-transparent"
-              >
-                <div className="w-12 h-12 rounded-xl bg-[#352d22] flex items-center justify-center">
-                  <FileUp size={23} className="text-dark-gold" />
-                </div>
-                <div className="text-center">
-                  <div className="font-body font-semibold text-[15px] text-[#FAF8F6] mb-[3px]">
-                    {t("upload.title")}
-                  </div>
-                  <div className="font-body text-[13px] text-dark-muted">
-                    {t("upload.hint")}
-                  </div>
-                </div>
-              </button>
-            )}
-
-            {method === "chat" && (
-              <div className="border border-dark-border/40 rounded-[13px] p-6 min-h-[190px] flex flex-col items-center justify-center gap-3 text-center">
-                <div className="w-12 h-12 rounded-xl bg-brown flex items-center justify-center">
-                  <Sparkles size={23} className="text-[#FAF8F6]" />
-                </div>
-                <div>
-                  <div className="font-body font-semibold text-[15px] text-[#FAF8F6] mb-[3px]">
-                    {t("chat.title")}
-                  </div>
-                  <div className="font-body text-[13px] leading-[1.45] text-dark-muted max-w-[290px]">
-                    {t("chat.hint")}
-                  </div>
-                </div>
-                <button className="mt-0.5 font-body font-semibold text-sm text-dark bg-gold px-5 py-[11px] rounded-[10px] inline-flex items-center gap-[7px] hover:bg-gold-light transition-colors cursor-pointer border-none">
-                  {t("chat.cta")}
-                  <ArrowRight size={15} />
-                </button>
-              </div>
-            )}
-
-            {method === "paste" && (
-              <div className="min-h-[190px] flex flex-col">
-                <div className="flex-1 bg-[#1b1812] border border-dark-border/40 rounded-[11px] p-[14px_16px] font-body text-[13.5px] leading-[1.6] text-dark-muted text-left">
-                  {t("paste.placeholder")}
-                </div>
-                <button
-                  onClick={startEntry}
-                  className="mt-3 self-end cursor-pointer border-none bg-gold text-dark font-body font-semibold text-[13.5px] px-[18px] py-[11px] rounded-[10px] hover:bg-gold-light transition-colors"
-                >
-                  {t("paste.cta")}
-                </button>
-              </div>
-            )}
-
-            {method === "link" && (
-              <div className="min-h-[190px] flex flex-col justify-center gap-[13px]">
-                <div className="font-body font-semibold text-sm text-[#FAF8F6] text-left">
-                  {t("link.title")}
-                </div>
-                <div className="flex items-center gap-[9px] bg-[#1b1812] border border-dark-border/40 rounded-[11px] p-[13px_15px]">
-                  <Link2 size={16} className="text-dark-muted" />
-                  <span className="flex-1 text-left font-body text-[13.5px] text-dark-muted">
-                    linkedin.com/in/your-profile
-                  </span>
-                </div>
-                <button
-                  onClick={startEntry}
-                  className="self-end cursor-pointer border-none bg-gold text-dark font-body font-semibold text-[13.5px] px-[18px] py-[11px] rounded-[10px] hover:bg-gold-light transition-colors"
-                >
-                  {t("link.cta")}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {(phase === "running" || phase === "ready") && (
-          <div className="animate-fade-in">
-            <div className="flex justify-end mb-[18px] animate-step-in">
-              <div className="bg-brown text-[#FAF8F6] rounded-[13px_13px_4px_13px] py-[11px] px-[15px] font-body text-[13.5px] leading-[1.45] max-w-[80%]">
-                {t("run.userMessage")}
-              </div>
-            </div>
-
-            {/* The three agent steps read as one flowing pipeline: a gold thread
-                draws down the icon column (v36) while each row steps in, each
-                tile kindles the instant its agent fires, and the check pops a
-                beat later so completion lands as a struck note. `step` drives
-                every beat off one number so the thread and rows stay in lockstep. */}
-            <div className="relative flex flex-col gap-[11px]">
-              <span className="pipeline-thread" aria-hidden="true" />
-              {[
-                {
-                  icon: <Search size={14} />,
-                  name: t("run.scout.name"),
-                  result: t.rich("run.scout.result", {
-                    count: () => (
-                      <span className="count-up text-white font-semibold">
-                        <CountUp to={1240} delay={450} />
-                      </span>
-                    ),
-                  }),
-                  step: 0.4,
-                },
-                {
-                  icon: <FileText size={14} />,
-                  name: t("run.resume.name"),
-                  result: t("run.resume.result"),
-                  step: 1,
-                },
-                {
-                  icon: <Pencil size={14} />,
-                  name: t("run.answer.name"),
-                  result: t("run.answer.result"),
-                  step: 1.6,
-                },
-              ].map((agent) => (
-                <div
-                  key={agent.name}
-                  className="relative flex items-start gap-[11px]"
-                  style={{
-                    animation: `step-in 0.5s ease-out ${agent.step}s both`,
-                  }}
-                >
-                  <div
-                    className="tile-kindle w-[26px] h-[26px] rounded-[7px] bg-[#352d22] flex items-center justify-center shrink-0 text-dark-gold"
-                    style={{ animationDelay: `${agent.step}s` }}
-                  >
-                    {agent.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-mono text-[10px] tracking-[0.5px] uppercase text-dark-gold mb-[3px]">
-                      {agent.name}
-                    </div>
-                    <div className="font-body text-[13px] leading-[1.4] text-[#cfc7bb]">
-                      {agent.result}
-                    </div>
-                  </div>
-                  <Check
-                    size={16}
-                    className="text-[#5bbf8a] shrink-0 mt-[3px]"
-                    strokeWidth={2.4}
-                    style={{
-                      animation: `check-in 0.42s var(--ease-spring) ${agent.step + 0.32}s both`,
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-
-            {phase === "ready" && (
-              <div className="mt-[18px] bg-dark-card border border-dark-border rounded-[11px] p-[14px_15px] flex items-center gap-3 animate-step-in">
-                <div className="w-[30px] h-[30px] rounded-lg bg-[#3a3022] flex items-center justify-center shrink-0">
-                  <span className="font-display font-bold text-sm text-gold">8</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-body font-semibold text-[13.5px] text-[#FAF8F6]">
-                    {t("ready.title", { count: 8 })}
-                  </div>
-                  <div className="font-body text-xs text-[#9a9082]">
-                    {t("ready.subtitle")}
-                  </div>
-                </div>
-                <a
-                  href="/auth?intent=start"
-                  className="no-underline font-body font-semibold text-[13px] text-dark bg-gold px-[15px] py-[9px] rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap hover:bg-gold-light transition-colors"
-                >
-                  {t("ready.cta")}
-                  <ArrowRight size={14} />
-                </a>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      <figcaption className="grid grid-cols-3 border-t border-[#ded5c8] bg-[#f7f2eb]">
+        {stages.map((stage, index) => (
+          <span
+            key={stage}
+            className={`min-w-0 px-3 py-2.5 font-mono text-[9px] uppercase tracking-[0.55px] text-[#756a5e] ${
+              index > 0 ? "border-l border-[#ded5c8]" : ""
+            }`}
+          >
+            {stage}
+          </span>
+        ))}
+      </figcaption>
+    </figure>
   );
 }

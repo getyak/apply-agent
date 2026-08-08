@@ -141,6 +141,93 @@ async def parse_jd_from_url(
         )
 
 
+async def parse_jd_text(
+    jd_text: str,
+    *,
+    company: str,
+    role_title: str,
+    source: ATSSource = "manual",
+) -> dict[str, Any]:
+    """Structure trusted JD text that is already present in the jobs table.
+
+    This intentionally performs no network access and no persistence. It is
+    used by application preparation after the gateway has ownership-checked
+    the existing draft and loaded its canonical source text.
+    """
+    return await _llm_parse_jd(jd_text, company, role_title, source)
+
+
+def structure_stored_jd(jd_text: str) -> dict[str, Any]:
+    """Build a conservative canonical JD shape without another model call.
+
+    Stored feed records occasionally have raw text but an empty ``parsed``
+    object. Application preparation already passes the full source text to the
+    résumé customizer, so this fallback only extracts explicit, bounded facts
+    needed by the remaining stages.
+    """
+    lowered = jd_text.lower()
+    vocabulary = [
+        "Python",
+        "TypeScript",
+        "JavaScript",
+        "Node.js",
+        "React",
+        "Next.js",
+        "PostgreSQL",
+        "Redis",
+        "Kafka",
+        "AWS",
+        "GCP",
+        "Azure",
+        "Docker",
+        "Kubernetes",
+        "Go",
+        "Rust",
+        "Java",
+        "C++",
+        "SQL",
+    ]
+    aliases = {
+        "Node.js": ("node.js", "nodejs"),
+        "PostgreSQL": ("postgresql", "postgres"),
+        "AWS": ("aws", "amazon web services"),
+        "GCP": ("gcp", "google cloud"),
+        "C++": ("c++",),
+    }
+    skills = [
+        skill
+        for skill in vocabulary
+        if any(
+            re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", lowered)
+            for alias in aliases.get(skill, (skill.lower(),))
+        )
+    ]
+    level = (
+        "principal"
+        if re.search(r"\bprincipal\b", lowered)
+        else "staff"
+        if re.search(r"\bstaff\b", lowered)
+        else "senior"
+        if re.search(r"\b(senior|sr\.?)\b", lowered)
+        else "junior"
+        if re.search(r"\b(junior|jr\.?)\b", lowered)
+        else "unspecified"
+    )
+    return {
+        "skills": skills,
+        "level": level,
+        "salary_min": None,
+        "salary_max": None,
+        "salary_currency": None,
+        "locations": [],
+        "remote": "remote" if re.search(r"\bremote\b", lowered) else "unspecified",
+        "must_haves": [],
+        "nice_to_haves": [],
+        "responsibilities": [],
+        "tech_stack": skills,
+    }
+
+
 class JDFetchError(RuntimeError):
     """Raised when the ATS page cannot be retrieved or is malformed."""
 
@@ -431,7 +518,12 @@ async def _llm_parse_jd(
     if not jd_text.strip():
         return _empty_parsed()
     try:
-        model = pick_model("fast", temperature=0.0, max_tokens=2048)
+        model = pick_model(
+            "fast",
+            temperature=0.0,
+            max_tokens=2048,
+            reasoning_effort=None,
+        )
     except RuntimeError as exc:
         # OPENROUTER_API_KEY missing — degrade rather than fail the workflow.
         log.warning("jobmatch.no_llm_key", error=redact_exception_text(str(exc)))

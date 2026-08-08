@@ -114,6 +114,13 @@ function readPersistedState(): DockState {
   return "docked";
 }
 
+function isNarrowViewport(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 1023px)").matches
+  );
+}
+
 function nextId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -133,9 +140,10 @@ export const useDock = create<DockStateShape>((set, get) => ({
   activeSessionId: null,
 
   open: () => {
+    const next: DockState = isNarrowViewport() ? "full" : "docked";
     if (typeof window !== "undefined")
-      window.localStorage.setItem(PERSISTED_STATE_KEY, "docked");
-    set({ state: "docked" });
+      window.localStorage.setItem(PERSISTED_STATE_KEY, next);
+    set({ state: next });
   },
   close: () => {
     if (typeof window !== "undefined")
@@ -144,14 +152,20 @@ export const useDock = create<DockStateShape>((set, get) => ({
     get().cancelStream();
   },
   toggleFull: () => {
-    const next = get().state === "full" ? "docked" : "full";
+    const next: DockState =
+      get().state === "full"
+        ? isNarrowViewport()
+          ? "closed"
+          : "docked"
+        : "full";
     if (typeof window !== "undefined")
       window.localStorage.setItem(PERSISTED_STATE_KEY, next);
     set({ state: next });
   },
   toggleDock: () => {
     const cur = get().state;
-    const next: DockState = cur === "closed" ? "docked" : "closed";
+    const next: DockState =
+      cur === "closed" ? (isNarrowViewport() ? "full" : "docked") : "closed";
     if (typeof window !== "undefined")
       window.localStorage.setItem(PERSISTED_STATE_KEY, next);
     set({ state: next });

@@ -45,6 +45,7 @@ class TTARRecord:
     """In-flight TTAR accumulator. Flushed to PG on context exit."""
 
     application_id: UUID
+    user_id: UUID | None = None
     started_at: float = field(default_factory=time.perf_counter)
     started_at_iso: str = field(
         default_factory=lambda: datetime.now(tz=UTC).isoformat(timespec="seconds")
@@ -116,13 +117,29 @@ async def _persist(record: TTARRecord) -> None:
         log.error("ttar.psycopg_missing")
         return
 
-    sql = """
-        UPDATE application_drafts
-           SET ttar_metrics = %s::jsonb,
-               updated_at   = now()
-         WHERE id = %s
-    """
-    params = (json.dumps(record.to_jsonb(), default=str), str(record.application_id))
+    params: tuple[str, ...]
+    if record.user_id is not None:
+        sql = """
+            UPDATE application_drafts
+               SET ttar_metrics = %s::jsonb,
+                   updated_at   = now()
+             WHERE id = %s AND user_id = %s
+        """
+        params = (
+            json.dumps(record.to_jsonb(), default=str),
+            str(record.application_id),
+            str(record.user_id),
+        )
+    else:
+        # Backward-compatible path for standalone measurement callers that do
+        # not operate on user-owned workflow state.
+        sql = """
+            UPDATE application_drafts
+               SET ttar_metrics = %s::jsonb,
+                   updated_at   = now()
+             WHERE id = %s
+        """
+        params = (json.dumps(record.to_jsonb(), default=str), str(record.application_id))
     try:
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
@@ -133,7 +150,7 @@ async def _persist(record: TTARRecord) -> None:
 
 
 @asynccontextmanager
-async def measure_ttar(application_id: UUID):
+async def measure_ttar(application_id: UUID, *, user_id: UUID | None = None):
     """Async context manager: accumulates stage timings, flushes on exit.
 
     Usage::
@@ -150,7 +167,7 @@ async def measure_ttar(application_id: UUID):
     exception message captured — so failed prepares show up in eval gate
     success-rate calculations rather than disappearing.
     """
-    record = TTARRecord(application_id=application_id)
+    record = TTARRecord(application_id=application_id, user_id=user_id)
     try:
         yield record
     except Exception as exc:

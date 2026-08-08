@@ -19,6 +19,9 @@ import {
 // round-3 audit) — no cycle.
 import { useDock } from "./ask-vantage-store";
 
+let jobsLoadedAt = 0;
+let jobsLoadedForResume: string | null = null;
+
 export type Screen = "onboarding" | "app" | "review" | "extension" | "builder" | "mock";
 export type Nav = "chat" | "today" | "apps" | "settings";
 export type ParseStage = "idle" | "parsing" | "done";
@@ -306,10 +309,14 @@ export interface ApiJob {
 
 export interface ApiApplication {
   id: string;
+  job_id?: string;
   status: string;
   company: string;
   role_title: string;
+  url?: string;
+  resume_version_id?: string | null;
   cover_letter?: string;
+  form_answers?: Array<Record<string, unknown>> | Record<string, unknown> | null;
   // Outcome is set once the round closes — offer / rejected / accepted / etc.
   // Distinct from `status` because the kanban column is decided by status,
   // while outcome is the final narrative the user records.
@@ -781,21 +788,24 @@ export const useVantage = create<VantageState>((set, get) => ({
     const role = demoJob?.role || apiJob?.role_title || "Unknown";
     const mono = demoJob?.mono || co.charAt(0).toUpperCase();
 
-    if (apiJob) {
-      get().submitApplication(apiJob.id);
+    // Demo-only cards retain the staged preview behaviour. Real API jobs are
+    // represented exclusively by application_drafts so the tracker never
+    // claims a submission happened before the browser-side Submit click.
+    if (!apiJob) {
+      const already = s.applied.some((a) => a.co === co && a.isNew);
+      if (!already) {
+        set({
+          applied: [
+            { mono, co, role, when: "Just now", isNew: true },
+            ...s.applied.map((a) => ({ ...a, isNew: false })),
+          ],
+        });
+      }
     }
-
-    const already = s.applied.some((a) => a.co === co && a.isNew);
-    if (!already) {
-      set({
-        applied: [
-          { mono, co, role, when: "Just now", isNew: true },
-          ...s.applied.map((a) => ({ ...a, isNew: false })),
-        ],
-      });
+    if (apiJob) {
+      void get().submitApplication(apiJob.id);
     }
     set({ screen: "app", nav: "apps" });
-    get().loadApplications();
   },
 
   openExtension: (id) => {
@@ -1002,25 +1012,47 @@ export const useVantage = create<VantageState>((set, get) => ({
   },
 
   loadJobs: async () => {
+    const state = get();
+    if (
+      state.apiJobs.length > 0 &&
+      jobsLoadedForResume === state.currentResumeId &&
+      Date.now() - jobsLoadedAt < 60_000
+    ) {
+      return;
+    }
     set({ apiJobsLoading: true });
     try {
       const res = await jobsApi.list({ limit: 20 });
-      const jobsWithScores: ApiJob[] = await Promise.all(
-        res.jobs.map(async (j): Promise<ApiJob> => {
-          try {
-            const m = await jobsApi.match(j.id);
-            return { ...j, matchScore: m.match.score, matchedSkills: m.match.matchedSkills, missingSkills: m.match.missingSkills };
-          } catch {
-            // Leave matchScore undefined when the engine can't score this job.
-            // The view distinguishes "Not scored yet" from a low score; a
-            // hardcoded 50 made every row look "Fair" (QA bug #2).
-            return { ...j };
-          }
-        }),
-      );
+      let jobsWithScores: ApiJob[] = res.jobs.map((job) => ({ ...job }));
+      if (res.jobs.length > 0) {
+        try {
+          const batch = await jobsApi.matches(res.jobs.map((job) => job.id));
+          jobsWithScores = res.jobs.map((job) => {
+            const match = batch.matches[job.id];
+            return match
+              ? {
+                  ...job,
+                  matchScore: match.score,
+                  matchedSkills: match.matchedSkills,
+                  missingSkills: match.missingSkills,
+                }
+              : { ...job };
+          });
+        } catch (err) {
+          // Job discovery is still useful when the optional score projection
+          // is temporarily unavailable. Keep the real rows visible and let
+          // the UI describe them as not scored yet.
+          console.warn(
+            "[jobs] batch scoring unavailable",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
       // Unscored rows sink to the bottom so real fits float up. Treat
       // undefined as -1 so they sort after a genuine 0% match too.
       jobsWithScores.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
+      jobsLoadedAt = Date.now();
+      jobsLoadedForResume = get().currentResumeId;
       set({ apiJobs: jobsWithScores, apiJobsLoading: false });
     } catch {
       set({ apiJobsLoading: false });
@@ -1103,10 +1135,34 @@ export const useVantage = create<VantageState>((set, get) => ({
   submitApplication: async (jobId) => {
     const s = get();
     const resumeId = s.currentResumeId;
+    const job = s.apiJobs.find((item) => item.id === jobId);
     try {
-      await applicationsApi.prepare(jobId, resumeId || "", undefined);
-    } catch {
-      // silently fail for MVP
+      // Re-use an existing unsubmitted draft for this job. Repeated review
+      // clicks should resume preparation, not create duplicate tracker rows.
+      const existing = s.apiApplications.find(
+        (item) =>
+          item.job_id === jobId &&
+          ["draft", "review", "prepared"].includes(item.status),
+      );
+      const draft = existing
+        ? { application: existing }
+        : await applicationsApi.prepare(jobId, resumeId || undefined, undefined);
+
+      // Show the truthful draft state immediately while the heavier saga runs.
+      await get().loadApplications();
+
+      if (job?.url && /^https?:\/\//i.test(job.url)) {
+        await applicationsApi.prepareFromJD(job.url, draft.application.id);
+        await get().loadApplications();
+      }
+    } catch (err) {
+      console.warn(
+        "[applications] package preparation failed",
+        err instanceof Error ? err.message : err,
+      );
+      // Preserve any draft that was successfully created before a downstream
+      // tailoring failure, and make the failure recoverable from the tracker.
+      await get().loadApplications();
     }
   },
 

@@ -121,18 +121,21 @@ function panel(confirmation: string) {
 }
 
 describe("CareerGraphReviewPanel", () => {
-  it("renders exact node/edge facts with provenance and before/after", () => {
+  it("renders exact facts with user-facing provenance and before/after", () => {
     const html = render(panel(""));
 
     expect(html).toContain('data-testid="career-graph-review-panel"');
     expect(html).toContain("Migrated billing workloads to PostgreSQL without downtime.");
     expect(html).toContain("Backend Engineer");
     expect(html).toContain("Senior Backend Engineer");
-    expect(html).toContain(
+    expect(html).toContain("Source résumé · v3");
+    expect(html).toContain("role");
+    expect(html).toContain("achievement");
+    expect(html).not.toContain(
       "resume:00000000-0000-4000-8000-000000000f03:v3",
     );
-    expect(html).toContain("role:acme");
-    expect(html).toContain("achievement:postgres");
+    expect(html).not.toContain("role:acme");
+    expect(html).not.toContain("achievement:postgres");
   });
 
   it("keeps approval disabled until the exact per-change phrase is typed", () => {

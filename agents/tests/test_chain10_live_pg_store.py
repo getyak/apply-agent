@@ -138,6 +138,7 @@ async def test_live_pg_workflow_questionnaire_and_browser_gate_score_100(
             observed_field_ids=["email"],
             completed_field_ids=["email"],
         )
+        assert "submission_authorization_id" in receipt, receipt
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -209,9 +210,7 @@ async def test_live_pg_workflow_questionnaire_and_browser_gate_score_100(
             "resume_gate": waiting["stage"] == "resume_review",
             "source_only": started["resume_compilation"]["guard_report"]["source_only"],
             "application_resume": browser["stage"] == "browser_inspection",
-            "questionnaire_evidence": proposed["summary"][
-                "all_fill_answers_have_evidence"
-            ]
+            "questionnaire_evidence": proposed["summary"]["all_fill_answers_have_evidence"]
             and proposed["summary"]["all_evidence_references_verified"],
             "questionnaire_resume": ready["stage"] == "ready_for_browser_fill",
             "semantic_checkpoint": checkpoint["job_identity"]["verified"],

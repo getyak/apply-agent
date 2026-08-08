@@ -141,7 +141,6 @@ async def dock_nudge_on_tailored(entry: dict) -> None:
 
     data = entry.get("data") or {}
     user_id = data.get("user_id")
-    job_id = data.get("job_id")
     company = data.get("company") or "the role"
     if not user_id:
         return
@@ -156,22 +155,20 @@ async def dock_nudge_on_tailored(entry: dict) -> None:
         return
 
     try:
-        import json
-
         import psycopg
 
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cur:
-                metadata = {"topic": "tailored"}
-                if job_id:
-                    metadata["job_id"] = str(job_id)
-                # user_memories shape (migration 008): id, user_id, kind,
-                # content, metadata, created_at. We tag this memory with
-                # kind='nudge' so the dock's recall_user_memory can pull it.
+                # Migration 008 uses the constrained `memory_type` column;
+                # there is no legacy `kind` or `metadata` column. The company
+                # name in the grounded content is enough for recall;
+                # do not leak opaque job IDs back into the user conversation.
                 await cur.execute(
                     """
-                    INSERT INTO user_memories (user_id, kind, content, metadata)
-                    VALUES (%s, 'nudge', %s, %s::jsonb)
+                    INSERT INTO user_memories (
+                        user_id, memory_type, content, importance
+                    )
+                    VALUES (%s, 'feedback', %s, 0.4)
                     """,
                     (
                         str(user_id),
@@ -180,7 +177,6 @@ async def dock_nudge_on_tailored(entry: dict) -> None:
                             "Suggest preparing a submission packet "
                             "(cover letter + form answers) for this job next."
                         ),
-                        json.dumps(metadata),
                     ),
                 )
             await conn.commit()

@@ -132,8 +132,7 @@ async def test_paid_scene_one_sentence_start_and_resume_scores_100() -> None:
         "durable_workflow_id": (15, waiting["workflow_id"] == workflow_id),
         "job_identity_persisted": (
             15,
-            waiting["job_identity"]["job_url"]
-            == "https://jobs.lever.co/example/backend-123",
+            waiting["job_identity"]["job_url"] == "https://jobs.lever.co/example/backend-123",
         ),
         "source_only_resume": (
             15,

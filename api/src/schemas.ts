@@ -108,7 +108,10 @@ export const PrepareApplicationSchema = z.object({
 export const PrepareFromJDSchema = z.object({
   jdUrl: z.string().url(),
   formFields: z.array(z.record(z.string(), z.unknown())).optional(),
-  applicationId: z.string().uuid().optional(),
+  // Preparation enriches an existing, user-owned draft. Requiring its id
+  // keeps the workflow idempotent and gives every generated artifact a
+  // canonical persistence target before any LLM work begins.
+  applicationId: z.string().uuid(),
 });
 
 export const UpdateApplicationSchema = z

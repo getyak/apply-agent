@@ -51,7 +51,9 @@ INSTRUCTIONS = (
     "the exact per-application phrase in the user's current message. After that phrase, call "
     "authorize_application_submission and verify its short-lived receipt before the click. "
     "Only a visible post-submit confirmation may consume that receipt through "
-    "record_application_progress; a click alone is not submission evidence."
+    "record_application_progress; a click alone is not submission evidence. Mutating tools "
+    "return a durable operation envelope; follow its recovery action, reuse the same "
+    "idempotency key, and never repeat a side effect while reconciliation is pending."
 )
 
 
@@ -145,6 +147,32 @@ DESTRUCTIVE_PUBLIC_WRITE = ToolAnnotations(
 )
 async def relay_status() -> dict[str, Any]:
     return await tools.relay_status()
+
+
+@mcp.tool(
+    title="Get durable operation status",
+    description=(
+        "Read the owner-scoped idempotency and recovery state for a prior Relay mutation. "
+        "Follow recovery.action exactly; reconciling and human_review never authorize "
+        "repeating an external side effect."
+    ),
+    annotations=READ_ONLY,
+)
+async def get_operation_status(operation_id: str) -> dict[str, Any]:
+    return await tools.get_operation_status(operation_id=operation_id)
+
+
+@mcp.tool(
+    title="Reconcile a durable operation",
+    description=(
+        "Run one registered read-only reconciliation probe for an interrupted mutation. "
+        "This never repeats the original side effect; if the result remains uncertain, "
+        "the operation stops for human review."
+    ),
+    annotations=READ_ONLY,
+)
+async def reconcile_operation(operation_id: str) -> dict[str, Any]:
+    return await tools.reconcile_operation(operation_id=operation_id)
 
 
 @mcp.tool(
@@ -715,6 +743,7 @@ async def record_application_progress(
     clear_interview_date: bool = False,
     submitted_via: Literal["client_extension", "api", "manual", "email"] | None = None,
     submission_authorization_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     return await tools.record_application_progress(
         application_id=application_id,
@@ -725,6 +754,7 @@ async def record_application_progress(
         clear_interview_date=clear_interview_date,
         submitted_via=submitted_via,
         submission_authorization_id=submission_authorization_id,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -789,7 +819,8 @@ async def assess_application_browser_checkpoint(
         "compare every currently observed field id with the approved questionnaire, verify "
         "that every required or planned-fill field is complete, then issue a five-minute, "
         "one-application receipt for one final click in the user's browser. Reissuing or "
-        "revising the questionnaire invalidates the prior unused receipt. This never clicks, "
+        "revising the questionnaire invalidates the prior unused receipt. Pass a stable "
+        "idempotency_key so a lost response replays the same receipt. This never clicks, "
         "submits server-side, or treats the click itself as submission evidence."
     ),
     annotations=LOCAL_WRITE,
@@ -805,6 +836,7 @@ async def authorize_application_submission(
     observed_role_title: str | None = None,
     observed_job_id: str | None = None,
     visible_text: str = "",
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     return await tools.authorize_application_submission(
         compilation_id=compilation_id,
@@ -817,6 +849,7 @@ async def authorize_application_submission(
         observed_role_title=observed_role_title,
         observed_job_id=observed_job_id,
         visible_text=visible_text,
+        idempotency_key=idempotency_key,
     )
 
 

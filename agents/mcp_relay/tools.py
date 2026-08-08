@@ -6,12 +6,13 @@ cross the owner boundary by changing tool arguments.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from datetime import UTC, date, datetime
 from typing import Any, cast
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 
@@ -20,6 +21,19 @@ from agents.career_graph.fake_store import InMemoryCareerGraphStore
 from agents.career_graph.importer import json_resume_to_operations
 from agents.career_graph.model import normalize_compiler_config
 from agents.career_graph.store import CareerGraphStateError
+from agents.harness.recovery import (
+    ActorType,
+    EffectClass,
+    OperationSpec,
+    ReconcileOutcome,
+    ReconcileResult,
+    canonical_json,
+    current_operation_id,
+    execute_with_recovery,
+    get_operation_envelope,
+    get_operation_store,
+    reconcile_existing_operation,
+)
 from agents.mcp_relay.delivery import (
     BrowserCheckpointStage,
     assess_browser_checkpoint,
@@ -118,6 +132,131 @@ async def _store_call(name: str, *args: Any, **kwargs: Any) -> Any:
     if fake_mode():
         return await getattr(FAKE_STORE, name)(*args, **kwargs)
     return await getattr(pg_store, name)(*args, **kwargs)
+
+
+def _operation_key(operation_type: str, payload: dict[str, Any], supplied: str | None) -> str:
+    """Use a caller key, or isolate one legacy unprotected invocation.
+
+    A generated key preserves old MCP semantics but cannot deduplicate a
+    client-side retry. New Codex/Claude Code callers must pass a stable key.
+    """
+
+    if supplied is not None:
+        key = supplied.strip()
+        if not 16 <= len(key) <= 200:
+            raise CareerGraphStateError("idempotency_key must contain 16-200 characters")
+        return key
+    digest = hashlib.sha256(f"{operation_type}:{canonical_json(payload)}".encode()).hexdigest()
+    return f"legacy-unprotected:{digest[:16]}:{uuid4()}"
+
+
+def _with_operation(result: dict[str, Any]) -> dict[str, Any]:
+    """Preserve existing domain fields and attach the uniform recovery envelope."""
+
+    if result.get("status") == "succeeded" and isinstance(result.get("result"), dict):
+        domain = dict(result["result"])
+        operation = {key: value for key, value in result.items() if key != "result"}
+        return {**domain, "operation": operation}
+    return result
+
+
+async def get_operation_status(*, operation_id: str) -> dict[str, Any]:
+    """Return the durable owner-scoped operation/recovery envelope."""
+
+    _require_scope("career:read")
+    envelope = await get_operation_envelope(_uuid(operation_id, "operation_id"), current_user_id())
+    if envelope is None:
+        raise CareerGraphStateError("operation not found")
+    return envelope
+
+
+async def reconcile_operation(*, operation_id: str) -> dict[str, Any]:
+    """Run the registered read-only reconciliation probe, never the side effect."""
+
+    _require_scope("career:read")
+    user_id = current_user_id()
+    operation_uuid = _uuid(operation_id, "operation_id")
+    store = get_operation_store()
+    record = await store.get(operation_uuid, user_id)
+    if record is None:
+        raise CareerGraphStateError("operation not found")
+    supported_types = {
+        "mcp.record_application_progress",
+        "mcp.authorize_application_submission",
+    }
+    if record.operation_type not in supported_types:
+        raise CareerGraphStateError("this operation type has no externally callable reconciler")
+
+    async def reconcile(current) -> ReconcileResult:
+        if current.operation_type == "mcp.authorize_application_submission":
+            authorization = await _store_call(
+                "get_application_submission_authorization_for_operation",
+                user_id,
+                current.id,
+            )
+            if authorization is None:
+                return ReconcileResult(
+                    ReconcileOutcome.NOT_APPLIED,
+                    observation={"authorization_found": False},
+                )
+            authorization.update(
+                {
+                    "checkpoint_status": current.resource_ref.get("checkpoint_status"),
+                    "stop_reasons": current.resource_ref.get("stop_reasons", []),
+                    "questionnaire_revision": current.resource_ref.get("questionnaire_revision"),
+                    "observed_field_ids": current.resource_ref.get("observed_field_ids", []),
+                    "completed_field_ids": current.resource_ref.get("completed_field_ids", []),
+                }
+            )
+            return ReconcileResult(
+                ReconcileOutcome.APPLIED,
+                result=authorization,
+                observation={
+                    "authorization_found": True,
+                    "authorization_active": authorization["authorization_active"],
+                },
+            )
+
+        application_id = current.resource_ref.get("application_id")
+        desired_status = current.resource_ref.get("desired_status")
+        if not application_id or not desired_status:
+            return ReconcileResult(
+                ReconcileOutcome.INCONCLUSIVE,
+                observation={"resource_binding_complete": False},
+            )
+        projection = await _store_call(
+            "get_application_projection",
+            user_id,
+            _uuid(str(application_id), "application_id"),
+        )
+        if projection is None:
+            return ReconcileResult(
+                ReconcileOutcome.INCONCLUSIVE,
+                observation={"application_found": False},
+            )
+        applied = projection.get("status") == desired_status
+        desired_outcome = current.resource_ref.get("desired_outcome")
+        if desired_outcome is not None:
+            applied = applied and projection.get("outcome") == desired_outcome
+        return ReconcileResult(
+            ReconcileOutcome.APPLIED if applied else ReconcileOutcome.NOT_APPLIED,
+            result=projection if applied else None,
+            observation={
+                "application_found": True,
+                "observed_status": projection.get("status"),
+                "desired_status": desired_status,
+            },
+        )
+
+    envelope = await reconcile_existing_operation(
+        operation_uuid,
+        user_id,
+        reconcile,
+        store=store,
+    )
+    if envelope is None:
+        raise CareerGraphStateError("operation not found")
+    return envelope
 
 
 def _uuid(value: str, field: str) -> UUID:
@@ -957,9 +1096,7 @@ QUESTIONNAIRE_ACTIONS = frozenset({"fill", "manual", "skip"})
 QUESTIONNAIRE_FIELD_TYPES = frozenset(
     {"text", "textarea", "select", "multiselect", "checkbox", "radio", "file"}
 )
-QUESTIONNAIRE_EVIDENCE_TYPES = frozenset(
-    {"career_graph", "approved_resume", "user_response"}
-)
+QUESTIONNAIRE_EVIDENCE_TYPES = frozenset({"career_graph", "approved_resume", "user_response"})
 SENSITIVE_QUESTION_PATTERNS = {
     "age_or_birth": (
         "age",
@@ -1058,8 +1195,7 @@ def _sensitivity_reasons(field_id: str, label: str) -> list[str]:
         category
         for category, patterns in SENSITIVE_QUESTION_PATTERNS.items()
         if any(
-            re.search(rf"\b{re.escape(pattern)}\b", searchable) is not None
-            for pattern in patterns
+            re.search(rf"\b{re.escape(pattern)}\b", searchable) is not None for pattern in patterns
         )
     ]
 
@@ -1108,9 +1244,7 @@ def _normalize_questionnaire_fields(questions: list[dict[str, Any]]) -> list[dic
         normalized_evidence: list[dict[str, Any]] = []
         for evidence_index, item in enumerate(evidence):
             if not isinstance(item, dict):
-                raise CareerGraphStateError(
-                    f"{field}.evidence[{evidence_index}] must be an object"
-                )
+                raise CareerGraphStateError(f"{field}.evidence[{evidence_index}] must be an object")
             source_type = item.get("source_type")
             source_ref = item.get("source_ref")
             if source_type not in QUESTIONNAIRE_EVIDENCE_TYPES:
@@ -1128,9 +1262,7 @@ def _normalize_questionnaire_fields(questions: list[dict[str, Any]]) -> list[dic
             if answer is None or answer == "" or answer == []:
                 raise CareerGraphStateError(f"{field}.answer is required when action is fill")
             if not normalized_evidence:
-                raise CareerGraphStateError(
-                    f"{field}.evidence is required when action is fill"
-                )
+                raise CareerGraphStateError(f"{field}.evidence is required when action is fill")
             if sensitive and not any(
                 item["source_type"] == "user_response" for item in normalized_evidence
             ):
@@ -1143,7 +1275,7 @@ def _normalize_questionnaire_fields(questions: list[dict[str, Any]]) -> list[dic
             )
         confidence = question.get("confidence", 0.0 if action != "fill" else None)
         if (
-            not isinstance(confidence, (int, float))
+            not isinstance(confidence, int | float)
             or isinstance(confidence, bool)
             or not 0 <= float(confidence) <= 1
         ):
@@ -1154,8 +1286,10 @@ def _normalize_questionnaire_fields(questions: list[dict[str, Any]]) -> list[dic
         ):
             raise CareerGraphStateError(f"{field}.selector must contain 1-500 characters")
         options = question.get("options", [])
-        if not isinstance(options, list) or len(options) > 200 or not all(
-            isinstance(option, str) and len(option) <= 500 for option in options
+        if (
+            not isinstance(options, list)
+            or len(options) > 200
+            or not all(isinstance(option, str) and len(option) <= 500 for option in options)
         ):
             raise CareerGraphStateError(f"{field}.options must be a list of short strings")
         normalized.append(
@@ -1415,9 +1549,7 @@ async def propose_application_questionnaire(
                 item["action"] != "fill" or bool(item["evidence"]) for item in fields
             ),
             "all_evidence_references_verified": all(
-                evidence.get("verified") is True
-                for item in fields
-                for evidence in item["evidence"]
+                evidence.get("verified") is True for item in fields for evidence in item["evidence"]
             ),
         },
     }
@@ -1537,6 +1669,7 @@ async def record_application_progress(
     clear_interview_date: bool = False,
     submitted_via: str | None = None,
     submission_authorization_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Persist a user/browser-observed lifecycle transition, never an inference."""
 
@@ -1589,22 +1722,86 @@ async def record_application_progress(
         raise CareerGraphStateError(
             "submission_authorization_id is only valid for a browser-confirmed submitted status"
         )
-    return await _store_call(
-        "record_application_transition",
-        current_user_id(),
-        _uuid(application_id, "application_id"),
-        status=status,
-        evidence_source=evidence_source,
-        outcome=outcome,
-        interview_date=interview_date,
-        clear_interview_date=clear_interview_date,
-        submitted_via=submitted_via,
-        submission_authorization_id=(
-            _uuid(submission_authorization_id, "submission_authorization_id")
-            if submission_authorization_id is not None
-            else None
-        ),
+    user_id = current_user_id()
+    application_uuid = _uuid(application_id, "application_id")
+    authorization_uuid = (
+        _uuid(submission_authorization_id, "submission_authorization_id")
+        if submission_authorization_id is not None
+        else None
     )
+    payload = {
+        "application_id": application_id,
+        "status": status,
+        "evidence_source": evidence_source,
+        "outcome": outcome,
+        "interview_date": interview_date,
+        "clear_interview_date": clear_interview_date,
+        "submitted_via": submitted_via,
+        "submission_authorization_id": submission_authorization_id,
+    }
+
+    async def execute() -> dict[str, Any]:
+        return await _store_call(
+            "record_application_transition",
+            user_id,
+            application_uuid,
+            status=status,
+            evidence_source=evidence_source,
+            outcome=outcome,
+            interview_date=interview_date,
+            clear_interview_date=clear_interview_date,
+            submitted_via=submitted_via,
+            submission_authorization_id=authorization_uuid,
+        )
+
+    async def reconcile() -> ReconcileResult:
+        projection = await _store_call("get_application_projection", user_id, application_uuid)
+        if projection is None:
+            return ReconcileResult(
+                ReconcileOutcome.INCONCLUSIVE,
+                observation={"application_found": False},
+            )
+        matches = projection.get("status") == status
+        if outcome is not None:
+            matches = matches and projection.get("outcome") == outcome
+        if interview_date is not None:
+            matches = matches and projection.get("interview_date") == interview_date
+        if clear_interview_date:
+            matches = matches and projection.get("interview_date") is None
+        return ReconcileResult(
+            ReconcileOutcome.APPLIED if matches else ReconcileOutcome.NOT_APPLIED,
+            result=projection if matches else None,
+            observation={
+                "application_found": True,
+                "observed_status": projection.get("status"),
+                "desired_status": status,
+            },
+        )
+
+    envelope = await execute_with_recovery(
+        OperationSpec(
+            user_id=user_id,
+            operation_type="mcp.record_application_progress",
+            idempotency_key=_operation_key(
+                "mcp.record_application_progress", payload, idempotency_key
+            ),
+            request_payload=payload,
+            request_summary={"status": status, "evidence_source": evidence_source},
+            resource_ref={
+                "application_id": application_id,
+                "desired_status": status,
+                "desired_outcome": outcome,
+                "desired_interview_date": interview_date,
+                "clear_interview_date": clear_interview_date,
+            },
+            actor_type=ActorType.MCP,
+            effect_class=EffectClass.LOCAL_WRITE,
+        ),
+        execute,
+        reconcile=reconcile,
+        propagate_exceptions=(CareerGraphStateError,),
+    )
+    return _with_operation(envelope)
 
 
 async def prepare_application_handoff(
@@ -1719,6 +1916,7 @@ async def authorize_application_submission(
     observed_role_title: str | None = None,
     observed_job_id: str | None = None,
     visible_text: str = "",
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Issue a receipt for one final browser click after exact confirmation."""
 
@@ -1762,23 +1960,110 @@ async def authorize_application_submission(
         completed_field_ids,
     )
 
-    expected_confirmation = f"SUBMIT APPLICATION {handoff['application_id']}"
+    application_id = str(handoff["application_id"])
+    application_uuid = _uuid(application_id, "application_id")
+    expected_confirmation = f"SUBMIT APPLICATION {application_id}"
     _require_confirmation(confirmation, expected_confirmation)
-    authorization = await _store_call(
-        "issue_application_submission_authorization",
-        current_user_id(),
-        _uuid(handoff["application_id"], "application_id"),
-        compilation_uuid,
-        job_url=job_url,
-        observed_url=observed_url,
-        confirmation=confirmation,
+    user_id = current_user_id()
+    payload = {
+        "compilation_id": compilation_id,
+        "application_id": application_id,
+        "job_url": job_url,
+        "observed_url": observed_url,
+        "confirmation": confirmation,
+        "observed_field_ids": observed_field_ids,
+        "completed_field_ids": completed_field_ids,
+        "observed_company": observed_company,
+        "observed_role_title": observed_role_title,
+        "observed_job_id": observed_job_id,
+        "visible_text": visible_text,
+    }
+
+    async def execute() -> dict[str, Any]:
+        operation_id = current_operation_id()
+        if operation_id is None:
+            raise RuntimeError("submission authorization is missing its operation context")
+        authorization = await _store_call(
+            "issue_application_submission_authorization",
+            user_id,
+            application_uuid,
+            compilation_uuid,
+            job_url=job_url,
+            observed_url=observed_url,
+            confirmation=confirmation,
+            operation_id=operation_id,
+        )
+        authorization["checkpoint_status"] = checkpoint["status"]
+        authorization["stop_reasons"] = checkpoint["stop_reasons"]
+        authorization["questionnaire_revision"] = questionnaire["revision"]
+        authorization["observed_field_ids"] = verified_field_ids
+        authorization["completed_field_ids"] = verified_completed_ids
+        return authorization
+
+    async def reconcile() -> ReconcileResult:
+        operation_id = current_operation_id()
+        if operation_id is None:
+            return ReconcileResult(
+                ReconcileOutcome.INCONCLUSIVE,
+                observation={"operation_context_available": False},
+            )
+        authorization = await _store_call(
+            "get_application_submission_authorization_for_operation",
+            user_id,
+            operation_id,
+        )
+        if authorization is None:
+            return ReconcileResult(
+                ReconcileOutcome.NOT_APPLIED,
+                observation={"authorization_found": False},
+            )
+        authorization.update(
+            {
+                "checkpoint_status": checkpoint["status"],
+                "stop_reasons": checkpoint["stop_reasons"],
+                "questionnaire_revision": questionnaire["revision"],
+                "observed_field_ids": verified_field_ids,
+                "completed_field_ids": verified_completed_ids,
+            }
+        )
+        return ReconcileResult(
+            ReconcileOutcome.APPLIED,
+            result=authorization,
+            observation={
+                "authorization_found": True,
+                "authorization_active": authorization["authorization_active"],
+            },
+        )
+
+    envelope = await execute_with_recovery(
+        OperationSpec(
+            user_id=user_id,
+            operation_type="mcp.authorize_application_submission",
+            idempotency_key=_operation_key(
+                "mcp.authorize_application_submission", payload, idempotency_key
+            ),
+            request_payload=payload,
+            request_summary={
+                "application_id": application_id,
+                "compilation_id": compilation_id,
+            },
+            resource_ref={
+                "application_id": application_id,
+                "compilation_id": compilation_id,
+                "checkpoint_status": checkpoint["status"],
+                "stop_reasons": checkpoint["stop_reasons"],
+                "questionnaire_revision": questionnaire["revision"],
+                "observed_field_ids": verified_field_ids,
+                "completed_field_ids": verified_completed_ids,
+            },
+            actor_type=ActorType.MCP,
+            effect_class=EffectClass.LOCAL_WRITE,
+        ),
+        execute,
+        reconcile=reconcile,
+        propagate_exceptions=(CareerGraphStateError,),
     )
-    authorization["checkpoint_status"] = checkpoint["status"]
-    authorization["stop_reasons"] = checkpoint["stop_reasons"]
-    authorization["questionnaire_revision"] = questionnaire["revision"]
-    authorization["observed_field_ids"] = verified_field_ids
-    authorization["completed_field_ids"] = verified_completed_ids
-    return authorization
+    return _with_operation(envelope)
 
 
 async def prepare_application_batch(

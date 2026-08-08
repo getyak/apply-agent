@@ -37,7 +37,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 # Why: when the developer's shell exports `all_proxy=socks5://...` (common on
 # macOS with Clash / Surge / V2Ray), httpx auto-discovers it and tries to
 # build a SOCKS transport — which requires the optional `socksio` package.
-# Without socksio, `ChatOpenAI(...)` raises ImportError at construction time
+# Without socksio, the chat-model client raises ImportError at construction time
 # and the Bun gateway surfaces it as "Vantage's reasoning engine returned an
 # error". OpenRouter is on the public internet via HTTPS; the dev's local
 # proxy must not sit between agents and OpenRouter. Honor an explicit
@@ -71,38 +71,17 @@ from agents.career_graph.store import (  # noqa: E402
     CareerGraphStateError,
 )
 from agents.coordinator.router import (  # noqa: E402
-    cheap_intent_classifier,
     classify_intent,
     dispatch,
     persist_turn,
 )
 from agents.coordinator.workflows import build_from_scratch_graph  # noqa: E402
 
-# Sprint 1 of docs/design/chat-agent-system-redesign.md: when the env flag is
-# set, the LLM-fallback branch of /ask/stream is delegated to the new Dock
-# ReAct agent (P0-A). The regex fast path stays as-is so confident command-
-# like prompts ("list applications", "mock me on Stripe") never pay the
-# main-loop LLM tax.
-#
-# Default is now ON. The legacy path emits `event: thinking/intent/result/done`
-# SSE frames that the AG-UI consumer (web/src/lib/agent-events/consumer.ts,
-# transformHttpEventStream) cannot parse — they are silently dropped and the
-# dock UI renders nothing for agent reasoning/tool/narrator/plan. Setting
-# RELAY_DOCK_REACT=0 explicitly restores the legacy vocabulary for tests that
-# still rely on it.
+# The native AG-UI Dock loop is the production path. RELAY_DOCK_REACT=0 only
+# exists as a temporary compatibility switch for legacy integration tests.
+# Never mix the old `thinking/intent/result/done` vocabulary into an AG-UI
+# response: @ag-ui/client rejects those frames as schema-invalid.
 _DOCK_REACT_ENABLED = os.environ.get("RELAY_DOCK_REACT", "1") == "1"
-# Threshold for skipping the dock and going straight to dispatch on a cheap
-# regex hit.
-#
-# P3-1 fix: lowered default from 0.95 → 0.85. The earlier audit found that
-# turning _DOCK_REACT_ENABLED on with a 0.95 cutoff silently lost 5 intents
-# (analyze_resume / optimize_resume / map_career_moves / surface_roles /
-# list_resume_versions) whose regex confidences sit in 0.85–0.92 — they
-# wouldn't fast-path AND they have no dock_tool wrapper, so they fell into
-# the dock LLM as free-form turns. 0.85 matches router.REGEX_ACCEPT_THRESHOLD,
-# so every regex-confident intent now goes straight to dispatch via the same
-# rule. Override with RELAY_DOCK_FAST_PATH to be stricter / looser per env.
-_DOCK_REGEX_FAST_PATH_THRESHOLD = float(os.environ.get("RELAY_DOCK_FAST_PATH", "0.85"))
 from agents.harness.audit import redact_exception_text  # noqa: E402
 from agents.harness.checkpointer import (  # noqa: E402
     ask_vantage_thread_id,
@@ -688,43 +667,11 @@ async def ask_stream(
                 yield chunk
             return
 
-        # Dock ReAct branch (P0-A): when the env flag is set and the cheap
-        # regex isn't sure enough to fast-path, delegate the whole turn to
-        # the Dock agent. The dock now streams native AG-UI frames (RUN_STARTED
-        # … RUN_FINISHED) — no legacy thinking/done wrapper.
+        # Dock ReAct branch (P0-A): every production turn goes through the
+        # native AG-UI loop. The former high-confidence regex shortcut emitted
+        # legacy SSE frames inside this branch, which made clear commands such
+        # as "list my applications" fail client-side parsing.
         if _DOCK_REACT_ENABLED:
-            cheap = cheap_intent_classifier(payload.message)
-            if cheap and cheap.confidence >= _DOCK_REGEX_FAST_PATH_THRESHOLD:
-                # Fast path: emit an intent frame + dispatch directly, just
-                # like the legacy router would. Skips the dock loop entirely.
-                # Still on the legacy SSE vocabulary (behind RELAY_DOCK_REACT,
-                # default off); the web AG-UI client only sees this once the
-                # fast path is migrated in a follow-up.
-                yield _sse({"event": "thinking", "agent": "coordinator"})
-                yield _sse(
-                    {
-                        "event": "intent",
-                        "intent": cheap.intent,
-                        "confidence": cheap.confidence,
-                        "via": "regex_fast_path",
-                        "args": cheap.args,
-                    }
-                )
-                async for chunk in _dispatch_and_persist(
-                    intent=cheap,
-                    user_id=user_id,
-                    message=payload.message,
-                    thread_id=thread_id,
-                    surface=surface,
-                    locale=locale,
-                    trace_id=trace_id,
-                    request_id=req_id,
-                ):
-                    yield chunk
-                yield _sse({"event": "done"})
-                return
-
-            # Main-loop dock path — emits native AG-UI frames.
             async for chunk in _stream_dock_turn(
                 message=payload.message,
                 user_id=user_id,
@@ -1592,11 +1539,18 @@ async def career_graph_detail(graph_id: UUID, user_id: UserDep) -> dict[str, Any
 
 class PrepareApplicationPayload(BaseModel):
     jd_url: str
+    jd_text: str | None = None
+    job_id: UUID | None = None
+    parsed_jd: dict[str, Any] | None = None
+    company: str | None = None
+    role_title: str | None = None
     base_resume_id: UUID
     base_resume_content: dict[str, Any]
     base_resume_version: int = 1
     form_fields: list[dict[str, Any]] = []  # ATS field descriptors; may be empty
-    application_id: UUID | None = None  # idempotency: reuse a draft row
+    # The gateway ownership-checks this canonical persistence target before
+    # invoking the workflow. Preparation never creates an unlinked draft.
+    application_id: UUID
 
 
 @app.post("/applications/prepare")
@@ -1631,6 +1585,11 @@ async def applications_prepare(
         form_fields=payload.form_fields,
         application_id=payload.application_id,
         ui_locale=ui_locale,
+        job_id=payload.job_id,
+        jd_text=payload.jd_text,
+        parsed_jd=payload.parsed_jd,
+        company=payload.company,
+        role_title=payload.role_title,
     )
 
 

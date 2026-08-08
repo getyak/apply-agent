@@ -255,7 +255,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             `view-enter` rise on every navigation. The animation ends on
             identity, so sticky headers inside a view settle normally once it's
             done — see globals.css §Continuity layer (v7). */}
-        <main key={pathname} className="view-enter flex-1 min-w-0 overflow-y-auto">{children}</main>
+        <main key={pathname} className="view-enter flex-1 min-w-0 overflow-y-auto pb-[72px] md:pb-0">{children}</main>
         <AskVantageDock />
       </div>
       <OnboardingTour />

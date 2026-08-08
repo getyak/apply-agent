@@ -96,7 +96,7 @@ def test_dsn_set_and_pg_reachable_returns_postgres_saver(monkeypatch):
     fake_saver = _stub_saver()
 
     with (
-        patch("psycopg_pool.AsyncConnectionPool", return_value=pool),
+        patch("psycopg_pool.AsyncConnectionPool", return_value=pool) as pool_factory,
         patch(
             "langgraph.checkpoint.postgres.aio.AsyncPostgresSaver",
             return_value=fake_saver,
@@ -107,6 +107,9 @@ def test_dsn_set_and_pg_reachable_returns_postgres_saver(monkeypatch):
     assert saver is fake_saver
     pool.open.assert_awaited_once()
     fake_saver.setup.assert_awaited_once()
+    kwargs = pool_factory.call_args.kwargs
+    assert kwargs["check"] is not None
+    assert kwargs["reconnect_timeout"] == 10.0
     # CRITICAL: the pool is held so the connection stays open across turns.
     assert cp._HELD_CMS == [pool]
     # And close() has NOT been called yet (would tear down the pool).
@@ -121,9 +124,7 @@ def test_singleton_means_one_init_per_process(monkeypatch):
     fake_saver = _stub_saver()
 
     with (
-        patch(
-            "psycopg_pool.AsyncConnectionPool", return_value=pool
-        ) as pool_factory,
+        patch("psycopg_pool.AsyncConnectionPool", return_value=pool) as pool_factory,
         patch(
             "langgraph.checkpoint.postgres.aio.AsyncPostgresSaver",
             return_value=fake_saver,

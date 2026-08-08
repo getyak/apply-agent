@@ -203,11 +203,15 @@ async def test_recall_past_applications_returns_rows(bound_user):
             "updated_at": "2026-06-19",
         },
     ]
-    with patch("agents.tools.auto.pg_query", new=AsyncMock(return_value=rows)):
+    pg_query = AsyncMock(return_value=rows)
+    with patch("agents.tools.auto.pg_query", new=pg_query):
         out = await dock_tools.recall_past_applications.ainvoke({"limit": 5})
     assert out["status"] == "ok"
     assert len(out["items"]) == 2
     assert out["items"][0]["company"] == "Stripe"
+    sql = pg_query.await_args.args[0]
+    assert "JOIN jobs AS j ON j.id = d.job_id" in sql
+    assert "SELECT j.company, j.role_title" in sql
 
 
 @pytest.mark.asyncio
