@@ -412,9 +412,9 @@ def _print_card(case_id: str, score: dict) -> int:
     total = sum(v[0] for v in score.values())
     bar = "█" * (total // 5)
     print(f"\n[chain5 e2e] {case_id:<28}  {total:>3}/100  {bar}")
-    for dim, (got, mx, ok, note) in score.items():
+    for dim, (got, mx, ok, _note) in score.items():
         mark = "✓" if ok else "✗"
-        print(f"             {mark} {dim:<16} {got:>2}/{mx:<2}  {note}")
+        print(f"             {mark} {dim:<16} {got:>2}/{mx:<2}")
     return total
 
 
