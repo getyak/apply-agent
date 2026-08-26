@@ -119,7 +119,7 @@ async def test_web_search_tavily_used_when_key_set(monkeypatch):
     assert out["source"] == "tavily"
     assert len(out["results"]) == 1
     assert out["results"][0]["url"] == "https://example.com/from-tavily"
-    assert any("tavily.com" in u for u in seen_url)
+    assert any(httpx.URL(u).host == "api.tavily.com" for u in seen_url)
 
 
 async def test_web_search_tavily_failure_falls_back_to_ddg(monkeypatch):
@@ -127,7 +127,7 @@ async def test_web_search_tavily_failure_falls_back_to_ddg(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "tk_test_failing")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if "tavily.com" in str(request.url):
+        if request.url.host == "api.tavily.com":
             return httpx.Response(503, text="Tavily down")
         return httpx.Response(
             200,

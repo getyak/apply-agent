@@ -398,7 +398,7 @@ def _score_row(case: dict, result, envelope: dict, trace_id: str, captured: dict
         15 if trace_ok else 0,
         15,
         trace_ok,
-        f"audit trace_id={captured.get('trace_id')!r} (sent {trace_id!r})",
+        f"audit trace matched={trace_ok}",
     )
 
     # 7. envelope-shape (15)
