@@ -21,6 +21,9 @@ def test_classifies_supported_public_ats_hosts_exactly() -> None:
         classify_application_target("https://jobs.lever.co.attacker.test/abc")["platform"]
         == "other"
     )
+    assert (
+        classify_application_target("https://evilmyworkdayjobs.com/example")["platform"] == "other"
+    )
 
 
 def test_boss_is_prepare_only_and_stops_for_login() -> None:

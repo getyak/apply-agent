@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from agents.nodes import jobmatch_agent as jm
@@ -100,6 +101,30 @@ def test_shape_html_ashby_from_fixture():
     assert "React" in raw.jd_text
     # <main> content extracted; <header>/<footer> not included.
     assert "©" not in raw.jd_text
+
+
+def test_load_fixture_rejects_path_traversal(monkeypatch, tmp_path):
+    outside = tmp_path / "secret.html"
+    outside.write_text("not a fixture")
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir()
+    monkeypatch.setenv("RELAY_JD_FIXTURE_DIR", str(fixture_dir))
+
+    assert jm._load_fixture("other", "../secret") is None
+
+
+async def test_http_get_revalidates_redirect_targets():
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/internal"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(jm.JDFetchError, match="non-public"):
+            await jm._http_get("https://example.com/start", client)
+
+    assert requests == ["https://example.com/start"]
 
 
 # ─── _normalize_parsed defends against malformed LLM output ────────────
