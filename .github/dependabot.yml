@@ -4,7 +4,6 @@
 #
 # Dormant entries (re-add when directories are created):
 #   pip / agents  → add back when agents/ directory exists
-#   docker / infra → add back when Dockerfiles exist (infra/ has only docker-compose.yml)
 
 version: 2
 updates:
@@ -49,3 +48,16 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # ─── Local infrastructure images ─────────────────────────────────
+  - package-ecosystem: "docker-compose"
+    directory: "/infra"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 2
+    labels: ["chore", "deps", "scope:infra"]
+    commit-message:
+      prefix: "chore(deps-infra)"
