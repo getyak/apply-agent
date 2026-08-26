@@ -61,7 +61,7 @@ def classify_application_target(job_url: str) -> dict[str, Any]:
         platform = "boss_zhipin"
         support = "user_login_and_manual_handoff"
         login_expected = True
-    elif "myworkdayjobs.com" in host:
+    elif host == "myworkdayjobs.com" or host.endswith(".myworkdayjobs.com"):
         platform = "workday"
         support = "user_login_and_guided_fill"
         login_expected = True

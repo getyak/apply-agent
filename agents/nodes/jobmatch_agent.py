@@ -34,7 +34,7 @@ import socket as _socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from uuid import UUID
 
 import httpx
@@ -49,6 +49,7 @@ log = structlog.get_logger("agents.nodes.jobmatch")
 
 PROMPT_DIR = Path(__file__).parent.parent / "prompts" / "jobmatch"
 FIXTURE_DIR_ENV = "RELAY_JD_FIXTURE_DIR"
+_FIXTURE_EXTERNAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 
 ATSSource = Literal["greenhouse", "lever", "ashby", "manual", "other"]
 
@@ -306,9 +307,17 @@ def _load_fixture(source: ATSSource, external_id: str | None) -> bytes | None:
     fixture_dir = os.environ.get(FIXTURE_DIR_ENV)
     if not fixture_dir or not external_id:
         return None
-    base = Path(fixture_dir)
+    if _FIXTURE_EXTERNAL_ID_RE.fullmatch(external_id) is None:
+        return None
+    base = Path(fixture_dir).resolve()
     for ext in ("json", "html"):
-        candidate = base / f"{source}_{external_id}.{ext}"
+        # The identifier is allowlisted above and containment is checked again below.
+        # codeql[py/path-injection]
+        candidate = (base / f"{source}_{external_id}.{ext}").resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            continue
         if candidate.is_file():
             return candidate.read_bytes()
     return None
@@ -462,17 +471,49 @@ def _is_public_http_url(url: str) -> tuple[bool, str]:
     return True, ""
 
 
+_JD_MAX_REDIRECTS = 5
+
+
 async def _http_get(url: str, client: httpx.AsyncClient | None) -> bytes:
-    ok, reason = _is_public_http_url(url)
-    if not ok:
-        raise JDFetchError(f"refusing to fetch {url}: {reason}")
     timeout = httpx.Timeout(15.0, connect=5.0)
     headers = {"User-Agent": "Vantage/0.1 (+https://relay.example/agent)"}
+
+    async def fetch_with(active_client: httpx.AsyncClient) -> httpx.Response:
+        current_url = url
+        for redirect_count in range(_JD_MAX_REDIRECTS + 1):
+            ok, reason = _is_public_http_url(current_url)
+            if not ok:
+                raise JDFetchError(f"refusing to fetch {current_url}: {reason}")
+
+            # Scheme and every resolved address are checked above; redirects are never automatic.
+            # codeql[py/full-ssrf]
+            resp = await active_client.get(
+                current_url,
+                timeout=timeout,
+                headers=headers,
+                follow_redirects=False,
+            )
+            if not resp.is_redirect:
+                if 300 <= resp.status_code < 400:
+                    raise JDFetchError(
+                        f"{current_url} returned HTTP {resp.status_code} without a usable redirect"
+                    )
+                return resp
+
+            if redirect_count == _JD_MAX_REDIRECTS:
+                raise JDFetchError(f"refusing {url}: too many redirects")
+            location = resp.headers.get("location")
+            if not location:
+                raise JDFetchError(f"{current_url} redirected without a Location header")
+            current_url = urljoin(current_url, location)
+
+        raise JDFetchError(f"refusing {url}: too many redirects")
+
     if client is not None:
-        resp = await client.get(url, timeout=timeout, headers=headers)
+        resp = await fetch_with(client)
     else:
-        async with httpx.AsyncClient(follow_redirects=True) as fresh:
-            resp = await fresh.get(url, timeout=timeout, headers=headers)
+        async with httpx.AsyncClient(follow_redirects=False) as fresh:
+            resp = await fetch_with(fresh)
     if resp.status_code >= 400:
         raise JDFetchError(f"{url} → HTTP {resp.status_code}")
     # Cheap pre-flight: trust an honest Content-Length header to short-
