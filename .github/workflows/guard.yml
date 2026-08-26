@@ -20,8 +20,8 @@ jobs:
     outputs:
       hit: ${{ steps.filter.outputs.protected }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         id: filter
         with:
           filters: |
@@ -50,7 +50,7 @@ jobs:
 
       - name: Warn human
         if: ${{ !endsWith(github.actor, '[bot]') }}
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const body = [
