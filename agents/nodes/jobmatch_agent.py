@@ -310,15 +310,15 @@ def _load_fixture(source: ATSSource, external_id: str | None) -> bytes | None:
     if _FIXTURE_EXTERNAL_ID_RE.fullmatch(external_id) is None:
         return None
     base = Path(fixture_dir).resolve()
-    for ext in ("json", "html"):
-        # The identifier is allowlisted above and containment is checked again below.
-        # codeql[py/path-injection]
-        candidate = (base / f"{source}_{external_id}.{ext}").resolve()
-        try:
-            candidate.relative_to(base)
-        except ValueError:
-            continue
-        if candidate.is_file():
+    expected_names = {f"{source}_{external_id}.json", f"{source}_{external_id}.html"}
+    try:
+        candidates = base.iterdir()
+    except OSError:
+        return None
+    # Enumerate the configured directory and compare leaf names instead of
+    # constructing a filesystem path from a URL-derived identifier.
+    for candidate in candidates:
+        if candidate.name in expected_names and candidate.is_file():
             return candidate.read_bytes()
     return None
 
