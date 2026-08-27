@@ -13,6 +13,18 @@ Relay — AI job-search copilot. Status: infra ready, no app code yet.
 - **No resume fabrication**: AI may rephrase, never invent experience.
 - **HITL required**: `submit_form`, `send_email`, `delete_*` always need user approval via LangGraph `interrupt()`.
 
+## Code Review Rules
+
+- Flag any job submission, email, deletion, or other consequential write that
+  can run server-side or bypass a fresh human-in-the-loop approval; credentials
+  must not be stored and CAPTCHA must not be bypassed.
+- Flag generated resumes, applications, or interview materials that can invent
+  experience, skills, dates, employers, outcomes, or other claims not grounded
+  in the user's authorized source evidence.
+- Flag changes that collapse the TypeScript API and Python agent trust boundary,
+  bypass their HTTP/Redis/Postgres contracts, or lose idempotency and resumable
+  state across LangGraph interrupt, retry, and failure paths.
+
 ## Quick Commands
 
 ```bash
