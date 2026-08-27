@@ -84,7 +84,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Railway CLI
-        run: curl -fsSL https://railway.app/install.sh | sh
+        env:
+          RAILWAY_CLI_VERSION: 5.44.1
+          RAILWAY_CLI_SHA256: d3197e0868576e90fc1926795014c398fdfd8a8b006be07eb3e8e5215ee0a3ca
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/railway-cli.tar.gz"
+          bin_dir="$RUNNER_TEMP/railway-cli-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$RAILWAY_CLI_SHA256" "$archive" | sha256sum --check --strict
+          mkdir -p "$bin_dir"
+          tar -xzf "$archive" -C "$bin_dir" railway
+          chmod 755 "$bin_dir/railway"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "$bin_dir/railway" --version
       - name: Capture previous deployment id
         id: prev
         env:
