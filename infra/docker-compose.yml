@@ -29,7 +29,7 @@ services:
   # Redis 7 (cache + event bus + session)
   # ============================================
   redis:
-    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     container_name: relay-redis
     restart: unless-stopped
     env_file: ../.env
