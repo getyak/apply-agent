@@ -128,7 +128,8 @@ export function repairJson(raw: string): string {
  * each candidate prefix. Only used after finish=length.
  */
 export function closeTruncatedJson(raw: string): string | null {
-  const s = raw.trim();
+  // Preserve trailing whitespace: it is evidence that a primitive ended.
+  const s = raw.trimStart();
   if (s[0] !== "{" && s[0] !== "[") return null;
   const stack: string[] = [];
   let inString = false;
@@ -154,7 +155,9 @@ export function closeTruncatedJson(raw: string): string | null {
       // Consume a primitive once, so a long incomplete numeric token does
       // not repeatedly scan every suffix. Never accept just part of it.
       const token = s.slice(i).match(/^[^\s,}\]]+/)?.[0] ?? "";
-      if (/^(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)$/.test(token)) {
+      // At EOF even a valid-looking primitive may be a prefix (1 from
+      // 123). Require an observed delimiter before preserving that value.
+      if (i + token.length < s.length && /^(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)$/.test(token)) {
         remember(i + token.length);
       }
       i += Math.max(0, token.length - 1);
@@ -275,7 +278,7 @@ export class LLMClient {
     // A length-limited response must keep its full prefix: repairJson's
     // prose slicing can otherwise drop a later partially generated section.
     const cleaned = opts.allowPartialJson && result.finishReason === "length"
-      ? result.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
+      ? result.text.trimStart().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "")
       : repairJson(result.text);
     let data: T;
     try {

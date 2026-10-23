@@ -156,6 +156,15 @@ describe("partial JSON recovery", () => {
     expect(JSON.parse(repaired!)).toEqual(expected);
   });
 
+  test.each(["1", "123", "true", "false", "null"])("drops an EOF primitive without delimiter evidence: %s", (token) => {
+    expect(JSON.parse(closeTruncatedJson(`{"name":"Sam","value":${token}`)!)).toEqual({ name: "Sam" });
+  });
+
+  test.each(["123", "true", "false", "null"].flatMap((token) => [" ", ","].map((delimiter) => [token, delimiter])))
+  ("preserves a primitive with an observed delimiter: %s%s", (token, delimiter) => {
+    expect(JSON.parse(closeTruncatedJson(`{"name":"Sam","value":${token}${delimiter}`)!)).toEqual({ name: "Sam", value: JSON.parse(token) });
+  });
+
   test.each(['not json', '{"name":"unfinished', '{"x":]', '{}'])('rejects unrecoverable or complete input: %s', (raw) => {
     expect(closeTruncatedJson(raw)).toBeNull();
   });
@@ -171,6 +180,17 @@ describe("partial JSON recovery", () => {
     expect(data).toEqual({ basics: { name: "Sam" }, work: [{ name: "First" }, { name: "Second" }] });
     expect(meta.jsonRepaired).toBe(true);
     expect(meta.finishReason).toBe("length");
+  });
+
+  test.each([
+    ['{"name":"Sam","years":1', { name: "Sam" }],
+    ['{"name":"Sam","years":123 ', { name: "Sam", years: 123 }],
+  ])("chatJSON preserves primitive termination evidence: %s", async (content, expected) => {
+    const client = new LLMClient(async () => new Response(JSON.stringify({ choices: [{
+      message: { content }, finish_reason: "length",
+    }] })), "test-key");
+    const { data } = await client.chatJSON([], { allowPartialJson: true });
+    expect(data).toEqual(expected);
   });
 
   test("does not recover malformed responses without an output-limit signal", async () => {
