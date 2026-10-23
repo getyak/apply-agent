@@ -43,12 +43,26 @@ export interface JsonResume {
 const PARSE_SYSTEM =
   "You convert a raw resume into structured JSON Resume format " +
   "(https://jsonresume.org schema). " +
-  "Return ONLY a JSON object with these top-level keys where present: " +
+  "Return ONLY a JSON object. Use these top-level keys where present: " +
   '"basics" (name,label,email,phone,summary,location{city,region,countryCode},profiles[]), ' +
   '"work" (name,position,startDate,endDate,summary,highlights[]), ' +
   '"education" (institution,area,studyType,startDate,endDate), ' +
   '"skills" (name,level,keywords[]), "projects" (name,description,highlights[]). ' +
+  "Sections that don't fit those keys (awards, publications, certificates, " +
+  "languages, volunteer, open-source contributions, self-evaluation, …) must " +
+  "still be captured: map self-evaluation/personal-summary sections to " +
+  'basics.summary, and emit other sections under matching JSON Resume keys ' +
+  '(e.g. "awards", "publications", "volunteer", "languages", "interests") — ' +
+  "NEVER silently drop a section. " +
+  "COMPLETENESS: preserve the source content rather than summarising it. Copy every " +
+  "bullet, responsibility, metric, link and description VERBATIM in the " +
+  "resume's original language — do not shorten, paraphrase, translate or " +
+  "merge items. Place each source item once, without repeating it across sections. " +
+  "A multi-line project description becomes multiple " +
+  "highlights, one per line. " +
   "Dates use ISO YYYY-MM (or YYYY) when known. " +
+  "Output minified JSON — no pretty-printing, no indentation, no newlines " +
+  "(whitespace wastes output budget and can truncate long resumes). " +
   "CRITICAL: Extract ONLY information explicitly present in the resume text. " +
   "Do NOT invent names, employers, dates, metrics, skills, or achievements. " +
   "If a field is absent from the text, omit it — never guess. " +
@@ -80,9 +94,9 @@ export async function parseResumeText(
   llm: LLMClient = defaultLlm,
 ): Promise<ParseResult> {
   const raw = (text ?? "").trim();
-  // Cap input so a pathological upload can't blow the token budget; a resume
-  // longer than this is almost certainly padded and the head carries the signal.
-  const clipped = raw.slice(0, 12_000);
+  // Bound the request budget; preserve the entire original and warn below
+  // whenever the model saw only a prefix.
+  const clipped = raw.slice(0, 24_000);
 
   if (!raw) {
     // We genuinely have nothing to save. This is the only "throw" case left —
@@ -103,6 +117,7 @@ export async function parseResumeText(
   }
 
   let data: JsonResume | undefined;
+  let outputTruncated = false;
   let modelMeta = { model: "unknown", costCents: 0 };
   try {
     const out = await llm.chatJSON<JsonResume>(
@@ -110,13 +125,18 @@ export async function parseResumeText(
         { role: "system", content: PARSE_SYSTEM },
         { role: "user", content: `Resume text:\n\n${clipped}` },
       ],
-      // 2000 tokens truncated long multi-project résumés mid-JSON
-      // (observed on a 4 KB CV — model stopped at "location":). Bump to
-      // 6000 so the worst-case full JSON Resume tree still fits with
-      // headroom; cost stays trivial at fast-tier pricing.
-      { tier: "fast", temperature: 0.1, maxTokens: 6000 },
+      // Verbatim extraction needs more output space than summarisation.
+      // Recovery is opt-in: other structured callers still reject partial JSON.
+      {
+        tier: "fast",
+        temperature: 0.1,
+        maxTokens: 16000,
+        timeoutMs: 180_000,
+        allowPartialJson: true,
+      },
     );
     data = out.data;
+    outputTruncated = out.meta.finishReason === "length" || out.meta.jsonRepaired === true;
     modelMeta = { model: out.meta.model, costCents: out.meta.costCents };
   } catch (err) {
     // Most common in the wild: the model returns mixed reasoning + JSON, or
@@ -139,6 +159,19 @@ export async function parseResumeText(
   // what we can, drop what we can't, and record a warning per field.
   const { resume, warnings } = sanitiseJsonResume(data);
 
+  if (raw.length > clipped.length) {
+    warnings.push("Only the first 24,000 characters were sent for parsing. The complete original text is saved; compare and fill in sections beyond that limit.");
+  }
+  if (outputTruncated) {
+    warnings.push("The parser response reached its output limit. Structured fields may be incomplete; the complete original text is saved for review.");
+  }
+  // This is only a character-overlap heuristic, never proof of semantic
+  // completeness. Duplicate generated text cannot increase the overlap.
+  const coverage = parseTextOverlap(resume, raw);
+  if (coverage < 0.55) {
+    warnings.push("The structured fields have low text overlap with the original and may omit content. Compare against the saved original before using this version.");
+  }
+
   return {
     resume,
     raw,
@@ -146,6 +179,33 @@ export async function parseResumeText(
     usedFallback: false,
     meta: modelMeta,
   };
+}
+
+/** Character multiset overlap; insensitive to order and NOT semantic coverage. */
+export function parseTextOverlap(resume: JsonResume, raw: string): number {
+  const chars = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]/gu) ?? [];
+  const remaining = new Map<string, number>();
+  const rawChars = chars(raw);
+  for (const ch of rawChars) remaining.set(ch, (remaining.get(ch) ?? 0) + 1);
+  let matched = 0;
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") {
+      for (const ch of chars(value)) {
+        const count = remaining.get(ch) ?? 0;
+        if (count > 0) {
+          matched++;
+          remaining.set(ch, count - 1);
+        }
+      }
+    } else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") {
+      Object.entries(value).forEach(([key, item]) => {
+        if (!key.startsWith("_")) walk(item);
+      });
+    }
+  };
+  walk(resume);
+  return rawChars.length === 0 ? 1 : matched / rawChars.length;
 }
 
 function emptyResume(): JsonResume {
@@ -163,7 +223,7 @@ function sanitiseJsonResume(data: JsonResume | undefined): {
 } {
   const warnings: string[] = [];
   const out: JsonResume = {};
-  if (!data || typeof data !== "object") {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
     return { resume: emptyResume(), warnings: ["AI returned no resume structure — basic fields look empty."] };
   }
 
@@ -204,11 +264,15 @@ function sanitiseJsonResume(data: JsonResume | undefined): {
 
   // Empty-ish? Still valid (raw text is saved), but warn so the user knows
   // they need to fill in structured fields.
-  const hasContent =
-    (out.basics && Object.keys(out.basics).length > 0) ||
-    (Array.isArray(out.work) && out.work.length > 0) ||
-    (Array.isArray(out.skills) && out.skills.length > 0);
-  if (!hasContent) {
+  const hasContent = (value: unknown): boolean => {
+    if (typeof value === "string") return value.trim().length > 0;
+    if (Array.isArray(value)) return value.some(hasContent);
+    if (value && typeof value === "object") {
+      return Object.entries(value).some(([key, item]) => !key.startsWith("_") && hasContent(item));
+    }
+    return false;
+  };
+  if (!hasContent(out)) {
     warnings.push("AI couldn't extract structured fields from this resume — the raw text is saved; use Ask Vantage to help fill in details.");
   }
 

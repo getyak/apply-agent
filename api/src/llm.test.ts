@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LLMClient, LLMUnavailableError, repairJson, type FetchLike } from "./llm";
+import { LLMClient, LLMUnavailableError, repairJson, closeTruncatedJson, type FetchLike } from "./llm";
 
 // Build a fake fetch returning a canned OpenRouter chat-completion payload.
 function okFetch(content: string, usage = { prompt_tokens: 100, completion_tokens: 50 }): {
@@ -137,5 +137,63 @@ describe("LLMClient.chatJSON", () => {
     expect(meta).toHaveProperty("model");
     expect(meta).toHaveProperty("costCents");
     expect(meta).not.toHaveProperty("text");
+  });
+});
+
+
+describe("partial JSON recovery", () => {
+  test.each([
+    ['{"basics":{"name":"Sam","summary":"unfinished', { basics: { name: "Sam" } }],
+    ['{"items":["complete","unfinished', { items: ["complete"] }],
+    ['{"items":[{"name":"First"},{"name":"Second","detail":', { items: [{ name: "First" }, { name: "Second" }] }],
+    ['{"name":"Sam","danglingKey"', { name: "Sam" }],
+    ['{"text":"brace } and escaped \\" quote","next":', { text: 'brace } and escaped " quote' }],
+    ['{"values":[true,false,null,1.5,tru', { values: [true, false, null, 1.5] }],
+    ['{"name":"Sam","number":1e', { name: "Sam" }],
+  ])("preserves only completed values: %s", (raw, expected) => {
+    const repaired = closeTruncatedJson(raw as string);
+    expect(repaired).not.toBeNull();
+    expect(JSON.parse(repaired!)).toEqual(expected);
+  });
+
+  test.each(["1", "123", "true", "false", "null"])("drops an EOF primitive without delimiter evidence: %s", (token) => {
+    expect(JSON.parse(closeTruncatedJson(`{"name":"Sam","value":${token}`)!)).toEqual({ name: "Sam" });
+  });
+
+  test.each(["123", "true", "false", "null"].flatMap((token) => [" ", ","].map((delimiter) => [token, delimiter])))
+  ("preserves a primitive with an observed delimiter: %s%s", (token, delimiter) => {
+    expect(JSON.parse(closeTruncatedJson(`{"name":"Sam","value":${token}${delimiter}`)!)).toEqual({ name: "Sam", value: JSON.parse(token) });
+  });
+
+  test.each(['not json', '{"name":"unfinished', '{"x":]', '{}'])('rejects unrecoverable or complete input: %s', (raw) => {
+    expect(closeTruncatedJson(raw)).toBeNull();
+  });
+
+  const truncatedClient = (finishReason: string) => new LLMClient(async () => new Response(JSON.stringify({
+    choices: [{ message: { content: '{"basics":{"name":"Sam"},"work":[{"name":"First"},{"name":"Second","summary":"unfinished' }, finish_reason: finishReason }],
+  })), "test-key");
+
+  test("is opt-in and reports recovery metadata", async () => {
+    const client = truncatedClient("length");
+    await expect(client.chatJSON([])).rejects.toBeInstanceOf(LLMUnavailableError);
+    const { data, meta } = await client.chatJSON([], { allowPartialJson: true });
+    expect(data).toEqual({ basics: { name: "Sam" }, work: [{ name: "First" }, { name: "Second" }] });
+    expect(meta.jsonRepaired).toBe(true);
+    expect(meta.finishReason).toBe("length");
+  });
+
+  test.each([
+    ['{"name":"Sam","years":1', { name: "Sam" }],
+    ['{"name":"Sam","years":123 ', { name: "Sam", years: 123 }],
+  ])("chatJSON preserves primitive termination evidence: %s", async (content, expected) => {
+    const client = new LLMClient(async () => new Response(JSON.stringify({ choices: [{
+      message: { content }, finish_reason: "length",
+    }] })), "test-key");
+    const { data } = await client.chatJSON([], { allowPartialJson: true });
+    expect(data).toEqual(expected);
+  });
+
+  test("does not recover malformed responses without an output-limit signal", async () => {
+    await expect(truncatedClient("stop").chatJSON([], { allowPartialJson: true })).rejects.toBeInstanceOf(LLMUnavailableError);
   });
 });
