@@ -31,6 +31,8 @@ export interface ChatOptions {
   json?: boolean;
   /** Abort the request after this many ms. Default 60_000. */
   timeoutMs?: number;
+  /** Opt-in salvage of completed JSON fields after a provider output limit. */
+  allowPartialJson?: boolean;
 }
 
 export interface ChatResult {
@@ -39,6 +41,9 @@ export interface ChatResult {
   usage: { promptTokens: number; completionTokens: number };
   /** Estimated cost in US cents, from the provider usage field + pricing. */
   costCents: number;
+  finishReason?: string;
+  /** Partial JSON was recovered; consumers must surface an incomplete warning. */
+  jsonRepaired?: boolean;
 }
 
 /** Per-1M-token USD pricing (input/output) keyed by OpenRouter model id. */
@@ -117,6 +122,53 @@ export function repairJson(raw: string): string {
   return s.trim();
 }
 
+/**
+ * Close a truncated JSON prefix at the latest complete value. Never complete
+ * strings/literals/numbers or fabricate a missing value. JSON.parse validates
+ * each candidate prefix. Only used after finish=length.
+ */
+export function closeTruncatedJson(raw: string): string | null {
+  const s = raw.trim();
+  if (s[0] !== "{" && s[0] !== "[") return null;
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  const candidates: { end: number; closers: string }[] = [];
+  const remember = (end: number) => {
+    if (stack.length > 0) candidates.push({ end, closers: [...stack].reverse().join("") });
+  };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') { inString = false; remember(i + 1); }
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") stack.push(ch === "{" ? "}" : "]");
+    else if (ch === "}" || ch === "]") {
+      if (stack.pop() !== ch) return null;
+      remember(i + 1);
+    } else if (/[0-9tfn-]/.test(ch)) {
+      // Consume a primitive once, so a long incomplete numeric token does
+      // not repeatedly scan every suffix. Never accept just part of it.
+      const token = s.slice(i).match(/^[^\s,}\]]+/)?.[0] ?? "";
+      if (/^(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)$/.test(token)) {
+        remember(i + token.length);
+      }
+      i += Math.max(0, token.length - 1);
+    }
+  }
+  if (stack.length === 0) return null;
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const { end, closers } = candidates[i];
+    const candidate = s.slice(0, end) + closers;
+    try { JSON.parse(candidate); return candidate; } catch { /* earlier complete value */ }
+  }
+  return null;
+}
+
 /** The subset of `fetch` we depend on; injectable for tests. */
 export type FetchLike = (
   url: string,
@@ -184,7 +236,7 @@ export class LLMClient {
     }
 
     const data = (await res.json()) as {
-      choices?: { message?: { content?: string; reasoning?: string } }[];
+      choices?: { message?: { content?: string; reasoning?: string }; finish_reason?: string }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
       model?: string;
     };
@@ -205,6 +257,7 @@ export class LLMClient {
       model: usedModel,
       usage: { promptTokens, completionTokens },
       costCents: costCents(usedModel, promptTokens, completionTokens),
+      ...(data.choices?.[0]?.finish_reason ? { finishReason: data.choices[0].finish_reason } : {}),
     };
   }
 
@@ -219,11 +272,22 @@ export class LLMClient {
     opts: ChatOptions = {},
   ): Promise<{ data: T; meta: Omit<ChatResult, "text"> }> {
     const result = await this.chat(messages, { ...opts, json: true });
-    const cleaned = repairJson(result.text);
+    // A length-limited response must keep its full prefix: repairJson's
+    // prose slicing can otherwise drop a later partially generated section.
+    const cleaned = opts.allowPartialJson && result.finishReason === "length"
+      ? result.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
+      : repairJson(result.text);
     let data: T;
     try {
       data = JSON.parse(cleaned) as T;
     } catch (err) {
+      if (opts.allowPartialJson && result.finishReason === "length") {
+        const closed = closeTruncatedJson(cleaned);
+        if (closed) {
+          const { text: _partialText, ...meta } = result;
+          return { data: JSON.parse(closed) as T, meta: { ...meta, jsonRepaired: true } };
+        }
+      }
       throw new LLMUnavailableError(
         `Model returned unparseable JSON: ${cleaned.slice(0, 200)}`,
         err,

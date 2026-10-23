@@ -1061,6 +1061,18 @@
       "loadingBody": "正在拉取你的主版本简历，以便标出改动之处。"
     },
     "doc": {
+      "sections": {
+          "projects": "项目",
+          "skills": "技能",
+          "education": "教育",
+          "awards": "奖项",
+          "certificates": "证书",
+          "publications": "出版物",
+          "languages": "语言",
+          "volunteer": "志愿经历",
+          "interests": "兴趣",
+          "references": "推荐人"
+      },
       "nameFallback": "你的简历",
       "summary": "概述",
       "experience": "工作经历",

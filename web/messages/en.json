@@ -1061,6 +1061,18 @@
       "loadingBody": "Pulling your master résumé so we can mark what changed."
     },
     "doc": {
+      "sections": {
+          "projects": "Projects",
+          "skills": "Skills",
+          "education": "Education",
+          "awards": "Awards",
+          "certificates": "Certificates",
+          "publications": "Publications",
+          "languages": "Languages",
+          "volunteer": "Volunteer",
+          "interests": "Interests",
+          "references": "References"
+      },
       "nameFallback": "Your résumé",
       "summary": "SUMMARY",
       "experience": "EXPERIENCE",

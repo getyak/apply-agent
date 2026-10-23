@@ -23,6 +23,7 @@ import { useDock } from "@/lib/ask-vantage-store";
 import { useVantage } from "@/lib/store";
 import { ResumeChangeLogPanel } from "@/components/studio/resume-change-log-panel";
 import { ResumeMarkdown } from "@/components/studio/resume-markdown";
+import { ResumeAdditionalSections, additionalResumeSections } from "@/components/studio/resume-additional-sections";
 import { EditableDocumentPane } from "@/components/studio/editable-document-pane";
 import { mergeCompareWork } from "@/lib/resume-compare";
 import { ResumeDualTrack } from "@/components/screens/resume-dual-track";
@@ -95,6 +96,7 @@ interface ResumeSource {
 }
 
 interface JsonResume {
+  [key: string]: unknown;
   basics?: JsonResumeBasics;
   work?: JsonResumeWork[];
   skills?: JsonResumeSkill[];
@@ -806,6 +808,7 @@ export function ResumeView() {
                 work={doc.work ?? []}
                 skills={doc.skills ?? []}
                 education={doc.education ?? []}
+                fullDoc={doc}
                 rawText={doc._raw ?? null}
                 markdown={doc._markdown ?? null}
                 presentation={presentation}
@@ -861,6 +864,7 @@ export function ResumeView() {
                 work={doc.work ?? []}
                 skills={doc.skills ?? []}
                 education={doc.education ?? []}
+                fullDoc={doc}
                 rawText={doc._raw ?? null}
                 markdown={doc._markdown ?? null}
                 presentation={presentation}
@@ -1377,12 +1381,13 @@ function buildBaseSkillSet(base: JsonResume | null): Set<string> {
   return acc;
 }
 
-function DocumentPane({
+export function DocumentPane({
   basics,
   contact,
   work,
   skills,
   education,
+  fullDoc,
   rawText,
   markdown,
   presentation,
@@ -1399,6 +1404,7 @@ function DocumentPane({
   work: JsonResumeWork[];
   skills: JsonResumeSkill[];
   education: JsonResumeEducation[];
+  fullDoc: JsonResume;
   // Original extracted text from the uploaded file. Used as a fallback render
   // path when the LLM couldn't produce any structured fields — see §2.7 of
   // vantage-ui-mapping.md (Source/Extracted/Document tri-view).
@@ -1432,6 +1438,7 @@ function DocumentPane({
     work.length === 0 &&
     skills.length === 0 &&
     education.length === 0 &&
+    additionalResumeSections(fullDoc, ["basics", "work", "skills", "education"]).length === 0 &&
     !(basics.summary && basics.summary.trim().length > 0) &&
     !(basics.name && basics.name.trim().length > 0);
   const showRawFallback = structuredEmpty && !!rawText && rawText.trim().length > 0;
@@ -1674,6 +1681,7 @@ function DocumentPane({
               ))}
             </Section>
           )}
+          <ResumeAdditionalSections doc={fullDoc} omit={["basics", "work", "skills", "education"]} />
           </>
           )}
         </div>

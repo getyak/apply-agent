@@ -26,6 +26,7 @@ import { useTranslations } from "next-intl";
 import { resumes as resumesApi } from "@/lib/api";
 import type { ResumeDoc, SaveStatus } from "@/lib/use-resume-edit";
 import { useResumeEdit } from "@/lib/use-resume-edit";
+import { ResumeAdditionalSections } from "./resume-additional-sections";
 import { InlineBullet, InlineParagraph, InlineText } from "./inline-edit";
 
 interface EditableProps {
@@ -443,6 +444,7 @@ export function EditableDocumentPane({
               </div>
             ) : null}
           </Section>
+          <ResumeAdditionalSections doc={draft} omit={["basics", "work"]} />
         </div>
       </div>
     </div>
