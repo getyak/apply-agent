@@ -1054,11 +1054,80 @@ def _completeness_score(resume: dict[str, Any]) -> float:
 
 
 def _safe_json(content: Any) -> dict[str, Any]:
+    text = str(content).strip()
     try:
-        s = str(content).strip()
-        if s.startswith("```"):
-            s = "\n".join(line for line in s.splitlines() if not line.startswith("```"))
-        return json.loads(s)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
-        log.warning("resume.invalid_json_response", preview=str(content)[:200])
-        return {}
+        candidate = _model_json_object(text)
+        if candidate is not None:
+            try:
+                parsed = json.loads(_without_trailing_json_commas(candidate))
+            except json.JSONDecodeError:
+                pass
+            else:
+                if isinstance(parsed, dict):
+                    return parsed
+    else:
+        if isinstance(parsed, dict):
+            return parsed
+    # Model output contains private résumé data, including on parse failures.
+    log.warning("resume.invalid_json_response")
+    return {}
+
+
+def _model_json_object(text: str) -> str | None:
+    """Extract one complete object, never an inner object of an array or truncated JSON."""
+    start: int | None = None
+    brackets: list[str] = []
+    in_string = escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            if start is None:
+                if char != "{":
+                    return None
+                start = index
+            brackets.append(char)
+        elif char in "]}" and start is not None:
+            expected = "[" if char == "]" else "{"
+            if not brackets or brackets.pop() != expected:
+                return None
+            if not brackets:
+                return text[start : index + 1]
+    return None
+
+
+def _without_trailing_json_commas(text: str) -> str:
+    """Remove trailing separators outside strings; leave every string byte untouched."""
+    result: list[str] = []
+    in_string = escaped = False
+    previous = ""
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "," and previous and previous not in "[{,:":
+            following = index + 1
+            while following < len(text) and text[following].isspace():
+                following += 1
+            if following < len(text) and text[following] in "]}":
+                continue
+        result.append(char)
+        if not char.isspace():
+            previous = char
+    return "".join(result)
