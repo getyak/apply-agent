@@ -1,0 +1,39 @@
+# Optional local limits. Pass this file explicitly after docker-compose.yml.
+# Requires Docker Compose 2.24.4+ for !override port replacement.
+x-local-limits-logging: &local-limits-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging: *local-limits-logging
+
+  redis:
+    ports: !override
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    cpus: 0.5
+    mem_limit: 384m
+    pids_limit: 128
+    logging: *local-limits-logging
+
+  minio:
+    ports: !override
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 256
+    logging: *local-limits-logging
+
+  minio-init:
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+    logging: *local-limits-logging
